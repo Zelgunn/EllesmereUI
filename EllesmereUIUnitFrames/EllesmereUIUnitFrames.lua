@@ -2298,14 +2298,14 @@ local function CreateCastBar(frame, unit, settings)
 
 
     local text = castbar:CreateFontString(nil, "OVERLAY")
-    SetFSFont(text, 11)
+    SetFSFont(text, settings.castSpellNameSize or 11)
     text:SetPoint("LEFT", castbar, "LEFT", 5, 1)
     text:SetJustifyH("LEFT")
     text:SetTextColor(1, 1, 1)
     castbar.Text = text
 
     local time = castbar:CreateFontString(nil, "OVERLAY")
-    SetFSFont(time, 11)
+    SetFSFont(time, settings.castDurationSize or 11)
     time:SetPoint("RIGHT", castbar, "RIGHT", -5, 0)
     time:SetJustifyH("RIGHT")
     time:SetTextColor(1, 1, 1)
@@ -5372,11 +5372,14 @@ local function ReloadFrames()
             end
 
             if frame.Castbar then
+                local s = isMiniFrame and donorSettings or settings
                 if frame.Castbar.Text then
-                    SetFSFont(frame.Castbar.Text, 11)
+                    local snSz = s.castSpellNameSize or 11
+                    SetMiniFont(frame.Castbar.Text, snSz)
                 end
                 if frame.Castbar.Time then
-                    SetFSFont(frame.Castbar.Time, 11)
+                    local dtSz = s.castDurationSize or 11
+                    SetMiniFont(frame.Castbar.Time, dtSz)
                 end
             end
             end -- else (enabled frame processing)
