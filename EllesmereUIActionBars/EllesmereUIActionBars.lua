@@ -5669,6 +5669,12 @@ function EAB:FinishSetup()
     -- unregistered from all events, so Blizzard's own update never fires).
     local function UpdatePetBar()
         C_Timer_After(0, function()
+            -- PetActionBar:Update() only sets textures and cooldown frames —
+            -- not combat-restricted, so run it before the lockdown guard so
+            -- PET_BAR_UPDATE_COOLDOWN (which fires during combat) still works.
+            if PetActionBar and PetActionBar.Update then
+                PetActionBar:Update()
+            end
             if InCombatLockdown() then return end
             LayoutBar("PetBar")
             self:ApplyAlwaysShowButtons("PetBar")
@@ -5680,17 +5686,11 @@ function EAB:FinishSetup()
             if petInfo and petFrame and petS and not petS.alwaysHidden then
                 RegisterAttributeDriver(petFrame, "state-visibility", BuildVisibilityString(petInfo, petS))
             end
-            -- Repopulate button content (icons, cooldowns, autocast rings,
-            -- behavior checked states). PetActionBar.actionButtons still
-            -- holds references to the reparented buttons, so Update() works
-            -- even though the bar frame itself is on hiddenParent.
-            if PetActionBar and PetActionBar.Update then
-                PetActionBar:Update()
-            end
         end)
     end
     local _petEventFrame = CreateFrame("Frame")
     _petEventFrame:RegisterEvent("PET_BAR_UPDATE")
+    _petEventFrame:RegisterEvent("PET_BAR_UPDATE_COOLDOWN")
     _petEventFrame:RegisterEvent("PET_UI_UPDATE")
     _petEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     _petEventFrame:RegisterUnitEvent("UNIT_PET", "player")
