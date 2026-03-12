@@ -1807,20 +1807,6 @@ local cdmBarIcons = {}
 -- Fast barData lookup by key (rebuilt in BuildAllCDMBars, avoids linear scan per tick)
 local barDataByKey = {}
 
-local function FindPlayerPartyFrame()
-    if EllesmereUI and EllesmereUI.FindPlayerPartyFrame then
-        return EllesmereUI.FindPlayerPartyFrame()
-    end
-    return nil
-end
-
-local function FindPlayerUnitFrame()
-    if EllesmereUI and EllesmereUI.FindPlayerUnitFrame then
-        return EllesmereUI.FindPlayerUnitFrame()
-    end
-    return nil
-end
-
 -- Expose our CDM bar frames so the glow system can reference them
 ns.GetCDMBarFrame = function(barKey)
     return cdmBarFrames[barKey]
@@ -1828,13 +1814,6 @@ end
 -- Global accessor for cross-addon frame lookups
 _G._ECME_GetBarFrame = function(barKey)
     return cdmBarFrames[barKey]
-end
--- Global accessors for party/player frame discovery
-_G._ECME_FindPlayerPartyFrame = function()
-    return FindPlayerPartyFrame()
-end
-_G._ECME_FindPlayerUnitFrame = function()
-    return FindPlayerUnitFrame()
 end
 -- Global accessor: apply a spec profile to the live bars (used by profile import)
 _G._ECME_LoadSpecProfile = function(specKey)
@@ -2592,7 +2571,7 @@ BuildCDMBar = function(barIndex)
         end)
     elseif anchorKey == "partyframe" then
         -- Anchor to the player's party frame
-        local partyFrame = FindPlayerPartyFrame()
+        local partyFrame = EllesmereUI.FindPlayerPartyFrame()
         if partyFrame then
             frame:ClearAllPoints()
             local side = barData.partyFrameSide or "LEFT"
@@ -2623,7 +2602,7 @@ BuildCDMBar = function(barIndex)
         end
     elseif anchorKey == "playerframe" then
         -- Anchor to the player's unit frame
-        local playerFrame = FindPlayerUnitFrame()
+        local playerFrame = EllesmereUI.FindPlayerUnitFrame()
         if playerFrame then
             frame:ClearAllPoints()
             local side = barData.playerFrameSide or "LEFT"
