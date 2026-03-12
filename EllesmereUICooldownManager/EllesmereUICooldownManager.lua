@@ -3500,7 +3500,7 @@ local function UpdateCustomBarIcons(barKey)
                         end
                     end
 
-                    if isAura then
+                    if isAura and activeAnim ~= "hideActive" then
                         -- When the spell has a runtime override on a non-buff bar,
                         -- skip aura duration display so the override spell's actual
                         -- cooldown is shown (e.g. 2min ability becomes 24s kick).
@@ -3535,7 +3535,7 @@ local function UpdateCustomBarIcons(barKey)
                     -- On buff bars, copy the child's cooldown to show effect duration.
                     -- Also check if the buff-viewer child is visible (covers summon
                     -- spells like Dreadstalkers that have no aura and no wasSetFromAura).
-                    if not hasRuntimeOverride and not auraHandled then
+                    if not hasRuntimeOverride and not auraHandled and activeAnim ~= "hideActive" then
                         local blzFbActive2 = _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID]
                         if not blzFbActive2 then
                             local blzBufCh = _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
@@ -4445,7 +4445,7 @@ local function UpdateTrackedBarIcons(barKey)
                         end
                     end
 
-                    if isAura then
+                    if isAura and activeAnim ~= "hideActive" then
                         -- When the spell has a runtime override on a non-buff bar,
                         -- skip aura duration display so the override spell's actual
                         -- cooldown is shown (e.g. 2min ability becomes 24s kick).
@@ -4475,7 +4475,7 @@ local function UpdateTrackedBarIcons(barKey)
                     -- Also check if the buff-viewer child is visible (covers summon
                     -- spells like Dreadstalkers that have no aura and no wasSetFromAura).
                     -- Copy the child's cooldown state to show the effect duration.
-                    if not hasRuntimeOverride and not auraHandled then
+                    if not hasRuntimeOverride and not auraHandled and activeAnim ~= "hideActive" then
                         if isBuffBarForOvr then
                             local blzFbActive = _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID]
                             if not blzFbActive then
