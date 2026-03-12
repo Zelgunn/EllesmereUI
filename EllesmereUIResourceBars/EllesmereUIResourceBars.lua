@@ -970,10 +970,19 @@ local ERB_ANCHOR_FRAMES = {
     playerframe       = nil,  -- handled separately
 }
 
+local ERB_VALID_ANCHORS = EllesmereUI.RESOURCE_BAR_ANCHOR_KEYS
+
 local function ResolveAnchorFrame(anchorKey)
     local fn = ERB_ANCHOR_FRAMES[anchorKey]
     if fn then return fn() end
     return nil
+end
+
+local function NormalizeAnchorKey(anchorKey)
+    if anchorKey and ERB_VALID_ANCHORS[anchorKey] then
+        return anchorKey
+    end
+    return "none"
 end
 
 -- Apply anchor-based positioning for a bar frame.
@@ -1074,14 +1083,14 @@ local function ApplyBarAnchor(frame, anchorKey, anchorPos, offsetX, offsetY, gro
         end)
         return true
     elseif anchorKey == "partyframe" then
-        local partyFrame = _G._ECME_FindPlayerPartyFrame and _G._ECME_FindPlayerPartyFrame()
+        local partyFrame = EllesmereUI and EllesmereUI.FindPlayerPartyFrame and EllesmereUI.FindPlayerPartyFrame()
         if not partyFrame then return false end
         local framePoint, targetPoint = GetAnchorPoints()
         frame:ClearAllPoints()
         frame:SetPoint(framePoint, partyFrame, targetPoint, offsetX, offsetY)
         return true
     elseif anchorKey == "playerframe" then
-        local playerFrame = _G._ECME_FindPlayerUnitFrame and _G._ECME_FindPlayerUnitFrame()
+        local playerFrame = EllesmereUI and EllesmereUI.FindPlayerUnitFrame and EllesmereUI.FindPlayerUnitFrame()
         if not playerFrame then return false end
         local framePoint, targetPoint = GetAnchorPoints()
         frame:ClearAllPoints()
@@ -1113,6 +1122,22 @@ local function GetAnchorOffsets(settings)
     local offsetY = settings.anchorOffsetY
     if offsetY == nil then offsetY = settings.anchorY end
     return offsetX or 0, offsetY or 0
+end
+
+local function ApplyFreeBarPosition(frame, settings, defaultX, defaultY, width, height, scale)
+    if not frame then return end
+
+    local pos = settings and settings.unlockPos
+    frame:SetScale(scale or 1)
+    frame:SetSize(width, height)
+    frame:ClearAllPoints()
+
+    if pos and pos.point then
+        frame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
+        return
+    end
+
+    frame:SetPoint("CENTER", mainFrame, "CENTER", settings.offsetX or defaultX or 0, settings.offsetY or defaultY or 0)
 end
 
 local function ReapplyInternalBarAnchors()
@@ -1205,16 +1230,20 @@ local function BuildBars()
             healthBar = CreateStatusBar(mainFrame, "ERB_HealthBar", hp.width, hp.height,
                 hp.borderSize, hp.borderR, hp.borderG, hp.borderB, hp.borderA)
         end
-        if hp.anchorTo and hp.anchorTo ~= "none" then
+        local healthAnchorKey = NormalizeAnchorKey(hp.anchorTo)
+        if healthAnchorKey ~= "none" then
             local ow, oh = OrientedSize(hp.width, hp.height, hpOri)
             local offsetX, offsetY = GetAnchorOffsets(hp)
             healthBar:SetScale(hp.scale)
             healthBar:SetSize(ow, oh)
-            ApplyBarAnchor(healthBar, hp.anchorTo, hp.anchorPosition, offsetX, offsetY, hp.growthDirection, hp.growCentered)
+            if not ApplyBarAnchor(healthBar, healthAnchorKey, hp.anchorPosition, offsetX, offsetY, hp.growthDirection, hp.growCentered) then
+                ApplyFreeBarPosition(healthBar, hp, 0, -64, ow, oh, hp.scale)
+            end
         elseif hp.unlockPos and hp.unlockPos.point then
             -- Position fully managed by unlock mode -- no animations, just apply directly
             local rp = hp.unlockPos.relPoint or hp.unlockPos.point
             local ow, oh = OrientedSize(hp.width, hp.height, hpOri)
+            ApplyBarAnchor(healthBar, "none")
             healthBar:SetScale(hp.scale)
             healthBar:SetSize(ow, oh)
             healthBar:ClearAllPoints()
@@ -1283,16 +1312,20 @@ local function BuildBars()
             primaryBar = CreateStatusBar(mainFrame, "ERB_PrimaryBar", pp.width, pp.height,
                 pp.borderSize, pp.borderR, pp.borderG, pp.borderB, pp.borderA)
         end
-        if pp.anchorTo and pp.anchorTo ~= "none" then
+        local primaryAnchorKey = NormalizeAnchorKey(pp.anchorTo)
+        if primaryAnchorKey ~= "none" then
             local ow, oh = OrientedSize(pp.width, pp.height, ppOri)
             local offsetX, offsetY = GetAnchorOffsets(pp)
             primaryBar:SetScale(pp.scale)
             primaryBar:SetSize(ow, oh)
-            ApplyBarAnchor(primaryBar, pp.anchorTo, pp.anchorPosition, offsetX, offsetY, pp.growthDirection, pp.growCentered)
+            if not ApplyBarAnchor(primaryBar, primaryAnchorKey, pp.anchorPosition, offsetX, offsetY, pp.growthDirection, pp.growCentered) then
+                ApplyFreeBarPosition(primaryBar, pp, 0, -54, ow, oh, pp.scale)
+            end
         elseif pp.unlockPos and pp.unlockPos.point then
             -- Position fully managed by unlock mode -- no animations, just apply directly
             local rp = pp.unlockPos.relPoint or pp.unlockPos.point
             local ow, oh = OrientedSize(pp.width, pp.height, ppOri)
+            ApplyBarAnchor(primaryBar, "none")
             primaryBar:SetScale(pp.scale)
             primaryBar:SetSize(ow, oh)
             primaryBar:ClearAllPoints()
@@ -1396,12 +1429,16 @@ local function BuildBars()
         local frameW = isVertical and pipH or totalW
         local frameH = isVertical and totalW or pipH
 
-        if sp.anchorTo and sp.anchorTo ~= "none" then
+        local secondaryAnchorKey = NormalizeAnchorKey(sp.anchorTo)
+        if secondaryAnchorKey ~= "none" then
             local offsetX, offsetY = GetAnchorOffsets(sp)
             secondaryFrame:SetScale(sp.scale or 1)
             secondaryFrame:SetSize(frameW, frameH)
-            ApplyBarAnchor(secondaryFrame, sp.anchorTo, sp.anchorPosition, offsetX, offsetY, sp.growthDirection, sp.growCentered)
+            if not ApplyBarAnchor(secondaryFrame, secondaryAnchorKey, sp.anchorPosition, offsetX, offsetY, sp.growthDirection, sp.growCentered) then
+                ApplyFreeBarPosition(secondaryFrame, sp, 0, -38, frameW, frameH, sp.scale or 1)
+            end
         elseif sp.unlockPos and sp.unlockPos.point then
+            ApplyBarAnchor(secondaryFrame, "none")
             secondaryFrame:SetScale(sp.scale or 1)
             secondaryFrame:SetSize(frameW, frameH)
             secondaryFrame:ClearAllPoints()
@@ -3129,6 +3166,12 @@ function ERB:ApplyAll()
     end
 end
 
+local function ScheduleRosterApply()
+    C_Timer.After(0.2, function()
+        ERB:ApplyAll()
+    end)
+end
+
 
 -------------------------------------------------------------------------------
 --  Event handling
@@ -3186,6 +3229,8 @@ local function OnEvent(self, event, ...)
         end
     elseif event == "PLAYER_TARGET_CHANGED" then
         UpdateVisibility()
+    elseif event == "GROUP_ROSTER_UPDATE" then
+        ScheduleRosterApply()
     elseif event == "ACTIVE_TALENT_GROUP_CHANGED" or event == "PLAYER_SPECIALIZATION_CHANGED" then
         cachedPrimary = GetPrimaryPowerType()
         cachedSecondary = GetSecondaryResource()
@@ -3306,6 +3351,7 @@ function ERB:OnEnable()
     eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+    eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
     eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
     eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     eventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")

@@ -440,6 +440,10 @@ local function DDFont(v)
     return nil
 end
 
+local function IsDividerKey(key)
+    return type(key) == "string" and key:match("^%-%-%-") ~= nil
+end
+
 -- Build a dropdown popup menu, item buttons, and return { menu, menuItems, refresh }.
 -- ddBtn   = the dropdown button frame the menu hangs off
 -- menuW   = pixel width of the menu
@@ -482,8 +486,8 @@ local function BuildDropdownMenu(ddBtn, menuW, order, values, getValue, setValue
     local menuItems = {}
     local mH = 4
     for _, key in ipairs(order) do
-        -- Divider support: "---" key inserts a thin separator line
-        if key == "---" then
+        -- Divider support: keys beginning with "---" insert a thin separator line
+        if IsDividerKey(key) then
             local div = innerContainer:CreateTexture(nil, "ARTWORK")
             div:SetHeight(1)
             div:SetColorTexture(1, 1, 1, 0.10)
