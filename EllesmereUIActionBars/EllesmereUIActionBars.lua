@@ -5114,7 +5114,10 @@ function EAB:OnInitialize()
 
     -- Slash commands
     -- Expose apply hook for PP scale change re-apply
-    _G._EAB_Apply = function() ApplyAll() end
+    _G._EAB_Apply = function()
+        ApplyAll()
+        if not InCombatLockdown() then RestoreBarPositions() end
+    end
 
     SLASH_ELLESMEREACTIONBARS1 = "/eab"
     SlashCmdList["ELLESMEREACTIONBARS"] = function(msg)

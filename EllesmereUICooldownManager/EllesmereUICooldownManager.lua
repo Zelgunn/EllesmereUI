@@ -2853,9 +2853,13 @@ LayoutCDMBar = function(barKey)
     local stepW = iconW + spacing
     local stepH = iconH + spacing
 
-    -- Position each icon in a grid anchored to the frame's corners.
-    -- Frame bounding box == icon grid, so frame CENTER == icon grid center.
-    -- Partial rows (fewer icons than stride) are centered within the frame width.
+    -- How many icons on the top row (remainder goes top, full rows on bottom)
+    local topRowCount = count - (numRows - 1) * stride
+    if topRowCount < 0 then topRowCount = 0 end
+    local topRowHasLess = (topRowCount > 0 and topRowCount < stride)
+
+    -- Position each icon: fill bottom-up so bottom rows are full,
+    -- top row gets the remainder. Centering only on top row when partial.
     for i, icon in ipairs(visibleIcons) do
         icon:SetSize(iconW, iconH)
         if icon._glowOverlay then
@@ -2863,32 +2867,49 @@ LayoutCDMBar = function(barKey)
         end
         icon:ClearAllPoints()
 
-        local idx = i - 1
-        local col = idx % stride
-        local row = math.floor(idx / stride)
+        -- Map sequential index to bottom-up grid position.
+        -- Icon 1..topRowCount fill the top row (visual row 0).
+        -- Remaining icons fill rows 1..numRows-1 (bottom rows, full).
+        local col, row
+        if i <= topRowCount then
+            col = i - 1
+            row = 0
+        else
+            local bottomIdx = i - topRowCount - 1
+            col = bottomIdx % stride
+            row = 1 + math.floor(bottomIdx / stride)
+        end
 
-        -- Count how many icons are in this row to detect partial rows
-        local rowStart = row * stride
-        local iconsInRow = math.min(stride, count - rowStart)
-
+        -- Only center the top row when it has fewer icons than stride
         if grow == "RIGHT" then
-            -- Center partial rows: offset by half the missing icons' width
-            local rowOffset = SnapForScale((stride - iconsInRow) * stepW / 2, barScale)
+            local rowOffset = 0
+            if row == 0 and topRowHasLess then
+                rowOffset = SnapForScale((stride - topRowCount) * stepW / 2, barScale)
+            end
             icon:SetPoint("TOPLEFT", frame, "TOPLEFT",
                 col * stepW + rowOffset,
                 -(row * stepH))
         elseif grow == "LEFT" then
-            local rowOffset = SnapForScale((stride - iconsInRow) * stepW / 2, barScale)
+            local rowOffset = 0
+            if row == 0 and topRowHasLess then
+                rowOffset = SnapForScale((stride - topRowCount) * stepW / 2, barScale)
+            end
             icon:SetPoint("TOPRIGHT", frame, "TOPRIGHT",
                 -(col * stepW + rowOffset),
                 -(row * stepH))
         elseif grow == "DOWN" then
-            local rowOffset = SnapForScale((stride - iconsInRow) * stepH / 2, barScale)
+            local rowOffset = 0
+            if row == 0 and topRowHasLess then
+                rowOffset = SnapForScale((stride - topRowCount) * stepH / 2, barScale)
+            end
             icon:SetPoint("TOPLEFT", frame, "TOPLEFT",
                 row * stepW,
                 -(col * stepH + rowOffset))
         elseif grow == "UP" then
-            local rowOffset = SnapForScale((stride - iconsInRow) * stepH / 2, barScale)
+            local rowOffset = 0
+            if row == 0 and topRowHasLess then
+                rowOffset = SnapForScale((stride - topRowCount) * stepH / 2, barScale)
+            end
             icon:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT",
                 row * stepW,
                 col * stepH + rowOffset)
@@ -2997,32 +3018,10 @@ local function CreateCDMIcon(barKey, index)
     keybindText:Hide()
     icon._keybindText = keybindText
 
-    -- Tooltip on hover ΓÇö uses OnUpdate cursor check so the icon stays click-through
-    -- Tooltip on hover: only register the OnUpdate poll when tooltips are enabled for this bar.
-    -- Icons are rebuilt via BuildAllCDMBars when showTooltip changes, so creation-time gating is sufficient.
-    local tooltipOverlay = CreateFrame("Frame", nil, icon)
-    tooltipOverlay:SetAllPoints(icon)
-    tooltipOverlay:SetFrameLevel(icon:GetFrameLevel() + 4)
-    tooltipOverlay:EnableMouse(false)
+    -- Tooltip hover uses an OnUpdate on the icon itself (set/cleared by
+    -- ApplyCDMTooltipState). No overlay frame needed -- zero allocation
+    -- when tooltips are disabled.
     icon._tooltipShown = false
-    if barData.showTooltip then
-        icon:SetScript("OnUpdate", function(self)
-            local over = self:IsMouseOver()
-            if over and not self._tooltipShown then
-                local sid = self._spellID
-                if sid then
-                    GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-                    GameTooltip:SetSpellByID(sid)
-                    GameTooltip:Show()
-                    self._tooltipShown = true
-                end
-            elseif not over and self._tooltipShown then
-                GameTooltip:Hide()
-                self._tooltipShown = false
-            end
-        end)
-    end
-    icon._tooltipOverlay = tooltipOverlay
 
     -- Pixel-perfect border (4 strips via PP)
     PP.CreateBorder(icon, barData.borderR or 0, barData.borderG or 0, barData.borderB or 0, barData.borderA or 1, borderSize, "OVERLAY", 7)
@@ -3042,6 +3041,47 @@ local function CreateCDMIcon(barKey, index)
     icon:Hide()
     return icon
 end
+
+-------------------------------------------------------------------------------
+--  Toggle tooltip OnUpdate for all icons on a bar.
+--  When enabled, each icon polls IsMouseOver every frame.
+--  When disabled, the OnUpdate is nil -- zero performance cost.
+-------------------------------------------------------------------------------
+local _cdmTooltipOnUpdate = function(self)
+    local over = self:IsMouseOver()
+    if over and not self._tooltipShown then
+        local sid = self._spellID
+        if sid then
+            GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+            GameTooltip:SetSpellByID(sid)
+            GameTooltip:Show()
+            self._tooltipShown = true
+        end
+    elseif not over and self._tooltipShown then
+        GameTooltip:Hide()
+        self._tooltipShown = false
+    end
+end
+
+local function ApplyCDMTooltipState(barKey)
+    local icons = cdmBarIcons[barKey]
+    if not icons then return end
+    local bd = barDataByKey[barKey]
+    local enabled = bd and bd.showTooltip
+    for _, icon in ipairs(icons) do
+        if enabled then
+            icon:SetScript("OnUpdate", _cdmTooltipOnUpdate)
+        else
+            icon:SetScript("OnUpdate", nil)
+            if icon._tooltipShown then
+                GameTooltip:Hide()
+                icon._tooltipShown = false
+            end
+        end
+    end
+end
+ns.ApplyCDMTooltipState = ApplyCDMTooltipState
+
 -------------------------------------------------------------------------------
 --  Apply custom shape to a CDM icon
 -------------------------------------------------------------------------------
@@ -3290,6 +3330,9 @@ local function UpdateCustomBarIcons(barKey)
     while #icons < #spells do
         local newIcon = CreateCDMIcon(barKey, #icons + 1)
         icons[#icons + 1] = newIcon
+        if barData.showTooltip then
+            newIcon:SetScript("OnUpdate", _cdmTooltipOnUpdate)
+        end
     end
 
     local visibleCount = 0
@@ -3778,6 +3821,9 @@ UpdateCDMBarIcons = function(barKey)
     while #icons < #blizzIcons do
         local newIcon = CreateCDMIcon(barKey, #icons + 1)
         icons[#icons + 1] = newIcon
+        if barData.showTooltip then
+            newIcon:SetScript("OnUpdate", _cdmTooltipOnUpdate)
+        end
     end
 
     local desatOnCD = barData.desaturateOnCD
@@ -4076,10 +4122,6 @@ local function RefreshCDMIconAppearance(barKey)
             icon._keybindText:SetTextColor(barData.keybindR or 1, barData.keybindG or 1, barData.keybindB or 1, barData.keybindA or 0.9)
         end
 
-        -- Update tooltip overlay mouse state
-        if icon._tooltipOverlay then
-            icon._tooltipOverlay:EnableMouse(false)
-        end
         -- Apply custom shape (overrides border/zoom set above)
         local shape = barData.iconShape or "none"
         ApplyShapeToCDMIcon(icon, shape, barData)
@@ -4102,7 +4144,26 @@ end
 ns.RefreshCDMIconAppearance = RefreshCDMIconAppearance
 
 -------------------------------------------------------------------------------
---  Snapshot Blizzard CDM ? populate trackedSpells for a default bar
+--  Build a set of all spellIDs assigned to custom bars.
+--  Used to prevent custom bar spells from leaking onto main bars during
+--  snapshot or reconcile.
+-------------------------------------------------------------------------------
+local function BuildCustomBarSpellSet()
+    local set = {}
+    local p = ECME.db and ECME.db.profile
+    if not p or not p.cdmBars or not p.cdmBars.bars then return set end
+    for _, bd in ipairs(p.cdmBars.bars) do
+        if bd.customSpells and not MAIN_BAR_KEYS[bd.key] and bd.barType ~= "trinkets" then
+            for _, sid in ipairs(bd.customSpells) do
+                if sid and sid > 0 then set[sid] = true end
+            end
+        end
+    end
+    return set
+end
+
+-------------------------------------------------------------------------------
+--  Snapshot Blizzard CDM -- populate trackedSpells for a default bar
 --  Called once per bar when trackedSpells is nil/empty.
 --  Reads the Blizzard viewer children to get cooldownIDs in display order.
 -------------------------------------------------------------------------------
@@ -4166,6 +4227,19 @@ local function SnapshotBlizzardCDM(barKey, barData)
         local filtered = {}
         for _, sid in ipairs(tracked) do
             if not barData.removedSpells[sid] then
+                filtered[#filtered + 1] = sid
+            end
+        end
+        tracked = filtered
+    end
+
+    -- Filter out spells already assigned to custom bars so they don't
+    -- appear on both the main bar and the custom bar
+    local customSet = BuildCustomBarSpellSet()
+    if next(customSet) then
+        local filtered = {}
+        for _, sid in ipairs(tracked) do
+            if not customSet[sid] then
                 filtered[#filtered + 1] = sid
             end
         end
@@ -4272,6 +4346,9 @@ local function UpdateTrackedBarIcons(barKey)
     while #icons < combinedN do
         local newIcon = CreateCDMIcon(barKey, #icons + 1)
         icons[#icons + 1] = newIcon
+        if barData.showTooltip then
+            newIcon:SetScript("OnUpdate", _cdmTooltipOnUpdate)
+        end
         -- Apply pending cooldown font immediately for dynamically created icons
         -- (the batch applicator in BuildAllCDMBars only runs once at setup).
         if newIcon._pendingFontPath and newIcon._cooldown then
@@ -5297,6 +5374,7 @@ BuildAllCDMBars = function()
         local frame = cdmBarFrames[barData.key]
         if frame then frame._prevVisibleCount = nil end
         LayoutCDMBar(barData.key)
+        ApplyCDMTooltipState(barData.key)
     end
     _CDMApplyVisibility()
     UpdateCDMKeybinds()
@@ -5825,7 +5903,27 @@ function ns.AddTrackedSpell(barKey, id, isExtra)
                 for _, existing in ipairs(b.customSpells) do
                     if existing == id then return false end
                 end
-                b.customSpells[#b.customSpells + 1] = id
+                -- Insert so the new spell fills the top row's next empty slot.
+                -- With bottom-up fill, icons 1..topRowCount go to the top row.
+                local numRows = b.numRows or 1
+                if numRows < 1 then numRows = 1 end
+                local curCount = #b.customSpells
+                local stride = math.ceil(curCount / numRows)
+                if stride < 1 then stride = 1 end
+                local topRowCount = curCount - (numRows - 1) * stride
+                if topRowCount < 0 then topRowCount = 0 end
+                -- New count after insert
+                local newCount = curCount + 1
+                local newStride = math.ceil(newCount / numRows)
+                if newStride < 1 then newStride = 1 end
+                local newTopRow = newCount - (numRows - 1) * newStride
+                if newTopRow < 0 then newTopRow = 0 end
+                -- If stride didn't change, insert at end of top row section
+                if newStride == stride and newTopRow > topRowCount then
+                    table.insert(b.customSpells, topRowCount + 1, id)
+                else
+                    b.customSpells[newCount] = id
+                end
             elseif isExtra then
                 -- Default bar: store extras in a separate list
                 if not b.extraSpells then b.extraSpells = {} end
@@ -5838,7 +5936,24 @@ function ns.AddTrackedSpell(barKey, id, isExtra)
                 for _, existing in ipairs(b.trackedSpells) do
                     if existing == id then return false end
                 end
-                b.trackedSpells[#b.trackedSpells + 1] = id
+                -- Insert so the new spell fills the top row's next empty slot
+                local numRows = b.numRows or 1
+                if numRows < 1 then numRows = 1 end
+                local curCount = #b.trackedSpells
+                local stride = math.ceil(curCount / numRows)
+                if stride < 1 then stride = 1 end
+                local topRowCount = curCount - (numRows - 1) * stride
+                if topRowCount < 0 then topRowCount = 0 end
+                local newCount = curCount + 1
+                local newStride = math.ceil(newCount / numRows)
+                if newStride < 1 then newStride = 1 end
+                local newTopRow = newCount - (numRows - 1) * newStride
+                if newTopRow < 0 then newTopRow = 0 end
+                if newStride == stride and newTopRow > topRowCount then
+                    table.insert(b.trackedSpells, topRowCount + 1, id)
+                else
+                    b.trackedSpells[newCount] = id
+                end
                 -- Clear removal flag so reconcile does not strip it
                 if b.removedSpells then b.removedSpells[id] = nil end
             end
@@ -6590,51 +6705,6 @@ local function TalentAwareReconcile()
 
     local knownSet = BuildKnownSpellIDSet()
 
-    -- Also build a viewer pool (spellIDs currently in Blizzard CDM viewers)
-    -- so we can detect genuinely new spells to append
-    local viewerSpells = {}  -- [spellID] = true
-    for _, viewerName in pairs(BLIZZ_CDM_FRAMES) do
-        local vf = _G[viewerName]
-        if vf then
-            for ci = 1, vf:GetNumChildren() do
-                local ch = select(ci, vf:GetChildren())
-                if ch then
-                    local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
-                    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-                        if info then
-                            local rsid = ResolveInfoSpellID(info)
-                            if rsid and rsid > 0 then
-                                viewerSpells[rsid] = true
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    -- Include secondary viewers (e.g. BuffBarCooldownViewer)
-    for _, viewerName in pairs(BLIZZ_CDM_FRAMES_SECONDARY) do
-        local vf = _G[viewerName]
-        if vf then
-            for ci = 1, vf:GetNumChildren() do
-                local ch = select(ci, vf:GetChildren())
-                if ch then
-                    local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
-                    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-                        if info then
-                            local rsid = ResolveInfoSpellID(info)
-                            if rsid and rsid > 0 then
-                                viewerSpells[rsid] = true
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
     -- Helper: reconcile a single spell list (trackedSpells or customSpells)
     -- Returns the new active list with dormant spells removed and returning
     -- spells re-inserted at their saved positions.
@@ -6714,62 +6784,12 @@ local function TalentAwareReconcile()
                     ReconcileSpellList(barData.trackedSpells, barData.dormantSpells, barData.removedSpells)
             end
         elseif MAIN_BAR_KEYS[barData.key] then
-            -- Buffs bar: simple viewer-pool reconcile (no dormant slots)
-            local viewerName = BLIZZ_CDM_FRAMES[barData.key]
-            if viewerName and barData.trackedSpells then
-                local vf = _G[viewerName]
-                if vf then
-                    local pool = {}
-                    for ci = 1, vf:GetNumChildren() do
-                        local ch = select(ci, vf:GetChildren())
-                        if ch then
-                            local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
-                            if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                                local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-                                if info then
-                                    local rsid = ResolveInfoSpellID(info)
-                                    if rsid and rsid > 0 then
-                                        pool[rsid] = true
-                                    end
-                                end
-                            end
-                        end
-                    end
-                    local poolHasAny = false
-                    for _ in pairs(pool) do poolHasAny = true; break end
-                    if poolHasAny then
-                        local removed = barData.removedSpells or {}
-                        local kept, keptSet = {}, {}
-                        for _, sid in ipairs(barData.trackedSpells) do
-                            if sid and sid ~= 0 and not removed[sid] then
-                                -- Also accept knownSet so a partially-populated
-                                -- viewer can't permanently drop buff bar spells.
-                                if pool[sid] or knownSet[sid] then
-                                    kept[#kept + 1] = sid
-                                    keptSet[sid] = true
-                                end
-                            end
-                        end
-                        -- Append new spells in stable viewer child order
-                        for ci = 1, vf:GetNumChildren() do
-                            local ch = select(ci, vf:GetChildren())
-                            if ch then
-                                local cdID2 = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
-                                if cdID2 and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                                    local info2 = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID2)
-                                    if info2 then
-                                        local sid = info2.overrideSpellID or info2.spellID
-                                        if sid and sid > 0 and not keptSet[sid] and not removed[sid] then
-                                            kept[#kept + 1] = sid
-                                            keptSet[sid] = true
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                        barData.trackedSpells = #kept > 0 and kept or nil
-                    end
-                end
+            -- Buffs bar: use the same dormant/returning approach as other bars.
+            -- Our DB is authoritative -- never re-read from the viewer to
+            -- add or remove spells after the initial snapshot.
+            if barData.trackedSpells and #barData.trackedSpells > 0 then
+                barData.trackedSpells, barData.dormantSpells =
+                    ReconcileSpellList(barData.trackedSpells, barData.dormantSpells, barData.removedSpells)
             end
         elseif TALENT_AWARE_BAR_TYPES[barData.barType] then
             -- Custom cooldown/utility bars: reconcile customSpells
@@ -6780,243 +6800,32 @@ local function TalentAwareReconcile()
         end
     end
 
-    -- Append genuinely new spells that appeared in the viewer but aren't
-    -- tracked on any bar yet (e.g. a new talent that wasn't previously assigned)
-    -- This mirrors what ReconcileMainBarSpells does for new spells.
-    local globalTracked = {}
-    for _, barData in ipairs(p.cdmBars.bars) do
-        if MAIN_BAR_KEYS[barData.key] and barData.trackedSpells then
-            for _, sid in ipairs(barData.trackedSpells) do
-                globalTracked[sid] = true
-            end
-        end
-        if barData.dormantSpells then
-            for sid in pairs(barData.dormantSpells) do
-                globalTracked[sid] = true
-            end
-        end
-        if barData.removedSpells then
-            for sid in pairs(barData.removedSpells) do
-                globalTracked[sid] = true
-            end
-        end
-    end
-
-    for _, barData in ipairs(p.cdmBars.bars) do
-        if barData.enabled and MAIN_BAR_KEYS[barData.key] then
-            local viewerName = BLIZZ_CDM_FRAMES[barData.key]
-            if viewerName then
-                local vf = _G[viewerName]
-                if vf then
-                    for ci = 1, vf:GetNumChildren() do
-                        local ch = select(ci, vf:GetChildren())
-                        if ch then
-                            local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
-                            if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                                local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-                                if info then
-                                    local sid = ResolveInfoSpellID(info)
-                                    if sid and sid > 0 then
-                                        local skip = (barData.key ~= "buffs") and IsTrulyPassive(sid)
-                                        if not skip and not globalTracked[sid] then
-                                            if not barData.trackedSpells then barData.trackedSpells = {} end
-                                            barData.trackedSpells[#barData.trackedSpells + 1] = sid
-                                            globalTracked[sid] = true
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-
     BuildAllCDMBars()
 end
 
--- Reconcile main bar spellIDs against Blizzard's current CDM pool.
--- Keeps existing order, removes spells no longer in the bar's own viewer,
--- appends newly-appeared spells at the end.
--- If trackedSpells is nil (first login), falls back to full snapshot.
+-- Initial snapshot for bars that have no trackedSpells yet.
+-- Once a bar has trackedSpells, our DB is authoritative -- we never re-read
+-- from Blizzard's viewer to add/remove/reorder spells.
 local function ReconcileMainBarSpells()
     local p = ECME.db and ECME.db.profile
     if not p or not p.cdmBars then return end
 
-    -- Helper: build a spellID pool from a single Blizzard viewer frame.
-    -- filterPassives=true skips spec aura passives (cooldown bars only).
-    -- Buff bars track proc auras which are passive by nature — don't filter them.
-    local function BuildViewerPool(viewerName, filterPassives)
-        local pool = {}
-        local vf = _G[viewerName]
-        if not vf then return pool end
-        for ci = 1, vf:GetNumChildren() do
-            local ch = select(ci, vf:GetChildren())
-            if ch then
-                local sid = ResolveChildSpellID(ch)
-                if sid and sid > 0 then
-                    local skip = filterPassives and IsTrulyPassive(sid)
-                    if not skip then
-                        pool[sid] = true
-                        -- Update persistent correction map when frame methods work
-                        local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
-                        if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                            local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-                            if info then
-                                local infoSid = ResolveInfoSpellID(info)
-                                if infoSid and sid ~= infoSid then
-                                    _cdIDToCorrectSID[cdID] = sid
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        return pool
-    end
-
-    -- Build a combined pool from ALL viewers so cross-category spells
-    -- (e.g. a utility spell placed on the cooldown bar) are not stripped.
-    local allViewerSpells = {}
-    for barKey, viewerName in pairs(BLIZZ_CDM_FRAMES) do
-        local fp = (barKey ~= "buffs")  -- filter passives for cooldown viewers only
-        local pool = BuildViewerPool(viewerName, fp)
-        for sid in pairs(pool) do allViewerSpells[sid] = true end
-    end
-    -- Include secondary viewers (e.g. BuffBarCooldownViewer for buffs)
-    for barKey, viewerName in pairs(BLIZZ_CDM_FRAMES_SECONDARY) do
-        local fp = (barKey ~= "buffs")
-        local pool = BuildViewerPool(viewerName, fp)
-        for sid in pairs(pool) do allViewerSpells[sid] = true end
-    end
-    -- Also include all known spellIDs from the API so spells that are
-    -- learned but whose viewer hasn't populated yet are preserved.
-    local knownSet = BuildKnownSpellIDSet()
-    for sid in pairs(knownSet) do allViewerSpells[sid] = true end
-
+    -- Only snapshot bars that have no trackedSpells yet (first login for
+    -- this spec). Once a bar has trackedSpells, our DB is authoritative --
+    -- we never re-read from Blizzard's viewer to add/remove/reorder spells.
+    -- Talent changes are handled separately by TalentAwareReconcile which
+    -- moves spells to/from dormant slots.
     for _, barData in ipairs(p.cdmBars.bars) do
         if barData.enabled and MAIN_BAR_KEYS[barData.key] then
-            local viewerName = BLIZZ_CDM_FRAMES[barData.key]
-            if not viewerName then
-                -- No viewer for this bar key (shouldn't happen for main bars)
-            elseif not barData.trackedSpells then
-                -- First login: full snapshot from this bar's viewer
-                SnapshotBlizzardCDM(barData.key, barData)
-            else
-                local barPool = BuildViewerPool(viewerName, barData.key ~= "buffs")
-                -- Include secondary viewer in the bar pool (e.g. BuffBarCooldownViewer for buffs)
-                local secondaryName = BLIZZ_CDM_FRAMES_SECONDARY[barData.key]
-                if secondaryName then
-                    local secPool = BuildViewerPool(secondaryName, barData.key ~= "buffs")
-                    for sid in pairs(secPool) do barPool[sid] = true end
-                end
-                -- Build a correction map: old (wrong) spellID -> correct spellID.
-                -- For buff entries the cooldownInfo struct can return a spec aura ID
-                -- while the child frame knows the real tracked spell. This lets us
-                -- silently fix saved trackedSpells that were captured with the wrong ID.
-                local sidCorrection = {}
-                do
-                    local viewersToScan = { _G[viewerName] }
-                    if secondaryName and _G[secondaryName] then
-                        viewersToScan[#viewersToScan + 1] = _G[secondaryName]
-                    end
-                    for _, vf in ipairs(viewersToScan) do
-                        for ci = 1, vf:GetNumChildren() do
-                            local ch = select(ci, vf:GetChildren())
-                            if ch then
-                                local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
-                                if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                                    local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-                                    if info then
-                                        local infoSid = ResolveInfoSpellID(info)
-                                        local childSid = ResolveChildSpellID(ch)
-                                        if infoSid and childSid and infoSid ~= childSid
-                                           and childSid > 0 and infoSid > 0 then
-                                            sidCorrection[infoSid] = childSid
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-                -- Skip reconcile if viewer hasn't populated yet
-                local poolHasAny = false
-                for _ in pairs(barPool) do poolHasAny = true; break end
-                if poolHasAny then
-                    local existing = barData.trackedSpells
-                    local removed = barData.removedSpells or {}
-                    local kept = {}
-                    local keptSet = {}
-                    local isBuffBar = (barData.key == "buffs")
-                    for i, sid in ipairs(existing) do
-                        -- Apply spellID correction: replace wrong IDs (e.g. spec aura)
-                        -- with the correct frame-resolved ID from the viewer child.
-                        if sidCorrection[sid] then sid = sidCorrection[sid] end
-                        if sid and sid ~= 0 and not removed[sid] then
-                            -- Strip passives from cooldown bars only — buff bars
-                            -- track proc auras which are passive by nature.
-                            local isPassive = (not isBuffBar) and IsTrulyPassive(sid)
-                            if isPassive then
-                                -- Silently drop — passive spells should never be on a cooldown bar
-                            elseif allViewerSpells[sid] then
-                                -- Spell exists in some viewer or is known — keep it in place
-                                kept[#kept + 1] = sid
-                                keptSet[sid] = true
-                            else
-                                -- Keep — viewer may be incomplete; TalentAwareReconcile
-                                -- handles dormant transitions on actual talent events.
-                                kept[#kept + 1] = sid
-                                keptSet[sid] = true
-                            end
-                        end
-                    end
-                    -- Append genuinely new spells from this bar's viewer only.
-                    -- Build a stable ordered list from the viewer so new spells
-                    -- are appended in a consistent order rather than pairs() order.
-                    local newSpells = {}
-                    local dormant = barData.dormantSpells
-                    local viewersToScan2 = { _G[viewerName] }
-                    if secondaryName and _G[secondaryName] then
-                        viewersToScan2[#viewersToScan2 + 1] = _G[secondaryName]
-                    end
-                    for _, vf in ipairs(viewersToScan2) do
-                        for ci = 1, vf:GetNumChildren() do
-                            local ch = select(ci, vf:GetChildren())
-                            if ch then
-                                local sid = ResolveChildSpellID(ch)
-                                if sid and sidCorrection[sid] then sid = sidCorrection[sid] end
-                                if sid and sid > 0
-                                   and not keptSet[sid] and not removed[sid]
-                                   and not (dormant and dormant[sid]) then
-                                    local skip = (not isBuffBar) and IsTrulyPassive(sid)
-                                    if not skip then
-                                        newSpells[#newSpells + 1] = sid
-                                        keptSet[sid] = true  -- deduplicate
-                                    end
-                                end
-                            end
-                        end
-                    end
-                    for _, sid in ipairs(newSpells) do
-                        kept[#kept + 1] = sid
-                    end
-                    -- Deduplicate: clean up any duplicates from prior buggy reconciles
-                    local seen = {}
-                    local deduped = {}
-                    for _, sid in ipairs(kept) do
-                        if not seen[sid] then
-                            seen[sid] = true
-                            deduped[#deduped + 1] = sid
-                        end
-                    end
-                    barData.trackedSpells = deduped
+            if not barData.trackedSpells then
+                local viewerName = BLIZZ_CDM_FRAMES[barData.key]
+                if viewerName then
+                    SnapshotBlizzardCDM(barData.key, barData)
                 end
             end
         end
     end
+
     BuildAllCDMBars()
 
     -- Rebuild the persistent cdID -> correct spellID map now that viewer
@@ -7052,8 +6861,8 @@ local function ReconcileMainBarSpells()
         end
 
         -- Custom bars: scan customSpells and check IsSpellOverlayed directly.
-        -- Custom bars have no Blizzard viewer children, so the viewer scan
-        -- above does not cover them.
+        -- Custom bars have no viewer children, so the viewer scan above
+        -- does not cover them.
         local p2 = ECME.db and ECME.db.profile
         if p2 and p2.cdmBars and p2.cdmBars.bars then
             for _, barData in ipairs(p2.cdmBars.bars) do
@@ -7062,9 +6871,7 @@ local function ReconcileMainBarSpells()
                     if icons then
                         for i, sid in ipairs(barData.customSpells) do
                             if sid and sid > 0 and icons[i] then
-                                -- Check base spell
                                 local checkID = sid
-                                -- Resolve talent override
                                 if C_SpellBook and C_SpellBook.FindSpellOverrideByID then
                                     local ovr = C_SpellBook.FindSpellOverrideByID(sid)
                                     if ovr and ovr ~= 0 then checkID = ovr end

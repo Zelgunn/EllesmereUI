@@ -2586,18 +2586,19 @@ local function CreateTargetAuras(frame, unit)
     local maxDebuffs = (settings and settings.maxDebuffs) or 28
 
     local dAnc = settings and settings.debuffAnchor or "bottomleft"
-    if dAnc ~= "none" then
+    do
         local debuffs = CreateFrame("Frame", nil, frame)
-        local dfp, dia, dgx, dgy, dox, doy = ResolveBuffLayout(dAnc, settings and settings.debuffGrowth or "auto")
+        local effectiveAnc = (dAnc ~= "none") and dAnc or "bottomleft"
+        local dfp, dia, dgx, dgy, dox, doy = ResolveBuffLayout(effectiveAnc, settings and settings.debuffGrowth or "auto")
         local debuffCbOff = 0
-        if dAnc == "bottomleft" or dAnc == "bottomright" then
+        if effectiveAnc == "bottomleft" or effectiveAnc == "bottomright" then
             debuffCbOff = cbOffset
         end
         debuffs:SetPoint(dia, frame, dfp, dox * gap, doy * gap + debuffCbOff)
         debuffs:SetSize(containerWidth, auraSize)
         debuffs.size = auraSize
         debuffs.spacing = gap
-        debuffs.num = maxDebuffs
+        debuffs.num = (dAnc ~= "none") and maxDebuffs or 0
         debuffs["size-x"] = perRow
         debuffs.initialAnchor = dia
         debuffs.growthX = dgx
@@ -2606,6 +2607,9 @@ local function CreateTargetAuras(frame, unit)
         debuffs.PostCreateButton = SetupAuraIcon
         if settings and settings.onlyPlayerDebuffs then
             debuffs.onlyShowPlayer = true
+        end
+        if dAnc == "none" then
+            debuffs:Hide()
         end
         frame.Debuffs = debuffs
     end
@@ -4164,6 +4168,23 @@ local function ReloadFrames()
             if enabled[unitKey] == false then
                 -- skip disabled frames
             else
+            -- Restore position and scale from profile
+            if unitKey == "boss" then
+                local bossPos = db.profile.positions.boss
+                local bossSpacing = db.profile.bossSpacing or 60
+                local bossIdx = tonumber(unit:match("(%d+)$"))
+                if bossPos and bossIdx then
+                    frame:ClearAllPoints()
+                    frame:SetPoint(bossPos.point, UIParent, bossPos.point, bossPos.x, bossPos.y - ((bossIdx - 1) * bossSpacing))
+                end
+            else
+                ApplyFramePosition(frame, unit)
+            end
+            do
+                local settings2 = GetSettingsForUnit(unit)
+                local sc = (settings2 and settings2.frameScale) or 100
+                ApplyFrameScaleCentered(frame, unit, sc / 100, false)
+            end
             local settings = GetSettingsForUnit(unit)
             local showPortrait = (db.profile.portraitStyle or "attached") ~= "none" and settings.showPortrait ~= false
 
@@ -4856,31 +4877,40 @@ local function ReloadFrames()
 
                     -- Debuffs
                     if frame.Debuffs then
-                        frame.Debuffs.num = settings.maxDebuffs or 20
-                        frame.Debuffs.onlyShowPlayer = settings.onlyPlayerDebuffs and true or nil
-                        local dfp, dia, dgx, dgy, dox, doy = ResolveBuffLayout(
-                            settings.debuffAnchor or "bottomleft",
-                            settings.debuffGrowth or "auto"
-                        )
-                        local liveDbCbOff = 0
-                        if settings.showCastbar ~= false then
-                            local dAnc = settings.debuffAnchor or "bottomleft"
-                            if dAnc == "bottomleft" or dAnc == "bottomright" then
-                                local cbH = settings.castbarHeight or 14
-                                if cbH <= 0 then cbH = 14 end
-                                liveDbCbOff = -cbH
+                        local dAnc = settings.debuffAnchor or "bottomleft"
+                        if dAnc == "none" then
+                            if frame:IsElementEnabled("Debuffs") then
+                                frame:DisableElement("Debuffs")
                             end
-                        end
-                        local debuffKey = (dia or "") .. (dfp or "") .. (dox or 0) .. (doy or 0) .. (dgx or 0) .. (dgy or 0) .. (settings.maxDebuffs or 20) .. liveDbCbOff .. (settings.onlyPlayerDebuffs and "1" or "0")
-                        if frame.Debuffs._lastDebuffKey ~= debuffKey then
-                            frame.Debuffs._lastDebuffKey = debuffKey
-                            frame.Debuffs:ClearAllPoints()
-                            frame.Debuffs:SetPoint(dia, frame, dfp, dox * 1, doy * 1 + liveDbCbOff)
-                            frame.Debuffs.initialAnchor = dia
-                            frame.Debuffs.growthX = dgx
-                            frame.Debuffs.growthY = dgy
-                            if frame.Debuffs.ForceUpdate then
-                                frame.Debuffs:ForceUpdate()
+                            frame.Debuffs:Hide()
+                            frame.Debuffs.num = 0
+                        else
+                            if not frame:IsElementEnabled("Debuffs") then
+                                frame:EnableElement("Debuffs")
+                            end
+                            frame.Debuffs:Show()
+                            frame.Debuffs.num = settings.maxDebuffs or 20
+                            frame.Debuffs.onlyShowPlayer = settings.onlyPlayerDebuffs and true or nil
+                            local dfp, dia, dgx, dgy, dox, doy = ResolveBuffLayout(dAnc, settings.debuffGrowth or "auto")
+                            local liveDbCbOff = 0
+                            if settings.showCastbar ~= false then
+                                if dAnc == "bottomleft" or dAnc == "bottomright" then
+                                    local cbH = settings.castbarHeight or 14
+                                    if cbH <= 0 then cbH = 14 end
+                                    liveDbCbOff = -cbH
+                                end
+                            end
+                            local debuffKey = (dia or "") .. (dfp or "") .. (dox or 0) .. (doy or 0) .. (dgx or 0) .. (dgy or 0) .. (settings.maxDebuffs or 20) .. liveDbCbOff .. (settings.onlyPlayerDebuffs and "1" or "0")
+                            if frame.Debuffs._lastDebuffKey ~= debuffKey then
+                                frame.Debuffs._lastDebuffKey = debuffKey
+                                frame.Debuffs:ClearAllPoints()
+                                frame.Debuffs:SetPoint(dia, frame, dfp, dox * 1, doy * 1 + liveDbCbOff)
+                                frame.Debuffs.initialAnchor = dia
+                                frame.Debuffs.growthX = dgx
+                                frame.Debuffs.growthY = dgy
+                                if frame.Debuffs.ForceUpdate then
+                                    frame.Debuffs:ForceUpdate()
+                                end
                             end
                         end
                     end

@@ -6123,7 +6123,7 @@ initFrame:SetScript("OnEvent", function(self)
               end });  y = y - h
         SApplySupport(sharedAddRow2._leftRegion, "showBuffs")
         SApplySupport(sharedAddRow2._rightRegion, "debuffAnchor")
-        -- Sync icons: Show Buffs (left) and Target Debuffs Location (right)
+        -- Sync icon: Show Buffs (left only -- Target Debuffs Location is target-only, no sync needed)
         do
             local rgn = sharedAddRow2._leftRegion
             EllesmereUI.BuildSyncIcon({
@@ -6154,36 +6154,6 @@ initFrame:SetScript("OnEvent", function(self)
                         local v = UNIT_DB_MAP[selectedUnit]().showBuffs
                         if v == nil then v = true end
                         for _, key in ipairs(checkedKeys) do UNIT_DB_MAP[key]().showBuffs = v end
-                        ReloadAndUpdate(); EllesmereUI:RefreshPage()
-                    end,
-                },
-            })
-        end
-        do
-            local rgn = sharedAddRow2._rightRegion
-            EllesmereUI.BuildSyncIcon({
-                region  = rgn,
-                tooltip = "Apply Target Debuffs Location to all Frames",
-                onClick = function()
-                    local v = UNIT_DB_MAP[selectedUnit]().debuffAnchor or "bottomleft"
-                    for _, key in ipairs(GROUP_UNIT_ORDER) do UNIT_DB_MAP[key]().debuffAnchor = v end
-                    ReloadAndUpdate(); EllesmereUI:RefreshPage()
-                end,
-                isSynced = function()
-                    local v = UNIT_DB_MAP[selectedUnit]().debuffAnchor or "bottomleft"
-                    for _, key in ipairs(GROUP_UNIT_ORDER) do
-                        if (UNIT_DB_MAP[key]().debuffAnchor or "bottomleft") ~= v then return false end
-                    end
-                    return true
-                end,
-                flashTargets = function() return { rgn } end,
-                multiApply = {
-                    elementKeys   = GROUP_UNIT_ORDER,
-                    elementLabels = SHORT_LABELS,
-                    getCurrentKey = function() return selectedUnit end,
-                    onApply       = function(checkedKeys)
-                        local v = UNIT_DB_MAP[selectedUnit]().debuffAnchor or "bottomleft"
-                        for _, key in ipairs(checkedKeys) do UNIT_DB_MAP[key]().debuffAnchor = v end
                         ReloadAndUpdate(); EllesmereUI:RefreshPage()
                     end,
                 },

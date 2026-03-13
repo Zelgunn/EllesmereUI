@@ -2429,6 +2429,7 @@ initFrame:SetScript("OnEvent", function(self)
         local lastInsertIdx = nil
         local dragMode = nil      -- "swap" or "insert"
         local swapTargetIdx = nil -- index of icon being swapped with
+        local dragEndTime = 0 -- GetTime() when drag finished, suppresses OnClick
 
         local function EnsureDragGhost()
             if dragGhost then return dragGhost end
@@ -2492,8 +2493,8 @@ initFrame:SetScript("OnEvent", function(self)
             -- Clear swap highlight
             if swapTargetIdx then
                 local s = previewSlots[swapTargetIdx]
-                if s and s._hlEdges then
-                    for e = 1, 4 do s._hlEdges[e]:Hide() end
+                if s and s._hlBrd then
+                    s._hlBrd:Hide()
                 end
                 swapTargetIdx = nil
             end
@@ -2632,9 +2633,7 @@ initFrame:SetScript("OnEvent", function(self)
                 insertLine:Hide()
                 if swapTargetIdx and swapTargetIdx ~= targetIdx then
                     local s = previewSlots[swapTargetIdx]
-                    if s and s._hlEdges then
-                        for e = 1, 4 do s._hlEdges[e]:Hide() end
-                    end
+                    if s and s._hlBrd then s._hlBrd:Hide() end
                 end
                 if lastInsertIdx then
                     for i = 1, slotCount do
@@ -2650,18 +2649,14 @@ initFrame:SetScript("OnEvent", function(self)
                 end
                 swapTargetIdx = targetIdx
                 local s = previewSlots[targetIdx]
-                if s and s._hlEdges then
-                    for e = 1, 4 do s._hlEdges[e]:Show() end
-                end
+                if s and s._hlBrd then s._hlBrd:Show() end
                 return
             end
 
             -- Insert mode: clear swap highlight first
             if swapTargetIdx then
                 local s = previewSlots[swapTargetIdx]
-                if s and s._hlEdges then
-                    for e = 1, 4 do s._hlEdges[e]:Hide() end
-                end
+                if s and s._hlBrd then s._hlBrd:Hide() end
                 swapTargetIdx = nil
             end
 
@@ -2682,6 +2677,19 @@ initFrame:SetScript("OnEvent", function(self)
                 shiftTowardStart =  nudge
             end
 
+            -- Determine which row the target belongs to (by _baseY).
+            -- Only shift slots on that row; other rows stay still.
+            local targetRowY = nil
+            if targetIdx >= 1 and targetIdx <= slotCount then
+                local ts = previewSlots[targetIdx]
+                if ts and ts._baseY then targetRowY = ts._baseY end
+            end
+            -- Fallback: check the slot just before targetIdx (insert at end of row)
+            if not targetRowY and targetIdx > 1 and targetIdx - 1 <= slotCount then
+                local ts = previewSlots[targetIdx - 1]
+                if ts and ts._baseY then targetRowY = ts._baseY end
+            end
+
             for i = 1, slotCount do
                 local s = previewSlots[i]
                 if not s or not s._baseX then
@@ -2691,21 +2699,29 @@ initFrame:SetScript("OnEvent", function(self)
                     s._targetOffX = 0
                     if not s._currentOffX then s._currentOffX = 0 end
                 else
-                    local virtualPos = i
-                    if i > fromIdx then virtualPos = i - 1 end
-                    local virtualInsert = targetIdx
-                    if targetIdx > fromIdx then virtualInsert = targetIdx - 1 end
-
-                    local offX = 0
-                    if virtualPos >= virtualInsert then
-                        offX = shiftTowardEnd
+                    -- Only shift slots on the same row as the target
+                    local onTargetRow = targetRowY and s._baseY and math.abs(s._baseY - targetRowY) < 1
+                    if not onTargetRow then
+                        s._targetOffX = 0
+                        if not s._currentOffX then s._currentOffX = 0 end
+                        s:SetAlpha(1)
                     else
-                        offX = shiftTowardStart
-                    end
+                        local virtualPos = i
+                        if i > fromIdx then virtualPos = i - 1 end
+                        local virtualInsert = targetIdx
+                        if targetIdx > fromIdx then virtualInsert = targetIdx - 1 end
 
-                    s._targetOffX = offX
-                    if not s._currentOffX then s._currentOffX = 0 end
-                    s:SetAlpha(1)
+                        local offX = 0
+                        if virtualPos >= virtualInsert then
+                            offX = shiftTowardEnd
+                        else
+                            offX = shiftTowardStart
+                        end
+
+                        s._targetOffX = offX
+                        if not s._currentOffX then s._currentOffX = 0 end
+                        s:SetAlpha(1)
+                    end
                 end
             end
             StartAnimTicker()
@@ -2855,6 +2871,9 @@ initFrame:SetScript("OnEvent", function(self)
 
             -- Right-click: spell picker to replace; Middle-click: remove
             slot:SetScript("OnClick", function(self, button)
+                if GetTime() - dragEndTime < 0.2 then
+                    return
+                end
                 if button == "MiddleButton" then
                     local bd = SelectedCDMBar()
                     if not bd then return end
@@ -3025,9 +3044,7 @@ initFrame:SetScript("OnEvent", function(self)
                         insertLine:Hide()
                         if swapTargetIdx then
                             local sw = previewSlots[swapTargetIdx]
-                            if sw and sw._hlEdges then
-                                for e = 1, 4 do sw._hlEdges[e]:Hide() end
-                            end
+                            if sw and sw._hlBrd then sw._hlBrd:Hide() end
                             swapTargetIdx = nil
                         end
 
@@ -3073,12 +3090,14 @@ initFrame:SetScript("OnEvent", function(self)
                             end
                         end)
                         dragSlot = nil; dragIdx = nil; insertIdx = nil; dragMode = nil
+                        dragEndTime = GetTime()
                         RefreshHoverHighlight()
                         return
                     end
                 end
                 ClearInsertIndicator()
                 dragSlot = nil; dragIdx = nil; insertIdx = nil; dragMode = nil
+                dragEndTime = GetTime()
                 pf:SetScript("OnUpdate", nil)
                 RefreshHoverHighlight()
             end
@@ -3112,8 +3131,8 @@ initFrame:SetScript("OnEvent", function(self)
                         end
                     end
                     self._shapeBorder:SetVertexColor(bR2, bG2, bB2, 1)
-                elseif self._hlEdges then
-                    for e = 1, 4 do self._hlEdges[e]:Hide() end
+                elseif self._hlBrd then
+                    self._hlBrd:Hide()
                 end
                 local ghost = EnsureDragGhost()
                 local iSz = bd.iconSize or 36
@@ -3285,7 +3304,6 @@ initFrame:SetScript("OnEvent", function(self)
             local grow     = bd.growDirection or "RIGHT"
             local numRows  = bd.numRows or 1
             if numRows < 1 then numRows = 1 end
-            if numRows > 3 then numRows = 3 end
 
             local tracked
             local isCustomBar = (bd.customSpells ~= nil)
@@ -3306,34 +3324,68 @@ initFrame:SetScript("OnEvent", function(self)
             -- Spell columns: enough to fit all spells with full rows
             local stride = math.ceil(count / numRows)
             if stride < 1 then stride = 1 end
-            local gridSlots = stride * numRows  -- total grid positions (spells + blanks)
+            local gridSlots = (count > 0) and (stride * numRows) or 0
             self._stride = stride
             self._numRows = numRows
             self._gridSlots = gridSlots
 
-            -- Total width includes +1 column for the "+" button
-            local totalCols = stride + 1
-            local totalW = (totalCols * iconSize) + ((totalCols - 1) * spacing)
-            local totalH = (numRows * iconH) + ((numRows - 1) * spacing)
+            -- How many icons on the top row (remainder). Bottom rows are full.
+            local topRowCount = count - (numRows - 1) * stride
+            if topRowCount < 0 then topRowCount = 0 end
+            local topRowHasLess = (topRowCount > 0 and topRowCount < stride)
+
+            -- Total dimensions: spell grid + 1 extra slot for the "+" button
+            local isVert = (grow == "DOWN" or grow == "UP")
+            local totalW, totalH
+            if isVert then
+                local totalCols = numRows + 1
+                totalW = (totalCols * iconSize) + ((totalCols - 1) * spacing)
+                totalH = (stride * iconH) + ((stride - 1) * spacing)
+            else
+                local totalCols = stride + 1
+                totalW = (totalCols * iconSize) + ((totalCols - 1) * spacing)
+                totalH = (numRows * iconH) + ((numRows - 1) * spacing)
+            end
 
             local startX = math.floor((localParentW - totalW) / 2)
             local startY = -5
 
-            -- Position helper: places frame at grid position (col, row)
-            -- Row 0 = top, row numRows-1 = bottom
-            -- When grow == "LEFT", mirror column order so icon 1 is rightmost
+            -- Position helper: places frame at grid position (col, row).
+            -- Row 0 = top row (partial, centered when fewer icons).
+            -- Rows 1..numRows-1 = bottom rows (always full).
             local function PosAtGrid(frame, col, row)
-                local px
-                if grow == "LEFT" then
-                    px = startX + (stride - 1 - col) * (iconSize + spacing)
-                else
-                    px = startX + col * (iconSize + spacing)
-                end
-                local py = startY - row * (iconH + spacing)
                 PP.Size(frame, iconSize, iconH); frame:ClearAllPoints()
-                PP.Point(frame, "TOPLEFT", self, "TOPLEFT", px, py)
-                frame._baseX = px
-                frame._baseY = py
+                -- Centering only applies to top row when it has fewer icons
+                local rowOffset = 0
+                if isVert then
+                    if row == 0 and topRowHasLess then
+                        rowOffset = math.floor((stride - topRowCount) * (iconH + spacing) / 2)
+                    end
+                    local px = startX + row * (iconSize + spacing)
+                    local py
+                    if grow == "UP" then
+                        py = startY - (stride - 1 - col) * (iconH + spacing) - rowOffset
+                    else
+                        py = startY - col * (iconH + spacing) - rowOffset
+                    end
+                    PP.Point(frame, "TOPLEFT", self, "TOPLEFT", px, py)
+                    frame._baseX = px
+                    frame._baseY = py
+                else
+                    if row == 0 and topRowHasLess then
+                        rowOffset = math.floor((stride - topRowCount) * (iconSize + spacing) / 2)
+                    end
+                    local px
+                    if grow == "LEFT" then
+                        px = startX + (stride - 1 - col) * (iconSize + spacing) + rowOffset
+                    else
+                        px = startX + col * (iconSize + spacing) + rowOffset
+                    end
+                    local py = startY - row * (iconH + spacing)
+                    PP.Point(frame, "TOPLEFT", self, "TOPLEFT", px, py)
+                    frame._baseX = px
+                    frame._baseY = py
+                end
             end
 
             -- Border color
@@ -3348,17 +3400,23 @@ initFrame:SetScript("OnEvent", function(self)
 
             local shape = bd.iconShape or "none"
 
-            -- Layout: fill bottom row first, then top. Blanks end up at end of top row.
-            -- gridIdx 0..stride-1 = bottom row, stride..2*stride-1 = next row up, etc.
+            -- Layout: fill bottom-up. Icons 1..topRowCount go to top row (row 0),
+            -- remaining icons fill rows 1..numRows-1 (full bottom rows).
             for i = 1, math.min(gridSlots, MAX_PREVIEW_ICONS) do
                 local slot = previewSlots[i]
                 slot._slotIdx = i
 
-                local gridIdx = i - 1
-                local col = gridIdx % stride
-                local fillRow = math.floor(gridIdx / stride)  -- 0 = first filled row
-                local visRow = (numRows - 1) - fillRow         -- map to visual: 0=first filled bottom
-                PosAtGrid(slot, col, visRow)
+                -- Map sequential index to bottom-up grid position
+                local col, row
+                if i <= topRowCount then
+                    col = i - 1
+                    row = 0
+                else
+                    local bottomIdx = i - topRowCount - 1
+                    col = bottomIdx % stride
+                    row = 1 + math.floor(bottomIdx / stride)
+                end
+                PosAtGrid(slot, col, row)
 
                 if i <= count then
                     -- Spell slot
@@ -3468,14 +3526,37 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                 end
 
-                slot:Show()
+                if i <= count then
+                    slot:Show()
+                else
+                    slot:Hide()
+                end
             end
 
             for i = gridSlots + 1, MAX_PREVIEW_ICONS do previewSlots[i]:Hide() end
 
-            -- "+" button: always at the far right (its own column, not mirrored)
-            local addPx = startX + stride * (iconSize + spacing)
-            local addPy = startY - (numRows - 1) * (iconH + spacing)
+            -- "+" button: placed right after the last icon on the bottom row.
+            -- Bottom row is always full (or the only row).
+            -- For empty bars (count=0), the "+" is the only visible element.
+            local addPx, addPy
+            if count == 0 then
+                -- No spells: center the "+" button alone
+                addPx = math.floor((localParentW - iconSize) / 2)
+                addPy = startY
+            elseif isVert then
+                -- Vertical: "+" goes in the next column to the right, at the bottom
+                addPx = startX + numRows * (iconSize + spacing)
+                addPy = startY - (stride - 1) * (iconH + spacing)
+            else
+                -- Horizontal: "+" goes right after the last column on the bottom row
+                local lastRow = numRows - 1
+                if grow == "LEFT" then
+                    addPx = startX - (iconSize + spacing)
+                else
+                    addPx = startX + stride * (iconSize + spacing)
+                end
+                addPy = startY - lastRow * (iconH + spacing)
+            end
             PP.Size(addBtn, iconSize, iconH); addBtn:ClearAllPoints()
             PP.Point(addBtn, "TOPLEFT", self, "TOPLEFT", addPx, addPy)
             if addBtn._ppBorders then PP.SetBorderSize(addBtn, 1) end
@@ -3484,11 +3565,18 @@ initFrame:SetScript("OnEvent", function(self)
             addBtn:Show()
 
             -- Bar background covers spell grid only (not the + column)
-            local spellW = (stride * iconSize) + ((stride - 1) * spacing)
+            local spellW, spellH
+            if isVert then
+                spellW = (numRows * iconSize) + ((numRows - 1) * spacing)
+                spellH = (stride * iconH) + ((stride - 1) * spacing)
+            else
+                spellW = (stride * iconSize) + ((stride - 1) * spacing)
+                spellH = totalH
+            end
             if bd.barBgEnabled then
                 pvBarBg:ClearAllPoints()
                 pvBarBg:SetPoint("TOPLEFT", startX, 0)
-                pvBarBg:SetPoint("BOTTOMRIGHT", pf, "TOPLEFT", startX + spellW, -totalH)
+                pvBarBg:SetPoint("BOTTOMRIGHT", pf, "TOPLEFT", startX + spellW, -spellH)
                 pvBarBg:SetColorTexture(bd.barBgR or 0, bd.barBgG or 0, bd.barBgB or 0, 0.5)
                 if pvBarBg.SetSnapToPixelGrid then pvBarBg:SetSnapToPixelGrid(false); pvBarBg:SetTexelSnappingBias(0) end
                 pvBarBg:Show()
@@ -4169,6 +4257,7 @@ initFrame:SetScript("OnEvent", function(self)
               getValue=function() return BD().showTooltip == true end,
               setValue=function(v)
                   BD().showTooltip = v
+                  ns.ApplyCDMTooltipState(BD().key)
                   Refresh()
               end },
             { type="label", text="" }

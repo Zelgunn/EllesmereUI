@@ -83,8 +83,6 @@ initFrame:SetScript("OnEvent", function(self)
         { "floatingCombatTextCombatHealing_v2",             "1"   },
         { "WorldTextScale_v2",                              "0.5" },
         { "floatingCombatTextCombatLogPeriodicSpells_v2",   "0"   },
-        { "floatingCombatTextPetMeleeDamage_v2",            "0"   },
-        { "floatingCombatTextPetSpellDamage_v2",            "0"   },
         { "floatingCombatTextCombatDamage_v2",              "1"   },
     }
 
@@ -1593,6 +1591,7 @@ initFrame:SetScript("OnEvent", function(self)
               end,
               setValue=function(v)
                 SetCVarSafe("floatingCombatTextCombatDamage_v2", v and "1" or "0")
+                EllesmereUI:RefreshPage()
               end },
             { type="dropdown", text="Combat Text Font",
               tooltip="WARNING: This feature requires you to re-log or restart WoW to take effect.",
@@ -3393,7 +3392,13 @@ initFrame:SetScript("OnEvent", function(self)
                             end)
                             itm:SetScript("OnClick", function()
                                 menu:Hide()
+                                -- Force-save current profile before switching
+                                -- (same direct snapshot the spec-switch uses,
+                                -- bypasses _profileSaveLocked guard)
+                                local wasLocked = EllesmereUI._profileSaveLocked
+                                EllesmereUI._profileSaveLocked = false
                                 EllesmereUI.AutoSaveActiveProfile()
+                                EllesmereUI._profileSaveLocked = wasLocked
                                 local _, profiles = EllesmereUI.GetProfileList()
                                 local fontWillChange = EllesmereUI.ProfileChangesFont(profiles and profiles[capName])
                                 EllesmereUI.SwitchProfile(capName)

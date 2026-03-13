@@ -2255,6 +2255,13 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:SectionHeader(parent, SECTION_ENEMY_NP, y);  y = y - h
 
         _, h = W:DualRow(parent, y,
+            { type="toggle", text="Enable Stacking Nameplates",
+              getValue=function() return DBVal("stackingEnabled") ~= false end,
+              setValue=function(v)
+                DB().stackingEnabled = v
+                ns.RefreshStackingMotion()
+              end,
+              tooltip="When enabled, nameplates stack vertically instead of overlapping." },
             { type="slider", text="Stacked Nameplate Spacing",
               trackWidth=130,
               min=50, max=200, step=5,
@@ -2263,25 +2270,7 @@ initFrame:SetScript("OnEvent", function(self)
                 DB().stackSpacingScale = v
                 ns.RefreshStackingBounds()
               end,
-              tooltip="Adjusts the vertical spacing between stacked nameplates. 100% = default, lower = tighter, higher = more spread." },
-            { type="slider", text="Nameplate Distance from Enemy",
-              trackWidth=110,
-              min=-50, max=50, step=1,
-              getValue=function() return DBVal("nameplateYOffset") or defaults.nameplateYOffset end,
-              setValue=function(v)
-                DB().nameplateYOffset = v
-                ns.RefreshNameplateYOffset()
-              end });  y = y - h
-
-        _, h = W:DualRow(parent, y,
-            { type="toggle", text="Enable Stacking Nameplates",
-              getValue=function() return DBVal("stackingEnabled") ~= false end,
-              setValue=function(v)
-                DB().stackingEnabled = v
-                ns.RefreshStackingMotion()
-              end,
-              tooltip="When enabled, nameplates stack vertically instead of overlapping." },
-            { type="label", text="" });  y = y - h
+              tooltip="Adjusts the vertical spacing between stacked nameplates. 100% = default, lower = tighter, higher = more spread." });  y = y - h
 
         _, h = W:Spacer(parent, y, 20);  y = y - h
 
