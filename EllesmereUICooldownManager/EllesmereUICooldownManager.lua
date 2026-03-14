@@ -128,7 +128,7 @@ local _zeroStartChargeSpells = {
     [55090]  = true,  -- Scourge Strike
 }
 
-local function CacheMultiChargeSpell(spellID)
+local function CacheMultiChargeSpell(spellID, blizzChild)
     if not spellID or not C_Spell.GetSpellCharges then return end
     if _multiChargeSpells[spellID] ~= nil then return end
     local charges = C_Spell.GetSpellCharges(spellID)
@@ -140,14 +140,20 @@ local function CacheMultiChargeSpell(spellID)
         _multiChargeSpells[spellID] = result or false
         if result then
             _maxChargeCount[spellID] = charges.maxCharges
-            -- Only persist confirmed charge spells ΓÇö never persist false so
+            -- Tag the CDM child so variant swaps in combat can inherit
+            -- charge status without needing API calls (SECRET-proof).
+            if blizzChild then
+                blizzChild._ecmeIsChargeSpell = true
+                blizzChild._ecmeMaxCharges = charges.maxCharges
+            end
+            -- Only persist confirmed charge spells — never persist false so
             -- stale DB entries don't block re-detection on login or talent swap.
             local db = ECME.db
-            if db and db.global then
-                if not db.global.multiChargeSpells then
-                    db.global.multiChargeSpells = {}
+            if db and db.sv then
+                if not db.sv.multiChargeSpells then
+                    db.sv.multiChargeSpells = {}
                 end
-                db.global.multiChargeSpells[spellID] = true
+                db.sv.multiChargeSpells[spellID] = true
             end
         end
     else
@@ -156,10 +162,19 @@ local function CacheMultiChargeSpell(spellID)
         -- and caching false permanently blocks charge detection for the new
         -- spell until the next full cache wipe.
         local db = ECME.db
-        if db and db.global and db.global.multiChargeSpells and db.global.multiChargeSpells[spellID] then
+        if db and db.sv and db.sv.multiChargeSpells and db.sv.multiChargeSpells[spellID] then
             _multiChargeSpells[spellID] = true
         end
-        -- If no DB entry: leave nil so we retry next tick when OOC or after talents settle
+        -- CDM child propagation: for multi-child spells like Eclipse, the
+        -- same CDM child swaps between variant spell IDs (Lunar/Solar).
+        -- If we tagged the child OOC when the previous variant was active,
+        -- inherit that charge status for the new variant.
+        if not _multiChargeSpells[spellID] and blizzChild
+                and blizzChild._ecmeIsChargeSpell then
+            _multiChargeSpells[spellID] = true
+            _maxChargeCount[spellID] = blizzChild._ecmeMaxCharges
+        end
+        -- If no DB entry and no child tag: leave nil so we retry next tick
     end
 end
 -- Expose charge cache to options file for preview rendering
@@ -192,18 +207,18 @@ local function CacheCastCountSpell(spellID)
         if count > 0 then
             _castCountSpells[spellID] = count
             local db = ECME.db
-            if db and db.global then
-                if not db.global.castCountSpells then
-                    db.global.castCountSpells = {}
+            if db and db.sv then
+                if not db.sv.castCountSpells then
+                    db.sv.castCountSpells = {}
                 end
-                db.global.castCountSpells[spellID] = true
+                db.sv.castCountSpells[spellID] = true
             end
         end
         -- Don't cache false here ΓÇö spell may just not have stacks yet
     elseif _castCountSpells[spellID] == nil then
         -- Secret (combat): check DB for whether we've ever seen this spell with stacks
         local db = ECME.db
-        if db and db.global and db.global.castCountSpells and db.global.castCountSpells[spellID] then
+        if db and db.sv and db.sv.castCountSpells and db.sv.castCountSpells[spellID] then
             _castCountSpells[spellID] = true
         end
     end
@@ -406,7 +421,9 @@ local _inCombat = false
 -------------------------------------------------------------------------------
 local function ApplySpellCooldown(icon, spellID, desatOnCD, showCharges, swAlpha, skipCD, blizzChild, isBuffBar)
     -- Ensure charge cache is populated (cheap: skips if already cached)
-    CacheMultiChargeSpell(spellID)
+    -- Pass blizzChild so in-combat variant swaps can inherit charge status
+    -- from the CDM child tag set OOC (e.g. Eclipse Lunar → Solar).
+    CacheMultiChargeSpell(spellID, blizzChild)
 
     local isChargeSpell = _multiChargeSpells[spellID] == true
 
@@ -3489,8 +3506,9 @@ local function UpdateCustomBarIcons(barKey)
             -- Always attempt direct detection on the final resolvedID first ΓÇö it may
             -- have charges even if the base spell doesn't (three-level chain).
             if resolvedID ~= spellID then
+                local propChild = _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
                 -- Always try direct detection on the resolved ID (cheapest path)
-                CacheMultiChargeSpell(resolvedID)
+                CacheMultiChargeSpell(resolvedID, propChild)
                 -- If resolved ID still unknown (secret/combat), check if we have a
                 -- live Blizzard child for it and mark it as a charge spell so
                 -- ApplySpellCooldown uses the charge display path.
@@ -3506,7 +3524,7 @@ local function UpdateCustomBarIcons(barKey)
                     local intermediate = C_SpellBook and C_SpellBook.FindSpellOverrideByID
                         and C_SpellBook.FindSpellOverrideByID(spellID)
                     if intermediate and intermediate ~= 0 and intermediate ~= resolvedID then
-                        CacheMultiChargeSpell(intermediate)
+                        CacheMultiChargeSpell(intermediate, propChild)
                         if _multiChargeSpells[intermediate] == true then
                             _multiChargeSpells[resolvedID] = true
                             if _maxChargeCount[intermediate] then
@@ -3517,7 +3535,7 @@ local function UpdateCustomBarIcons(barKey)
                 end
                 -- If still unknown, propagate from base ΓÇö but only if base is true
                 if _multiChargeSpells[resolvedID] == nil then
-                    CacheMultiChargeSpell(spellID)
+                    CacheMultiChargeSpell(spellID, propChild)
                     if _multiChargeSpells[spellID] == true then
                         _multiChargeSpells[resolvedID] = true
                         if _maxChargeCount[spellID] then
@@ -4545,7 +4563,8 @@ local function UpdateTrackedBarIcons(barKey)
 
             -- Propagate charge cache from base to override
             if resolvedID ~= spellID then
-                CacheMultiChargeSpell(resolvedID)
+                local propChild = _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
+                CacheMultiChargeSpell(resolvedID, propChild)
                 if _multiChargeSpells[resolvedID] == nil and _tickBlizzChildCache[resolvedID] then
                     _multiChargeSpells[resolvedID] = true
                 end
@@ -4553,7 +4572,7 @@ local function UpdateTrackedBarIcons(barKey)
                     local intermediate = C_SpellBook and C_SpellBook.FindSpellOverrideByID
                         and C_SpellBook.FindSpellOverrideByID(spellID)
                     if intermediate and intermediate ~= 0 and intermediate ~= resolvedID then
-                        CacheMultiChargeSpell(intermediate)
+                        CacheMultiChargeSpell(intermediate, propChild)
                         if _multiChargeSpells[intermediate] == true then
                             _multiChargeSpells[resolvedID] = true
                             if _maxChargeCount[intermediate] then
@@ -4563,7 +4582,7 @@ local function UpdateTrackedBarIcons(barKey)
                     end
                 end
                 if _multiChargeSpells[resolvedID] == nil then
-                    CacheMultiChargeSpell(spellID)
+                    CacheMultiChargeSpell(spellID, propChild)
                     if _multiChargeSpells[spellID] == true then
                         _multiChargeSpells[resolvedID] = true
                         if _maxChargeCount[spellID] then
@@ -4839,10 +4858,12 @@ local function UpdateTrackedBarIcons(barKey)
         ic:Hide()
     end
 
-    -- Re-layout when visible count changes, or when companion icons are/were
-    -- active (dynamic combined list can change composition without changing
-    -- visible count, leaving newly-created icons unpositioned).
+    -- Re-layout when visible count changes, when companion icons are/were
+    -- active, or when hideBuffsWhenInactive can swap which icons are visible
+    -- without changing the total count (e.g. Eclipse Solar hides while Lunar
+    -- shows — same count but different icons need repositioning).
     local needsLayout = visCount ~= prevCount or hasCompanions or frame._hadCompanions
+        or (isBuffBarForOvr and barData.hideBuffsWhenInactive)
     frame._hadCompanions = hasCompanions
     if needsLayout then
         frame._prevVisibleCount = visCount
@@ -7177,8 +7198,8 @@ local function ScheduleTalentRebuild()
             wipe(_multiChargeSpells)
             wipe(_maxChargeCount)
             local db = ECME.db
-            if db and db.global and db.global.multiChargeSpells then
-                wipe(db.global.multiChargeSpells)
+            if db and db.sv and db.sv.multiChargeSpells then
+                wipe(db.sv.multiChargeSpells)
             end
         end
         -- Reconcile bar spellIDs against the new talent set.
@@ -7201,6 +7222,8 @@ local function ScheduleTalentRebuild()
                         ch._ecmeBaseSpellID = nil
                         ch._ecmeOverrideSid = nil
                         ch._ecmeCachedCdID = nil
+                        ch._ecmeIsChargeSpell = nil
+                        ch._ecmeMaxCharges = nil
                     end
                 end
             end
