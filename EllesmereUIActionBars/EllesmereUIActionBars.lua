@@ -4784,13 +4784,35 @@ RegisterStateDriver(_vehicleStateFrame, "vehicleui", "[vehicleui] invehicle; nov
 -------------------------------------------------------------------------------
 --  Vehicle Exit Button
 --  Reparent Blizzard's MainMenuBarVehicleLeaveButton so it stays visible
---  when we hide the default action bars.  Anchor it above the top-right of
---  action bar 1.  This is a secure button no taint, works in combat.
---
---  Phase 1 (file scope): strip taint-causing scripts, reparent to UIParent,
---  set a temporary fallback anchor, hook SetPoint to block Blizzard repos.
---  Phase 2 (FinishSetup): re-anchor to barFrames["MainBar"] once it exists.
+--  when we hide the default action bars.  Strip taint-causing scripts,
+--  reparent to UIParent, hook SetPoint to block Blizzard repositioning.
+--  FinishSetup re-anchors to barFrames["MainBar"] once it exists, or to a
+--  saved unlock-mode position if one is stored.
 -------------------------------------------------------------------------------
+
+-- Apply saved or default anchor for the vehicle exit button.
+-- Shared by the SetPoint hook, unlock mode applyPosition, and FinishSetup.
+-- Stored on EAB rather than a file-scope local to avoid hitting the 200
+-- local/upvalue limit in this large file.
+function EAB.AnchorVehicleButton()
+    local btn = MainMenuBarVehicleLeaveButton
+    if not btn or InCombatLockdown() then return end
+    local pos = EAB.db and EAB.db.profile.barPositions
+                and EAB.db.profile.barPositions["VehicleExit"]
+    btn:ClearAllPoints()
+    if pos then
+        btn:SetPoint(pos.point, UIParent, pos.relPoint or pos.point,
+                     pos.x, pos.y)
+    else
+        local bar1 = barFrames["MainBar"]
+        if bar1 then
+            btn:SetPoint("BOTTOM", bar1, "TOPRIGHT", 0, 4)
+        else
+            btn:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, 130)
+        end
+    end
+end
+
 do
     local btn = MainMenuBarVehicleLeaveButton
     if btn then
@@ -4815,13 +4837,18 @@ do
             local anchor = bar1 or UIParent
             if parent ~= anchor and parent ~= UIParent then
                 hookGuard = true
-                self:ClearAllPoints()
-                if bar1 then
-                    self:SetPoint("BOTTOM", bar1, "TOPRIGHT", 0, 4)
-                else
-                    self:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, 130)
-                end
+                EAB.AnchorVehicleButton()
                 hookGuard = false
+            end
+        end)
+
+        -- Override visibility: only show when the player can actually exit
+        -- a vehicle, never for Edit Mode previews.  This also fixes campaign
+        -- vehicles whose ActionBarController state isn't MAIN.
+        hooksecurefunc(btn, "UpdateShownState", function(self)
+            local shouldShow = CanExitVehicle()
+            if self:IsShown() ~= shouldShow then
+                self:SetShown(shouldShow)
             end
         end)
     end
@@ -5108,6 +5135,48 @@ local function RegisterWithUnlockMode()
         end
     end
 
+    -- Vehicle Exit Button
+    do
+        local vBtn = MainMenuBarVehicleLeaveButton
+        if vBtn then
+            blizzOrder = blizzOrder + 1
+            elements[#elements + 1] = {
+                key   = "VehicleExit",
+                label = "Vehicle Exit",
+                group = "Action Bars",
+                order = blizzOrder,
+                getFrame = function()
+                    return vBtn
+                end,
+                getSize = function()
+                    return vBtn:GetWidth(), vBtn:GetHeight()
+                end,
+                getScale = function() return 1.0 end,
+                loadPosition = function()
+                    local pos = EAB.db.profile.barPositions["VehicleExit"]
+                    if not pos then return nil end
+                    return { point = pos.point, relPoint = pos.relPoint or pos.point, x = pos.x, y = pos.y }
+                end,
+                savePosition = function(_, point, relPoint, x, y)
+                    if point and x and y then
+                        EAB.db.profile.barPositions["VehicleExit"] = {
+                            point = point, relPoint = relPoint or point, x = x, y = y,
+                        }
+                    end
+                    -- Apply immediately
+                    if not InCombatLockdown() then
+                        vBtn:ClearAllPoints()
+                        vBtn:SetPoint(point, UIParent, relPoint or point, x, y)
+                    end
+                end,
+                clearPosition = function()
+                    EAB.db.profile.barPositions["VehicleExit"] = nil
+                end,
+                applyPosition = EAB.AnchorVehicleButton,
+            }
+        end
+    end
+
     EllesmereUI:RegisterUnlockElements(elements)
 end
 
@@ -5264,15 +5333,7 @@ function EAB:FinishSetup()
                 LayoutBar(info.key)
             end
             RestoreBarPositions()
-            -- Re-anchor vehicle exit button
-            do
-                local btn = MainMenuBarVehicleLeaveButton
-                local bar1 = barFrames["MainBar"]
-                if btn and bar1 then
-                    btn:ClearAllPoints()
-                    btn:SetPoint("BOTTOM", bar1, "TOPRIGHT", 0, 4)
-                end
-            end
+            EAB.AnchorVehicleButton()
             -- Set up MainBar paging
             local mainFrame = barFrames["MainBar"]
             if mainFrame then
@@ -5394,13 +5455,7 @@ function EAB:FinishSetup()
             ApplyKeyDownCVar()
             self:HookProcGlow()
             self:ScanExistingProcs()
-            -- Re-anchor vehicle exit button
-            local btn = MainMenuBarVehicleLeaveButton
-            local bar1 = barFrames["MainBar"]
-            if btn and bar1 then
-                btn:ClearAllPoints()
-                btn:SetPoint("BOTTOM", bar1, "TOPRIGHT", 0, 4)
-            end
+            EAB.AnchorVehicleButton()
         end
 
         if InCombatLockdown() then
@@ -5634,8 +5689,16 @@ function EAB:FinishSetup()
     _vehicleEventFrame:SetScript("OnEvent", function(self, event)
         if event == "UNIT_ENTERED_VEHICLE" then
             ClearKeybindsForVehicle()
+            -- Block Edit Mode while on a vehicle to avoid taint from our
+            -- hidden/reparented Blizzard bars causing it to silently close.
+            if EditModeManagerFrame then
+                EditModeManagerFrame:BlockEnteringEditMode(self)
+            end
         elseif event == "UNIT_EXITED_VEHICLE" then
             RestoreKeybindsAfterVehicle()
+            if EditModeManagerFrame then
+                EditModeManagerFrame:UnblockEnteringEditMode(self)
+            end
         end
     end)
 
