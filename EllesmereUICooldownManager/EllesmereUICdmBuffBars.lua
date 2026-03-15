@@ -454,7 +454,7 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
         bar._bg:SetColorTexture(cfg.bgR or 0, cfg.bgG or 0, cfg.bgB or 0, cfg.bgA or 0.4)
     end
 
-    -- Gradient (clip frame approach: full-bar texture masked to fill width)
+    -- Gradient (clip frame approach: full-bar gradient masked to fill width)
     local fillTex = sb:GetStatusBarTexture()
     if cfg.gradientEnabled then
         local dir = cfg.gradientDir or "HORIZONTAL"
@@ -474,17 +474,13 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
             bar._gradTex = tex
         end
 
+        -- Anchor the clip frame to the fill texture so it tracks
+        -- automatically when Blizzard's SetTimerDuration animates the bar.
+        -- The fill texture shrinks as the buff expires; anchoring to it
+        -- means the clip follows without any per-tick width calculations.
         local clip = bar._gradClip
         clip:ClearAllPoints()
-        if not isVert then
-            clip:SetPoint("TOPLEFT",    sb, "TOPLEFT",    0, 0)
-            clip:SetPoint("BOTTOMLEFT", sb, "BOTTOMLEFT", 0, 0)
-            clip:SetWidth(0.01)
-        else
-            clip:SetPoint("BOTTOMLEFT",  sb, "BOTTOMLEFT",  0, 0)
-            clip:SetPoint("BOTTOMRIGHT", sb, "BOTTOMRIGHT", 0, 0)
-            clip:SetHeight(0.01)
-        end
+        clip:SetAllPoints(fillTex)
 
         bar._gradTex:SetTexture(texPath)
         bar._gradTex:SetVertexColor(1, 1, 1, 1)
@@ -959,9 +955,6 @@ function ns.UpdateTrackedBuffBarTimers()
             bar:Hide()
         elseif cfg.spellIDs then
             -- Multi-ID bar (popular buffs). Active if any ID is in the CDM active cache.
-            -- Use cfg dimensions so gradient clip sizing is correct before first layout pass.
-            local barW = cfg.verticalOrientation and (cfg.height or 24) or (cfg.width or 270)
-            local barH = cfg.verticalOrientation and (cfg.width or 270) or (cfg.height or 24)
             local sb = bar._bar  -- StatusBar child of wrapFrame
             local isActive = false
             for _, sid in ipairs(cfg.spellIDs) do
@@ -998,13 +991,6 @@ function ns.UpdateTrackedBuffBarTimers()
                     local frac = remaining / activeDur
                     sb:SetMinMaxValues(0, 1)
                     sb:SetValue(frac)
-                    if bar._gradientActive and bar._gradClip then
-                        if cfg.verticalOrientation then
-                            bar._gradClip:SetHeight(math.max(0.01, barH * frac))
-                        else
-                            bar._gradClip:SetWidth(math.max(0.01, barW * frac))
-                        end
-                    end
                     if cfg.showTimer and bar._timerText then
                         if remaining <= 0 then
                             bar._timerText:Hide()
@@ -1025,13 +1011,6 @@ function ns.UpdateTrackedBuffBarTimers()
                 else
                     -- Active but no custom timer started yet (or permanent)
                     sb:SetValue(1)
-                    if bar._gradientActive and bar._gradClip then
-                        if cfg.verticalOrientation then
-                            bar._gradClip:SetHeight(math.max(0.01, barH))
-                        else
-                            bar._gradClip:SetWidth(math.max(0.01, barW))
-                        end
-                    end
                     if cfg.showTimer and bar._timerText then bar._timerText:Hide() end
                 end
             else
@@ -1043,8 +1022,6 @@ function ns.UpdateTrackedBuffBarTimers()
         else
             local spellID = cfg.spellID
             local resolvedID = bar._resolvedAuraID or spellID
-            local barW = cfg.verticalOrientation and (cfg.height or 24) or (cfg.width or 270)
-            local barH = cfg.verticalOrientation and (cfg.width or 270) or (cfg.height or 24)
             local sb = bar._bar  -- StatusBar child of wrapFrame
 
             -- Check active state using the same caches the core CDM builds
@@ -1082,14 +1059,6 @@ function ns.UpdateTrackedBuffBarTimers()
                     sb:SetMinMaxValues(0, 1)
                     sb:SetValue(frac)
 
-                    if bar._gradientActive and bar._gradClip then
-                        if cfg.verticalOrientation then
-                            bar._gradClip:SetHeight(math.max(0.01, barH * frac))
-                        else
-                            bar._gradClip:SetWidth(math.max(0.01, barW * frac))
-                        end
-                    end
-
                     if cfg.showTimer and bar._timerText then
                         if remaining <= 0 then
                             bar._timerText:Hide()
@@ -1126,20 +1095,6 @@ function ns.UpdateTrackedBuffBarTimers()
                         sb:SetTimerDuration(durObj, Enum.StatusBarInterpolation.None, Enum.StatusBarTimerDirection.RemainingTime)
                         sb:SetToTargetValue()
 
-                        if bar._gradientActive and bar._gradClip then
-                            if cfg.verticalOrientation then
-                                local ok, fillH = pcall(function() return sb:GetStatusBarTexture():GetHeight() end)
-                                if ok and fillH and not (issecretvalue and issecretvalue(fillH)) then
-                                    bar._gradClip:SetHeight(math.max(0.01, fillH))
-                                end
-                            else
-                                local ok, fillW = pcall(function() return sb:GetStatusBarTexture():GetWidth() end)
-                                if ok and fillW and not (issecretvalue and issecretvalue(fillW)) then
-                                    bar._gradClip:SetWidth(math.max(0.01, fillW))
-                                end
-                            end
-                        end
-
                         if cfg.showTimer and bar._timerText then
                             local ok, remaining = pcall(durObj.GetRemainingDuration, durObj)
                             if ok and remaining then
@@ -1167,13 +1122,6 @@ function ns.UpdateTrackedBuffBarTimers()
                     else
                         -- Permanent buff or no duration object available
                         sb:SetValue(1)
-                        if bar._gradientActive and bar._gradClip then
-                            if cfg.verticalOrientation then
-                                bar._gradClip:SetHeight(math.max(0.01, barH))
-                            else
-                                bar._gradClip:SetWidth(math.max(0.01, barW))
-                            end
-                        end
                         if cfg.showTimer and bar._timerText then bar._timerText:Hide() end
                     end
                 end

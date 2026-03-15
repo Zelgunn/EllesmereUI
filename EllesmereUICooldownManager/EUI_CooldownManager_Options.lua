@@ -6241,6 +6241,11 @@ initFrame:SetScript("OnEvent", function(self)
         onReset = function()
             if _G._ECME_AceDB then
                 _G._ECME_AceDB:ResetProfile()
+                -- Clear the per-install capture flag so the snapshot re-runs
+                -- after reload and picks up Blizzard's current CDM layout.
+                if _G._ECME_AceDB.sv then
+                    _G._ECME_AceDB.sv._capturedOnce = nil
+                end
             end
             ReloadUI()
         end,
