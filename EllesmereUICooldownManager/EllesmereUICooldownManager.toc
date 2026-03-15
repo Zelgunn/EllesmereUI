@@ -10,6 +10,8 @@
 ## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
 
 # Main Lua
+EllesmereUICdmCache.lua
+EllesmereUICdmUtils.lua
 EllesmereUICooldownManager.lua
 EllesmereUICdmBarGlows.lua
 EllesmereUICdmBuffBars.lua

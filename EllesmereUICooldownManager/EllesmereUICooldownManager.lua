@@ -10,6 +10,8 @@ local ECME = EllesmereUI.Lite.NewAddon("EllesmereUICooldownManager")
 ns.ECME = ECME
 
 local PP = EllesmereUI.PP
+local ECache = ns.ECdmCache
+local EUtils = ns.ECdmUtils
 
 -- Snap a value to a whole number of physical pixels at the bar's effective scale.
 -- Uses the same approach as the border system: convert to physical pixels,
@@ -126,8 +128,8 @@ end
 -- Multi-charge spell cache: populated out of combat when values are not secret.
 -- Falls back to SavedVariables for combat /reload scenarios.
 -- Maps spellID true for spells with maxCharges > 1
-local _multiChargeSpells = {}
-local _maxChargeCount    = {}  -- [spellID] = maxCharges, populated alongside _multiChargeSpells
+local _multiChargeSpells = ECache._multiChargeSpells
+local _maxChargeCount    = ECache._maxChargeCount  -- [spellID] = maxCharges, populated alongside _multiChargeSpells
 
 -- Spells that use the charge system but start at 0 and build stacks in combat.
 -- These report maxCharges > 1 but currentCharges = 0 at rest, so we hide the
@@ -239,21 +241,17 @@ end
 --  Avoids redundant C API calls when the same spellID appears on multiple
 --  bars or is queried by both ApplySpellCooldown and ApplyStackCount.
 -------------------------------------------------------------------------------
-local _tickGCDCache   = {}  -- [spellID] = bool|nil (GCD check result)
-local _tickChargeCache = {} -- [spellID] = charges table or false
-local _tickAuraCache  = {}  -- [spellID] = aura table or false
-ns._tickAuraCache = _tickAuraCache
-local _tickBlizzActiveCache = {}  -- [spellID] = true when Blizzard CDM marks spell as active (wasSetFromAura)
-ns._tickBlizzActiveCache = _tickBlizzActiveCache
-local _tickBlizzOverrideCache = {} -- [baseSpellID] = overrideSpellID, built each tick from all CDM viewer children
-local _tickBlizzChildCache = {}    -- [overrideSpellID] = blizzChild, for direct charge/cooldown reads on activation overrides
-local _tickBlizzAllChildCache = {} -- [resolvedSid] = blizzChild, for all CDM children (used by custom bars)
-ns._tickBlizzAllChildCache = _tickBlizzAllChildCache
-local _tickBlizzBuffChildCache = {} -- [resolvedSid] = blizzChild, only from BuffIcon/BuffBar viewers
-ns._tickBlizzBuffChildCache = _tickBlizzBuffChildCache
-local _tickBlizzCDChildCache   = {} -- [resolvedSid] = blizzChild, only from Essential/Utility viewers
-local _tickBlizzMultiChildCache = {} -- [baseSid] = { ch1, ch2, ... } when multiple CDM children share a base spellID
-local _activeMultiScratch = {}      -- reusable scratch table for active multi-child filtering and companion child mapping
+local _tickGCDCache = ECache._tickGCD
+local _tickChargeCache = ECache._tickCharge -- [spellID] = charges table or false
+local _tickAuraCache  = ECache._tickAura  -- [spellID] = aura table or false
+local _tickBlizzActiveCache = ECache._tickBlizzActive  -- [spellID] = true when Blizzard CDM marks spell as active (wasSetFromAura)
+local _tickBlizzOverrideCache = ECache._tickBlizzOverride -- [baseSpellID] = overrideSpellID, built each tick from all CDM viewer children
+local _tickBlizzChildCache = ECache._tickBlizzChild    -- [overrideSpellID] = blizzChild, for direct charge/cooldown reads on activation overrides
+local _tickBlizzAllChildCache = ECache._tickBlizzAllChild -- [resolvedSid] = blizzChild, for all CDM children (used by custom bars)
+local _tickBlizzBuffChildCache = ECache._tickBlizzBuffChild -- [resolvedSid] = blizzChild, only from BuffIcon/BuffBar viewers
+local _tickBlizzCDChildCache   = ECache._tickBlizzCDChild -- [resolvedSid] = blizzChild, only from Essential/Utility viewers
+local _tickBlizzMultiChildCache = ECache._tickBlizzMultiChild -- [baseSid] = { ch1, ch2, ... } when multiple CDM children share a base spellID
+local _activeMultiScratch = ECache._activeMultiScratch      -- reusable scratch table for active multi-child filtering and companion child mapping
 
 -- Reusable spell list buffers -- avoids table allocation every tick in update functions
 local _combinedBuf = {}   -- reused by UpdateTrackedBarIcons for tracked+extra spell list
@@ -284,78 +282,20 @@ local _viewerChildBuf = {}
 
 -- Separate tables keyed by child frame reference -- avoids reading tainted fields on Blizzard-owned frames.
 -- ch.isActive and ch._ecmeDurObj etc. are tainted secret values; we track state in our own tables instead.
-local _ecmeChildHasDurObj = {}   -- [ch] = true when we have captured a DurationObject for this child
-local _ecmeDurObjCache = {}      -- [ch] = durObj captured from SetCooldownFromDurationObject hook
-ns._ecmeDurObjCache = _ecmeDurObjCache
-local _ecmeRawStartCache = {}    -- [ch] = start captured from SetCooldown hook
-ns._ecmeRawStartCache = _ecmeRawStartCache
-local _cdmVehicleProxy           -- SecureHandlerStateTemplate proxy for [vehicleui]/[petbattle] hiding
-local _cdmInVehicle = false      -- true when [vehicleui] or [petbattle] is active
-local _ecmeRawDurCache = {}      -- [ch] = dur captured from SetCooldown hook
-ns._ecmeRawDurCache = _ecmeRawDurCache
-local _tickTotemCache = {}       -- [slot] = haveTotem (cached per tick to avoid inconsistent reads)
-local _cdmHoverStates = {}       -- [barKey] = { isHovered=false, fadeDir=nil }
+local _ecmeChildHasDurObj = ECache._ecmeChildHasDurObj  -- [ch] = true when we have captured a DurationObject for this child
+local _ecmeDurObjCache = ECache._ecmeDurObj             -- [ch] = durObj captured from SetCooldownFromDurationObject hook
+local _ecmeRawStartCache = ECache._ecmeRawStart         -- [ch] = start captured from SetCooldown hook
+local _cdmVehicleProxy                                  -- SecureHandlerStateTemplate proxy for [vehicleui]/[petbattle] hiding
+local _cdmInVehicle = false                             -- true when [vehicleui] or [petbattle] is active
+local _ecmeRawDurCache = ECache._ecmeRawDur             -- [ch] = dur captured from SetCooldown hook
+local _tickTotemCache = ECache._tickTotem               -- [slot] = haveTotem (cached per tick to avoid inconsistent reads)
+local _cdmHoverStates = ECache._cdmHoverStates          -- [barKey] = { isHovered=false, fadeDir=nil }
 
--- Per-tick cached GetTotemInfo to prevent inconsistent reads during totem expiry.
-local function GetCachedTotemInfo(slot)
-    local cached = _tickTotemCache[slot]
-    if cached ~= nil then return cached end
-    local haveTotem = GetTotemInfo(slot)
-    _tickTotemCache[slot] = haveTotem
-    return haveTotem
-end
 
--- Secondary validation: GetTotemInfo confirms a totem exists in the slot but not
--- WHICH totem. This checks the child's own aura/cooldown data is still live.
-local function IsTotemChildStillValid(ch)
-    if ch.auraInstanceID then
-        local ok, data = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID,
-                               ch.auraDataUnit or "player", ch.auraInstanceID)
-        if ok then
-            if issecretvalue and issecretvalue(data) then return true end
-            return data ~= nil
-        end
-        return true  -- pcall failed, trust GetTotemInfo
-    end
-    if _ecmeChildHasDurObj[ch] then return true end
-    local rd = _ecmeRawDurCache[ch]
-    if rd then
-        if issecretvalue and issecretvalue(rd) then return true end
-        return rd > 0
-    end
-    -- Fallback: hook caches are empty after /reload until SetCooldown fires.
-    if ch.Cooldown and ch.Cooldown:IsVisible() then return true end
-    return false
-end
-
--- Check if a Blizzard CDM buff-viewer child represents an actively running effect.
--- Uses only our own tracking tables and safe APIs — never reads tainted fields.
--- For totem-type spells: uses GetCachedTotemInfo(preferredTotemUpdateSlot).
--- For summon/aura-type spells: uses our hook-captured cooldown state tables.
-local function IsBufChildCooldownActive(ch)
-    if not ch then return false end
-    -- Totem check: preferredTotemUpdateSlot is set by Blizzard on totem CDM children.
-    local totemSlot = ch.preferredTotemUpdateSlot
-    if totemSlot and type(totemSlot) == "number" and totemSlot > 0 then
-        local haveTotem = GetCachedTotemInfo(totemSlot)
-        -- haveTotem can be a secret boolean in combat; secret = active totem
-        if issecretvalue and issecretvalue(haveTotem) then
-            return IsTotemChildStillValid(ch)
-        end
-        if haveTotem then return IsTotemChildStillValid(ch) end
-        return false
-    end
-    -- Non-totem: check our hook-captured cooldown state tables
-    if _ecmeChildHasDurObj[ch] then return true end
-    local rawDur = _ecmeRawDurCache[ch]
-    if rawDur and (issecretvalue and issecretvalue(rawDur) or rawDur > 0) then return true end
-    return false
-end
+local IsBufChildCooldownActive = ns.ECdmUtils.IsBuffChildCooldownActive
 ns.IsBufChildCooldownActive = IsBufChildCooldownActive
 
--- spellID -> cooldownID map built once from C_CooldownViewer.GetCooldownViewerCategorySet (all categories).
--- Rebuilt on PLAYER_LOGIN and spec change. Used by custom bars to find CDM child frames by spellID.
-local _spellToCooldownID = {}
+local _spellToCooldownID = ECache._spellToCooldownID
 
 -- Persistent cdID -> correct spellID map for buff viewer children where the
 -- cooldownInfo struct returns the wrong spellID. Built out of combat.
@@ -396,46 +336,8 @@ local function RebuildSpellToCooldownID()
     end
 end
 
--- Scan all four CDM viewers for a child whose .cooldownID matches the given cooldownID.
--- Returns the child frame, or nil if not found.
-local _cdmViewerNames = {
-    "EssentialCooldownViewer",
-    "UtilityCooldownViewer",
-    "BuffIconCooldownViewer",
-    "BuffBarCooldownViewer",
-}
-local function FindCDMChildByCooldownID(cooldownID)
-    if not cooldownID then return nil end
-    -- Fast path: scan the per-tick all-child cache (already built by the
-    -- viewer scan in UpdateAllCDMBars). Avoids GetChildren() allocation.
-    for _, ch in pairs(_tickBlizzAllChildCache) do
-        local chID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
-        if chID == cooldownID then return ch end
-    end
-    -- Slow fallback: only needed if tick cache is empty (first frame, etc.)
-    for _, vname in ipairs(_cdmViewerNames) do
-        local viewer = _G[vname]
-        if viewer then
-            local nCh = viewer:GetNumChildren()
-            if nCh > 0 then
-                local children = { viewer:GetChildren() }
-                for ci = 1, nCh do
-                    local ch = children[ci]
-                    if ch then
-                        local chID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
-                        if chID == cooldownID then
-                            return ch
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
-
 -- Keybind cache: built once out-of-combat, looked up per tick
-local _cdmKeybindCache       = {}   -- [spellID] -> formatted key string
+local _cdmKeybindCache       = ECache._cdmKeybind   -- [spellID] -> formatted key string
 local _keybindRebuildPending = false
 local _keybindCacheReady     = false  -- true after first successful build
 
@@ -671,31 +573,6 @@ local function ApplySpellCooldown(icon, spellID, desatOnCD, showCharges, swAlpha
     end
 
     return scd
-end
-
--------------------------------------------------------------------------------
---  Trinket cooldown helper (inventory slot based)
---  Handles cooldown display and desaturation for trinket slots.
--------------------------------------------------------------------------------
-local function ApplyTrinketCooldown(icon, slot, desatOnCD)
-    local start, dur, enable = GetInventoryItemCooldown("player", slot)
-    if start and dur and dur > 1.5 and enable == 1 then
-        icon._cooldown:SetCooldown(start, dur)
-        if desatOnCD then
-            icon._tex:SetDesaturation(1)
-            icon._lastDesat = true
-        elseif icon._lastDesat then
-            icon._tex:SetDesaturation(0)
-            icon._lastDesat = false
-        end
-    else
-        icon._cooldown:Clear()
-        if icon._lastDesat then
-            icon._tex:SetDesaturation(0)
-            icon._lastDesat = false
-        end
-    end
-    icon._chargeText:Hide()
 end
 
 -------------------------------------------------------------------------------
@@ -2038,17 +1915,19 @@ local function FindOurIconForBlizzChild(barKey, blizzChild)
         if icon._blizzChild == blizzChild then return icon end
     end
     -- Fallback: match by spellID (covers override spells like HST -> Storm Stream)
-    local alertSid = ResolveBlizzChildSpellID(blizzChild)
-    if alertSid then
+    local alertSpellID = ResolveBlizzChildSpellID(blizzChild)
+    if alertSpellID then
         for _, icon in ipairs(icons) do
-            if icon._spellID == alertSid then return icon end
+            if icon._spellID == alertSpellID then return icon end
         end
         -- Check override mapping (base spell <-> override)
         for _, icon in ipairs(icons) do
-            local iconSid = icon._spellID
-            if iconSid and C_SpellBook and C_SpellBook.FindSpellOverrideByID then
-                local ovr = C_SpellBook.FindSpellOverrideByID(iconSid)
-                if ovr and ovr == alertSid then return icon end
+            local iconSpellID = icon._spellID
+            if iconSpellID then
+                local overrideID = EUtils.GetSpellOverrideByID(iconSpellID)
+                if overrideID and overrideID == alertSpellID then
+                    return icon
+                end
             end
         end
     end
@@ -3389,6 +3268,152 @@ local _blizzIconsBuf = {}
 local _spellIconCache = {}
 
 -------------------------------------------------------------------------------
+--- Second-level runtime override: e.g. spell A (base) -> spell B (talent)
+--- -> spell C (activation override, e.g. Avenging Crusader transforms Crusader Strike).
+--- FindSpellOverrideByID only resolves one level; check the Blizzard CDM
+--- children cache for a deeper override on the already-resolved ID.
+--- @param baseSpellID number   The base spell ID before resolution
+--- @param resolvedID number    The spell ID after the first-level resolution
+--- @return number resolvedID   The spell ID after the second-level resolution
+-------------------------------------------------------------------------------
+local function SecondLevelSpellIDOverride(baseSpellID, resolvedID)
+    local blizzOverride = _tickBlizzOverrideCache[resolvedID] or _tickBlizzOverrideCache[baseSpellID]
+    if blizzOverride then
+        return blizzOverride
+    end
+    return resolvedID
+end
+
+-------------------------------------------------------------------------------
+--- Propagate charge cache from base to override so talent-swapped spells
+--- show charges correctly even before the override ID has been seen OOC.
+--- Always attempt direct detection on the final resolvedID first so it may
+--- have charges even if the base spell doesn't (three-level chain).
+--- @param spellID number       The base spell ID before resolution
+--- @param resolvedID number    The spell ID after resolution
+-------------------------------------------------------------------------------
+local function PropagateResolvedSpellChargeCache(spellID, resolvedID)
+    local propChild = _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
+    -- Always try direct detection on the resolved ID (cheapest path)
+    CacheMultiChargeSpell(resolvedID, propChild)
+    -- If resolved ID still unknown (secret/combat), check if we have a
+    -- live Blizzard child for it and mark it as a charge spell so
+    -- ApplySpellCooldown uses the charge display path.
+    if _multiChargeSpells[resolvedID] == nil and _tickBlizzChildCache[resolvedID] then
+        -- We have a live Blizzard child ΓÇö treat as charge spell so the
+        -- charge display path runs. ApplySpellCooldown will call
+        -- GetSpellCharges which may still be secret, but the shadow
+        -- cooldown frames will correctly reflect the charge state.
+        _multiChargeSpells[resolvedID] = true
+    end
+    -- If still unknown, try propagating from intermediate (only if true)
+    if _multiChargeSpells[resolvedID] == nil then
+        local intermediate = C_SpellBook and C_SpellBook.FindSpellOverrideByID
+            and C_SpellBook.FindSpellOverrideByID(spellID)
+        if intermediate and intermediate ~= 0 and intermediate ~= resolvedID then
+            CacheMultiChargeSpell(intermediate, propChild)
+            if _multiChargeSpells[intermediate] == true then
+                _multiChargeSpells[resolvedID] = true
+                if _maxChargeCount[intermediate] then
+                    _maxChargeCount[resolvedID] = _maxChargeCount[intermediate]
+                end
+            end
+        end
+    end
+    -- If still unknown, propagate from base ΓÇö but only if base is true
+    if _multiChargeSpells[resolvedID] == nil then
+        CacheMultiChargeSpell(spellID, propChild)
+        if _multiChargeSpells[spellID] == true then
+            _multiChargeSpells[resolvedID] = true
+            if _maxChargeCount[spellID] then
+                _maxChargeCount[resolvedID] = _maxChargeCount[spellID]
+            end
+        end
+    end
+end
+
+-------------------------------------------------------------------------------
+--- Cache spell icon texture to avoid C_Spell.GetSpellInfo per tick
+--- 
+--- Fallback: C_Spell.GetSpellTexture is more reliable for bar-type
+---     buff spells where GetSpellInfo may return nil.
+--- @param spellID number           The base spell ID before resolution
+--- @param resolvedID number        The spell ID after resolution
+--- @return number|nil textureID    The ID of the spell's texture if it exists, otherwise nil
+-------------------------------------------------------------------------------
+local function CacheSpellIconTexture(spellID, resolvedID)
+    local textureID = _spellIconCache[resolvedID]
+    if not textureID then
+        local spellInfo = C_Spell.GetSpellInfo(resolvedID)
+        if spellInfo then
+            textureID = spellInfo.iconID
+        end
+    end
+    if not textureID then
+        textureID = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(resolvedID)
+        if not textureID and resolvedID ~= spellID then
+            textureID = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID)
+        end
+    end
+    if textureID then
+        _spellIconCache[resolvedID] = textureID
+    end
+    return textureID
+end
+
+-------------------------------------------------------------------------------
+--- For buff bars, this function returns the CDM's child
+---   based on assignedChild and cached data.
+--- Returns nil otherwise.
+--- @param spellID number           The base spell ID before resolution
+--- @param resolvedID number        The spell ID after resolution
+--- @param isBuffBar boolean        true if the current bar is a buff bar, otherwise false
+--- @param assignedChild table|nil  Companion child for multi-child buff spells (e.g. Eclipse)
+---  When set, this specific CDM child is used instead of cache lookups.
+--- @return table|nil blizzardBuffChild The CDM's child's live icon if it exists
+-------------------------------------------------------------------------------
+local function GetBlizzardBuffChild(spellID, resolvedID, isBuffBar, assignedChild)
+    return isBuffBar
+        and (assignedChild
+             or _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
+             or _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID])
+        or nil
+end
+
+
+-------------------------------------------------------------------------------
+--- Get the texture for a "procable" buff. If a proc is active, returns the proc's
+---     texture if one can be found. Caches the proc texture if needed. Otherwise,
+---     returns the base texture given as currentTexture
+--- @param spellID number           The base spell ID before resolution
+--- @param resolvedID number        The spell ID after resolution
+--- @param currentTexture number    The base/current texture to fallback to without proc
+--- @return number updatedTexture, boolean procActive  The proc texture if relevant and if it exists, otherwise currentTexture
+--- 
+-------------------------------------------------------------------------------
+local function GetTextureForProcable(spellID, resolvedID, currentTexture)
+    local procEntry = ns.BUFF_PROC_ICON_OVERRIDES[spellID] or ns.BUFF_PROC_ICON_OVERRIDES[resolvedID]
+    if procEntry then
+        local buffChild = _tickBlizzBuffChildCache[procEntry.buffID]
+        if IsBufChildCooldownActive(buffChild) then
+            local procTexture = _spellIconCache[procEntry.replacementSpellID]
+            --- Get procTexture if it was not in the cache yet
+            if not procTexture then
+                local info = C_Spell.GetSpellInfo(procEntry.replacementSpellID)
+                if info then
+                    procTexture = info.iconID
+                    _spellIconCache[procEntry.replacementSpellID] = procTexture
+                end
+            end
+            if procTexture then
+                return procTexture, true
+            end
+        end
+    end
+    return currentTexture, false
+end
+
+-------------------------------------------------------------------------------
 --  Update icons for a CDM bar based on Blizzard CDM children
 --  Default bars (cooldowns/utility/buffs) mirror Blizzard CDM.
 --  Custom bars track user-specified spells directly.
@@ -3413,6 +3438,7 @@ local function UpdateCustomBarIcons(barKey)
     end
 
     local icons = cdmBarIcons[barKey]
+    local isBuffBarForOverride = (barKey == "buffs" or barData.barType == "buffs")
 
     -- Build spell list with render-time racial substitution
     local spells = rawSpells
@@ -3467,469 +3493,171 @@ local function UpdateCustomBarIcons(barKey)
             -- Trinket slot entries use small negative IDs (-13, -14)
             elseif spellID < 0 and spellID > -100 then
                 local slot = -spellID
-                local itemID = GetInventoryItemID("player", slot)
-                if itemID then
-                    -- On misc bars, hide trinkets that have no on-use effect
-                    if barData.barType == "misc" then
-                        local spellName = C_Item.GetItemSpell(itemID)
-                        if not spellName then
-                            ourIcon:Hide()
-                            itemID = nil
-                        end
-                    end
-                    if itemID then
-                        local tex = C_Item.GetItemIconByID(itemID)
-                        if tex and tex ~= ourIcon._lastTex then
-                            ourIcon._tex:SetTexture(tex)
-                            ourIcon._lastTex = tex
-                        end
-                        ourIcon._spellID = spellID
-                        ApplyTrinketCooldown(ourIcon, slot, barData.desaturateOnCD)
-                        ourIcon:Show()
-                        visibleCount = visibleCount + 1
-                    end
-                else
-                    ourIcon:Hide()
+                local iconIsVisible = EUtils.UpdateTrinketIcon(ourIcon, slot,
+                                                        barData.barType, barData.desaturateOnCD)
+                if iconIsVisible then
+                    visibleCount = visibleCount + 1
                 end
             -- On-use bag items use large negative IDs (<= -100, negated itemID)
             elseif spellID <= -100 then
                 local bagItemID = -spellID
                 local itemCount = C_Item.GetItemCount(bagItemID, false, true) or 0
-                local tex = C_Item.GetItemIconByID(bagItemID)
-                if tex then
-                    if tex ~= ourIcon._lastTex then
-                        ourIcon._tex:SetTexture(tex)
-                        ourIcon._lastTex = tex
-                    end
-                    ourIcon._spellID = spellID
-                    -- Item cooldown
-                    local cdStart, cdDur = C_Container.GetItemCooldown(bagItemID)
-                    if cdStart and cdDur and cdDur > 1.5 then
-                        ourIcon._cooldown:SetCooldown(cdStart, cdDur)
-                        if barData.desaturateOnCD then
-                            ourIcon._tex:SetDesaturation(1)
-                            ourIcon._lastDesat = true
-                        elseif ourIcon._lastDesat then
-                            ourIcon._tex:SetDesaturation(0)
-                            ourIcon._lastDesat = false
-                        end
-                    else
-                        ourIcon._cooldown:Clear()
-                        if ourIcon._lastDesat then
-                            ourIcon._tex:SetDesaturation(0)
-                            ourIcon._lastDesat = false
-                        end
-                    end
-                    if barData.showCharges and itemCount > 0 then
-                        ourIcon._chargeText:SetText(tostring(itemCount))
-                        ourIcon._chargeText:Show()
-                    else
-                        ourIcon._chargeText:Hide()
-                    end
-                    ourIcon:Show()
+                local iconIsVisible = EUtils.UpdateBagItemIcon(ourIcon, bagItemID, itemCount, false, 
+                                                        barData.showCharges, barData.desaturateOnCD)
+                if iconIsVisible then
                     visibleCount = visibleCount + 1
-                else
-                    ourIcon:Hide()
                 end
             else
-            -- Health item handling: show item icon, count, desaturation, combat lockout
-            local healthItem = HEALTH_ITEM_BY_SPELL[spellID]
-            if healthItem then
-                local activeID, itemCount = GetActiveHealthItemID(healthItem)
-                local inLockout = _healthCombatLockout[spellID]
-                -- Hide if player has none and not in combat lockout
-                if itemCount <= 0 and not inLockout then
-                    ourIcon:Hide()
+                -- Health item handling: show item icon, count, desaturation, combat lockout
+                local healthItem = HEALTH_ITEM_BY_SPELL[spellID]
+                if healthItem then
+                    local activeID, itemCount = GetActiveHealthItemID(healthItem)
+                    local inLockout = _healthCombatLockout[spellID]
+                    local iconIsVisible = EUtils.UpdateBagItemIcon(ourIcon, activeID, itemCount, inLockout, 
+                                                                   barData.showCharges, barData.desaturateOnCD)
+                    if iconIsVisible then
+                        visibleCount = visibleCount + 1
+                    end
                 else
-                    local tex = C_Item.GetItemIconByID(activeID)
-                    if tex then
-                        if tex ~= ourIcon._lastTex then
-                            ourIcon._tex:SetTexture(tex)
-                            ourIcon._lastTex = tex
+                    -- Resolve talent override
+                    local resolvedID = EUtils.ResolveSpellOverrideID(spellID)
+
+                    -- Skip on buff bars: buff bars show the base spell's state/CD, not the
+                    -- temporary replacement that appears while the spell is on cooldown.
+                    if not isBuffBarForOverride then
+                        resolvedID = SecondLevelSpellIDOverride(spellID, resolvedID)
+                    end
+
+                    if resolvedID ~= spellID then
+                        PropagateResolvedSpellChargeCache(spellID, resolvedID)
+                    end
+
+                    local texID = CacheSpellIconTexture(spellID, resolvedID)
+
+                    -- Buff bars may have a hardcoded icon override for specific spells.
+                    local overrideTex = isBuffBarForOverride and ns.BUFF_ICON_OVERRIDES[spellID]
+                    -- For buff bars, prefer the CDM child's live Icon texture so
+                    -- aura-driven icon changes (e.g. Heating Up -> Hot Streak) are
+                    -- reflected each tick instead of staying stuck on the static cache.
+                    local blizzBuffChild = GetBlizzardBuffChild(spellID, resolvedID, isBuffBarForOverride, nil)
+                    local blizzBuffChildTexSet = EUtils.CopyBuffWidgetTexture(ourIcon, blizzBuffChild, overrideTex)
+                    local effectiveTex = overrideTex or texID
+                    -- Proc-conditional icon override: swap icon while a buff is active
+                    local procActive = false
+                    effectiveTex, procActive = GetTextureForProcable(spellID, resolvedID, effectiveTex)
+
+                    if effectiveTex then
+                        EUtils.OverrideTextureForProcable(ourIcon, effectiveTex, blizzBuffChildTexSet, overrideTex, procActive)
+                        EUtils.SetIconKeybind(ourIcon, spellID, resolvedID, barData.showKeybind)
+
+                        -- Detect active aura state before applying cooldown.
+                        -- If the spell has an active player aura, show its duration on the
+                        -- cooldown frame (same as the main bar path for buff bars).
+                        -- When the spell has a runtime override (resolvedID != spellID) on
+                        -- a non-buff bar, skip aura display so the override's actual cooldown
+                        -- is shown instead (e.g. a 2min ability that becomes a 24s kick).
+                        local auraHandled = false
+                        local skipCDDisplay = false
+                        local hasRuntimeOverride = resolvedID ~= spellID and not isBuffBarForOverride
+                        auraHandled, skipCDDisplay = EUtils.ApplyAuraCooldownOrDuration(ourIcon, spellID, resolvedID, isBuffBarForOverride,
+                                                                                        activeAnim, hasRuntimeOverride, nil)
+
+                        -- Spell cooldown + desaturation
+                        ApplySpellCooldown(ourIcon, resolvedID, barData.desaturateOnCD, barData.showCharges, swAlpha, skipCDDisplay,
+                            _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID], isBuffBarForOverride)
+
+                        -- Buff bars: swipe fills as buff expires (starts empty, ends full).
+                        if isBuffBarForOverride then
+                            ourIcon._cooldown:SetReverse(auraHandled)
                         end
-                        -- Desaturate when count is 0 (combat lockout keeps icon visible but grayed)
-                        if itemCount <= 0 then
-                            ourIcon._tex:SetDesaturation(1)
-                            ourIcon._cooldown:Clear()
-                            ourIcon._lastDesat = true
-                        else
-                            -- Item cooldown via C_Container.GetItemCooldown
-                            local cdStart, cdDur = C_Container.GetItemCooldown(activeID)
-                            if cdStart and cdDur and cdDur > 1.5 then
-                                ourIcon._cooldown:SetCooldown(cdStart, cdDur)
-                                if barData.desaturateOnCD then
-                                    ourIcon._tex:SetDesaturation(1)
-                                    ourIcon._lastDesat = true
-                                elseif ourIcon._lastDesat then
-                                    ourIcon._tex:SetDesaturation(0)
-                                    ourIcon._lastDesat = false
-                                end
-                            else
-                                ourIcon._cooldown:Clear()
-                                if ourIcon._lastDesat then
-                                    ourIcon._tex:SetDesaturation(0)
-                                    ourIcon._lastDesat = false
+
+                        -- If this is a live Blizzard activation override, read the charge
+                        -- count directly from the Blizzard child's Applications frame.
+                        -- GetSpellCharges returns secret values in combat for these spells,
+                        -- but the Applications frame text is always readable.
+                        if barData.showCharges then
+                            local blizzChild = _tickBlizzChildCache[resolvedID]
+                            -- Totems on buff bars: skip (ApplySpellCooldown already hid charge text)
+                            local bts = blizzChild and blizzChild.preferredTotemUpdateSlot
+                            local isTotem = bts and type(bts) == "number" and bts > 0
+                            if not (isTotem and isBuffBarForOverride) then
+                                if blizzChild and blizzChild.Applications and blizzChild.Applications.Applications then
+                                    local ok, txt = pcall(blizzChild.Applications.Applications.GetText, blizzChild.Applications.Applications)
+                                    if ok and txt and txt ~= "" and txt ~= "0" then
+                                        ourIcon._chargeText:SetText(txt)
+                                        ourIcon._chargeText:Show()
+                                    end
                                 end
                             end
                         end
-                        -- Show item count as charge text
-                        if barData.showCharges and itemCount > 0 then
-                            ourIcon._chargeText:SetText(tostring(itemCount))
-                            ourIcon._chargeText:Show()
-                        else
-                            ourIcon._chargeText:Hide()
+
+                        if ourIcon._cooldown.SetUseAuraDisplayTime then
+                            ourIcon._cooldown:SetUseAuraDisplayTime(false)
                         end
+
+                        -- Stack count for buff-type custom bars (mirrors tracked buff bar logic)
+                        if isBuffBarForOverride then
+                            local blizzChild = _tickBlizzAllChildCache[resolvedID]
+                            if not blizzChild then
+                                local cdID = _spellToCooldownID[resolvedID] or _spellToCooldownID[spellID]
+                                if cdID then blizzChild = EUtils.FindCDMChildByCooldownID(cdID) end
+                            end
+                            ApplyStackCount(ourIcon, resolvedID,
+                                blizzChild and blizzChild.auraInstanceID,
+                                blizzChild and blizzChild.auraDataUnit or "player",
+                                true, blizzChild)
+                            ourIcon._blizzChild = blizzChild
+                        end
+
+                        ApplyActiveAnimation(ourIcon, auraHandled, barData, barKey, activeAnim, animR, animG, animB, swAlpha)
+
+                        -- Out-of-range overlay (skip buff bars -- buffs don't target enemies)
+                        if not isBuffBarForOverride then
+                            ApplyRangeOverlay(ourIcon, resolvedID, barData.outOfRangeOverlay)
+                        elseif ourIcon._oorTinted then
+                            if ourIcon._tex then ourIcon._tex:SetVertexColor(1, 1, 1) end
+                            ourIcon._oorTinted = false
+                        end
+
                         ourIcon:Show()
                         visibleCount = visibleCount + 1
+
+                        -- Hide buff icons when inactive (aura not active on player) — buff bars only
+                        -- Skip during unlock mode so the bar is fully visible for repositioning
+                        if barData.hideBuffsWhenInactive and isBuffBarForOverride and not EllesmereUI._unlockActive
+                        and not (EllesmereUI._mainFrame and EllesmereUI._mainFrame:IsShown()) then
+                            -- Use the per-tick active cache built from all CDM viewers
+                            local isActive = _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID]
+                            -- Fallback: check buff-viewer child, then all-child cache (covers totems in
+                            -- Essential/Utility viewers and summons like Dreadstalkers with no aura)
+                            if not isActive then
+                                local blzBufCh = _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
+                                            or _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
+                                if IsBufChildCooldownActive(blzBufCh) then isActive = true end
+                            end
+                            -- Duration-based timer: show if a cast-triggered timer is still running
+                            if not isActive then
+                                local barTimers = _customBarTimers[barKey]
+                                if barTimers then
+                                    local expiry = barTimers[spellID] or barTimers[resolvedID]
+                                    if expiry and GetTime() < expiry then
+                                        isActive = true
+                                    elseif expiry then
+                                        -- Timer expired, clean up
+                                        barTimers[spellID] = nil
+                                        barTimers[resolvedID] = nil
+                                    end
+                                end
+                            end
+                            if not isActive then
+                                ourIcon:Hide()
+                                visibleCount = visibleCount - 1
+                            end
+                        end
                     else
                         ourIcon:Hide()
                     end
-                end
-            else
-            -- Resolve talent override: if the user added Holy Prism but the player
-            -- now has Divine Toll selected, display and track Divine Toll instead.
-            local resolvedID = spellID
-            if C_SpellBook and C_SpellBook.FindSpellOverrideByID then
-                local overrideID = C_SpellBook.FindSpellOverrideByID(spellID)
-                if overrideID and overrideID ~= 0 then
-                    resolvedID = overrideID
-                end
-            end
-            local isBuffBarForOverride = (barKey == "buffs" or barData.barType == "buffs")
-            -- Second-level runtime override: e.g. spell A (base) -> spell B (talent)
-            -- -> spell C (activation override, e.g. Avenging Crusader transforms Crusader Strike).
-            -- FindSpellOverrideByID only resolves one level; check the Blizzard CDM
-            -- children cache for a deeper override on the already-resolved ID.
-            -- Skip on buff bars: buff bars show the base spell's state/CD, not the
-            -- temporary replacement that appears while the spell is on cooldown.
-            if not isBuffBarForOverride then
-                local blizzOverride = _tickBlizzOverrideCache[resolvedID] or _tickBlizzOverrideCache[spellID]
-                if blizzOverride then
-                    resolvedID = blizzOverride
-                end
-            end
-            -- Propagate charge cache from base to override so talent-swapped spells
-            -- show charges correctly even before the override ID has been seen OOC.
-            -- Always attempt direct detection on the final resolvedID first ΓÇö it may
-            -- have charges even if the base spell doesn't (three-level chain).
-            if resolvedID ~= spellID then
-                local propChild = _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
-                -- Always try direct detection on the resolved ID (cheapest path)
-                CacheMultiChargeSpell(resolvedID, propChild)
-                -- If resolved ID still unknown (secret/combat), check if we have a
-                -- live Blizzard child for it and mark it as a charge spell so
-                -- ApplySpellCooldown uses the charge display path.
-                if _multiChargeSpells[resolvedID] == nil and _tickBlizzChildCache[resolvedID] then
-                    -- We have a live Blizzard child ΓÇö treat as charge spell so the
-                    -- charge display path runs. ApplySpellCooldown will call
-                    -- GetSpellCharges which may still be secret, but the shadow
-                    -- cooldown frames will correctly reflect the charge state.
-                    _multiChargeSpells[resolvedID] = true
-                end
-                -- If still unknown, try propagating from intermediate (only if true)
-                if _multiChargeSpells[resolvedID] == nil then
-                    local intermediate = C_SpellBook and C_SpellBook.FindSpellOverrideByID
-                        and C_SpellBook.FindSpellOverrideByID(spellID)
-                    if intermediate and intermediate ~= 0 and intermediate ~= resolvedID then
-                        CacheMultiChargeSpell(intermediate, propChild)
-                        if _multiChargeSpells[intermediate] == true then
-                            _multiChargeSpells[resolvedID] = true
-                            if _maxChargeCount[intermediate] then
-                                _maxChargeCount[resolvedID] = _maxChargeCount[intermediate]
-                            end
-                        end
-                    end
-                end
-                -- If still unknown, propagate from base ΓÇö but only if base is true
-                if _multiChargeSpells[resolvedID] == nil then
-                    CacheMultiChargeSpell(spellID, propChild)
-                    if _multiChargeSpells[spellID] == true then
-                        _multiChargeSpells[resolvedID] = true
-                        if _maxChargeCount[spellID] then
-                            _maxChargeCount[resolvedID] = _maxChargeCount[spellID]
-                        end
-                    end
-                end
-            end
-            -- Cache spell icon texture to avoid C_Spell.GetSpellInfo per tick
-            local texID = _spellIconCache[resolvedID]
-            if not texID then
-                local spellInfo = C_Spell.GetSpellInfo(resolvedID)
-                if spellInfo then
-                    texID = spellInfo.iconID
-                    _spellIconCache[resolvedID] = texID
-                end
-            end
-            -- Fallback: C_Spell.GetSpellTexture is more reliable for bar-type
-            -- buff spells where GetSpellInfo may return nil.
-            if not texID then
-                texID = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(resolvedID)
-                if not texID and resolvedID ~= spellID then
-                    texID = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID)
-                end
-                if texID then _spellIconCache[resolvedID] = texID end
-            end
-            -- Buff bars may have a hardcoded icon override for specific spells.
-            local overrideTex = (barKey == "buffs" or barData.barType == "buffs") and ns.BUFF_ICON_OVERRIDES[spellID]
-            -- For buff bars, prefer the CDM child's live Icon texture so
-            -- aura-driven icon changes (e.g. Heating Up -> Hot Streak) are
-            -- reflected each tick instead of staying stuck on the static cache.
-            local isBuffCustom = (barKey == "buffs" or barData.barType == "buffs")
-            local blizzBuffChildC = isBuffCustom
-                and (_tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
-                     or _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID])
-                or nil
-            local blizzBuffChildCTexSet = false
-            if blizzBuffChildC and not overrideTex and blizzBuffChildC.Icon and blizzBuffChildC.Icon.GetTexture then
-                local childTexC = blizzBuffChildC.Icon:GetTexture()
-                if childTexC then
-                    ourIcon._tex:SetTexture(childTexC)
-                    ourIcon._lastTex = 0
-                    blizzBuffChildCTexSet = true
-                end
-            end
-            local effectiveTex = overrideTex or texID
-            -- Proc-conditional icon override: swap icon while a buff is active
-            local procActiveC = false
-            local procEntry = ns.BUFF_PROC_ICON_OVERRIDES[spellID] or ns.BUFF_PROC_ICON_OVERRIDES[resolvedID]
-            if procEntry then
-                local buffChild = _tickBlizzBuffChildCache[procEntry.buffID]
-                if IsBufChildCooldownActive(buffChild) then
-                    local procTex = _spellIconCache[procEntry.replacementSpellID]
-                    if not procTex then
-                        local info = C_Spell.GetSpellInfo(procEntry.replacementSpellID)
-                        if info then procTex = info.iconID; _spellIconCache[procEntry.replacementSpellID] = procTex end
-                    end
-                    if procTex then effectiveTex = procTex; procActiveC = true end
-                end
-            end
-            if effectiveTex then
-                if (not blizzBuffChildCTexSet or overrideTex or procActiveC) and effectiveTex ~= ourIcon._lastTex then
-                    ourIcon._tex:SetTexture(effectiveTex)
-                    ourIcon._lastTex = effectiveTex
-                end
-
-                -- Cooldown, desaturation, and charge text (consolidated)
-                ourIcon._spellID = resolvedID
-                -- Apply cached keybind for this spell if not already set
-                if ourIcon._keybindText and barData.showKeybind then
-                    local cachedKey = _cdmKeybindCache[resolvedID]
-                    if not cachedKey then
-                        local n = C_Spell.GetSpellName and C_Spell.GetSpellName(resolvedID)
-                        if n then cachedKey = _cdmKeybindCache[n] end
-                    end
-                    -- Also try the base spellID in case keybind was cached under it
-                    if not cachedKey and resolvedID ~= spellID then
-                        cachedKey = _cdmKeybindCache[spellID]
-                        if not cachedKey then
-                            local bn = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
-                            if bn then cachedKey = _cdmKeybindCache[bn] end
-                        end
-                    end
-                    if cachedKey then
-                        ourIcon._keybindText:SetText(cachedKey)
-                        ourIcon._keybindText:Show()
-                    elseif ourIcon._keybindText:IsShown() then
-                        ourIcon._keybindText:Hide()
-                    end
-                end
-                -- Detect active aura state before applying cooldown.
-                -- If the spell has an active player aura, show its duration on the
-                -- cooldown frame (same as the main bar path for buff bars).
-                -- When the spell has a runtime override (resolvedID != spellID) on
-                -- a non-buff bar, skip aura display so the override's actual cooldown
-                -- is shown instead (e.g. a 2min ability that becomes a 24s kick).
-                local auraHandled = false
-                local skipCDDisplay = false
-                local hasRuntimeOverride = resolvedID ~= spellID and not isBuffBarForOverride
-                do
-                    -- Primary: look up the Blizzard CDM child for this spell via the
-                    -- spellID -> cooldownID map, then find the child frame by cooldownID.
-                    -- This works for custom bar spells not present in _tickBlizzAllChildCache
-                    -- because they may not be visible in any viewer at the moment.
-                    local blizzChild = _tickBlizzAllChildCache[resolvedID]
-                    if not blizzChild then
-                        local cdID = _spellToCooldownID[resolvedID] or _spellToCooldownID[spellID]
-                        if cdID then
-                            blizzChild = FindCDMChildByCooldownID(cdID)
-                        end
-                    end
-                    local isAura = blizzChild and (blizzChild.wasSetFromAura == true or blizzChild.auraInstanceID ~= nil)
-                    local auraID = blizzChild and blizzChild.auraInstanceID
-                    local auraUnit = blizzChild and blizzChild.auraDataUnit or "player"
-
-                    -- Fallback: spell not in any CDM viewer — check _tickBlizzActiveCache
-                    -- which covers all four viewers scanned each tick.
-                    if not isAura then
-                        if _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID] then
-                            isAura = true
-                        end
-                    end
-
-                    if isAura and activeAnim ~= "hideActive" then
-                        -- When the spell has a runtime override on a non-buff bar,
-                        -- skip aura duration display so the override spell's actual
-                        -- cooldown is shown (e.g. 2min ability becomes 24s kick).
-                        if hasRuntimeOverride then
-                            auraHandled = false
-                        else
-                            local isChargeSid = _multiChargeSpells[resolvedID] == true
-                            if auraID and (not isChargeSid or isBuffBarForOverride) then
-                                local ok, auraDurObj = pcall(C_UnitAuras.GetAuraDuration, auraUnit, auraID)
-                                if ok and auraDurObj then
-                                    ourIcon._cooldown:Clear()
-                                    pcall(ourIcon._cooldown.SetCooldownFromDurationObject, ourIcon._cooldown, auraDurObj, true)
-                                    ourIcon._cooldown:SetReverse(false)
-                                    auraHandled = true
-                                    skipCDDisplay = true
-                                else
-                                    -- Totems: skip auraHandled so summon-type fallback shows totem duration
-                                    local bts = blizzChild and blizzChild.preferredTotemUpdateSlot
-                                    if not (bts and type(bts) == "number" and bts > 0) then
-                                        auraHandled = true
-                                    end
-                                end
-                            else
-                                auraHandled = true
-                            end
-                        end
-                    end
-
-                    -- Final fallback: _tickBlizzActiveCache covers spells active in CDM viewers
-                    if not hasRuntimeOverride and not auraHandled and (_tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID]) then
-                        auraHandled = true
-                    end
-
-                    -- Summon-type fallback: spells with no aura but whose Blizzard CDM
-                    -- marks as active are considered active (e.g. pet summons).
-                    -- On buff bars, copy the child's cooldown to show effect duration.
-                    -- Also check if the buff-viewer child is visible (covers summon
-                    -- spells like Dreadstalkers that have no aura and no wasSetFromAura).
-                    if not hasRuntimeOverride and not auraHandled and activeAnim ~= "hideActive" then
-                        local blzFbActive2 = _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID]
-                        if not blzFbActive2 then
-                            local blzBufCh = _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
-                            if IsBufChildCooldownActive(blzBufCh) then blzFbActive2 = true end
-                        end
-                        if blzFbActive2 and isBuffBarForOverride then
-                            local blzCh2 = _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
-                            auraHandled = true
-                            skipCDDisplay = true
-                            -- Use the cached DurationObject captured by our hook
-                            -- to avoid secret-value arithmetic from GetCooldownTimes.
-                            if blzCh2 then
-                                local blzCD = blzCh2.Cooldown
-                                if blzCD then
-                                    ourIcon._cooldown:Clear()
-                                    if _ecmeDurObjCache[blzCh2] then
-                                        pcall(ourIcon._cooldown.SetCooldownFromDurationObject, ourIcon._cooldown, _ecmeDurObjCache[blzCh2], true)
-                                    elseif _ecmeRawStartCache[blzCh2] and _ecmeRawDurCache[blzCh2] then
-                                        pcall(ourIcon._cooldown.SetCooldown, ourIcon._cooldown, _ecmeRawStartCache[blzCh2], _ecmeRawDurCache[blzCh2])
-                                    end
-                                    ourIcon._cooldown:SetReverse(false)
-                                end
-                            end
-                        elseif blzFbActive2 then
-                            auraHandled = true
-                        end
-                    end
-                end
-
-                ApplySpellCooldown(ourIcon, resolvedID, barData.desaturateOnCD, barData.showCharges, swAlpha, skipCDDisplay,
-                    _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID], isBuffBarForOverride)
-
-                -- Buff bars: swipe fills as buff expires (starts empty, ends full).
-                if isBuffBarForOverride then
-                    ourIcon._cooldown:SetReverse(auraHandled)
-                end
-
-                -- If this is a live Blizzard activation override, read the charge
-                -- count directly from the Blizzard child's Applications frame.
-                -- GetSpellCharges returns secret values in combat for these spells,
-                -- but the Applications frame text is always readable.
-                if barData.showCharges then
-                    local blizzChild = _tickBlizzChildCache[resolvedID]
-                    -- Totems on buff bars: skip (ApplySpellCooldown already hid charge text)
-                    local bts = blizzChild and blizzChild.preferredTotemUpdateSlot
-                    local isTotem = bts and type(bts) == "number" and bts > 0
-                    if not (isTotem and isBuffBarForOverride) then
-                        if blizzChild and blizzChild.Applications and blizzChild.Applications.Applications then
-                            local ok, txt = pcall(blizzChild.Applications.Applications.GetText, blizzChild.Applications.Applications)
-                            if ok and txt and txt ~= "" and txt ~= "0" then
-                                ourIcon._chargeText:SetText(txt)
-                                ourIcon._chargeText:Show()
-                            end
-                        end
-                    end
-                end
-
-                if ourIcon._cooldown.SetUseAuraDisplayTime then
-                    ourIcon._cooldown:SetUseAuraDisplayTime(false)
-                end
-
-                -- Stack count for buff-type custom bars (mirrors tracked buff bar logic)
-                if isBuffBarForOverride then
-                    local blizzChild = _tickBlizzAllChildCache[resolvedID]
-                    if not blizzChild then
-                        local cdID = _spellToCooldownID[resolvedID] or _spellToCooldownID[spellID]
-                        if cdID then blizzChild = FindCDMChildByCooldownID(cdID) end
-                    end
-                    ApplyStackCount(ourIcon, resolvedID,
-                        blizzChild and blizzChild.auraInstanceID,
-                        blizzChild and blizzChild.auraDataUnit or "player",
-                        true, blizzChild)
-                    ourIcon._blizzChild = blizzChild
-                end
-
-                ApplyActiveAnimation(ourIcon, auraHandled, barData, barKey, activeAnim, animR, animG, animB, swAlpha)
-
-                -- Out-of-range overlay (skip buff bars -- buffs don't target enemies)
-                if not isBuffBarForOverride then
-                    ApplyRangeOverlay(ourIcon, resolvedID, barData.outOfRangeOverlay)
-                elseif ourIcon._oorTinted then
-                    if ourIcon._tex then ourIcon._tex:SetVertexColor(1, 1, 1) end
-                    ourIcon._oorTinted = false
-                end
-
-                ourIcon:Show()
-                visibleCount = visibleCount + 1
-
-                -- Hide buff icons when inactive (aura not active on player) — buff bars only
-                -- Skip during unlock mode so the bar is fully visible for repositioning
-                if barData.hideBuffsWhenInactive and isBuffBarForOverride and not EllesmereUI._unlockActive
-                   and not (EllesmereUI._mainFrame and EllesmereUI._mainFrame:IsShown()) then
-                    -- Use the per-tick active cache built from all CDM viewers
-                    local isActive = _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID]
-                    -- Fallback: check buff-viewer child, then all-child cache (covers totems in
-                    -- Essential/Utility viewers and summons like Dreadstalkers with no aura)
-                    if not isActive then
-                        local blzBufCh = _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
-                                      or _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
-                        if IsBufChildCooldownActive(blzBufCh) then isActive = true end
-                    end
-                    -- Duration-based timer: show if a cast-triggered timer is still running
-                    if not isActive then
-                        local barTimers = _customBarTimers[barKey]
-                        if barTimers then
-                            local expiry = barTimers[spellID] or barTimers[resolvedID]
-                            if expiry and GetTime() < expiry then
-                                isActive = true
-                            elseif expiry then
-                                -- Timer expired, clean up
-                                barTimers[spellID] = nil
-                                barTimers[resolvedID] = nil
-                            end
-                        end
-                    end
-                    if not isActive then
-                        ourIcon:Hide()
-                        visibleCount = visibleCount - 1
-                    end
-                end
-            else
-                ourIcon:Hide()
-            end
-            end -- healthItem else
+                end -- healthItem else
             end -- spellID < 0 else
         end
     end
@@ -4466,13 +4194,13 @@ local function UpdateTrackedBarIcons(barKey)
         animR = barData.activeAnimR; animG = barData.activeAnimG or 0.85; animB = barData.activeAnimB or 0.0
     end
     local prevCount = frame._prevVisibleCount or 0
-    local visCount = 0
+    local visibleCount = 0
 
     -- Build combined spell list: tracked + extras into reusable buffer (avoids allocation per tick)
     local combined = _combinedBuf
     local combinedN = 0
     for _, sid in ipairs(tracked) do combinedN = combinedN + 1; combined[combinedN] = sid end
-    local isBuffBarForOvr = (barKey == "buffs" or barData.barType == "buffs")
+    local isBuffBarForOverride = (barKey == "buffs" or barData.barType == "buffs")
     -- companionChild[i] = specific CDM child for multi-child companion icons.
     -- When a single tracked spellID has multiple CDM children (e.g. Eclipse
     -- has two children with different auraInstanceIDs for Lunar and Solar),
@@ -4480,7 +4208,7 @@ local function UpdateTrackedBarIcons(barKey)
     -- (wiped here) to avoid per-tick allocation / GC pressure.
     wipe(_activeMultiScratch)
     local hasCompanions = false
-    if isBuffBarForOvr then
+    if isBuffBarForOverride then
         local baseN = combinedN
         for bi = 1, baseN do
             local sid = combined[bi]
@@ -4565,52 +4293,19 @@ local function UpdateTrackedBarIcons(barKey)
         -- Trinket slot entries use small negative IDs (-13, -14)
         elseif spellID < 0 and spellID > -100 then
             local slot = -spellID
-            local itemID = GetInventoryItemID("player", slot)
-            if itemID then
-                local tex = C_Item.GetItemIconByID(itemID)
-                if tex and tex ~= ourIcon._lastTex then
-                    ourIcon._tex:SetTexture(tex)
-                    ourIcon._lastTex = tex
-                end
-                ourIcon._spellID = spellID
-                ApplyTrinketCooldown(ourIcon, slot, desatOnCD)
-                ourIcon:Show()
-                visCount = visCount + 1
-            else
-                ourIcon:Hide()
+            local iconIsVisible = EUtils.UpdateTrinketIcon(ourIcon, slot,
+                                                    barData.barType, barData.desaturateOnCD)
+            if iconIsVisible then
+                visibleCount = visibleCount + 1
             end
         -- On-use bag items use large negative IDs (<= -100, negated itemID)
         elseif spellID <= -100 then
             local bagItemID = -spellID
-            local tex = C_Item.GetItemIconByID(bagItemID)
-            if tex then
-                if tex ~= ourIcon._lastTex then
-                    ourIcon._tex:SetTexture(tex)
-                    ourIcon._lastTex = tex
-                end
-                ourIcon._spellID = spellID
-                local cdStart, cdDur = C_Container.GetItemCooldown(bagItemID)
-                if cdStart and cdDur and cdDur > 1.5 then
-                    ourIcon._cooldown:SetCooldown(cdStart, cdDur)
-                    if desatOnCD then
-                        ourIcon._tex:SetDesaturation(1)
-                        ourIcon._lastDesat = true
-                    elseif ourIcon._lastDesat then
-                        ourIcon._tex:SetDesaturation(0)
-                        ourIcon._lastDesat = false
-                    end
-                else
-                    ourIcon._cooldown:Clear()
-                    if ourIcon._lastDesat then
-                        ourIcon._tex:SetDesaturation(0)
-                        ourIcon._lastDesat = false
-                    end
-                end
-                ourIcon._chargeText:Hide()
-                ourIcon:Show()
-                visCount = visCount + 1
-            else
-                ourIcon:Hide()
+            local itemCount = C_Item.GetItemCount(bagItemID, false, true) or 0
+            local iconIsVisible = EUtils.UpdateBagItemIcon(ourIcon, bagItemID, itemCount, false, 
+                                                           barData.showCharges, barData.desaturateOnCD)
+            if iconIsVisible then
+                visibleCount = visibleCount + 1
             end
         else
             -- Health item handling: show item icon, count, desaturation, combat lockout
@@ -4618,351 +4313,112 @@ local function UpdateTrackedBarIcons(barKey)
             if healthItem then
                 local activeID, itemCount = GetActiveHealthItemID(healthItem)
                 local inLockout = _healthCombatLockout[spellID]
-                if itemCount <= 0 and not inLockout then
-                    ourIcon:Hide()
-                else
-                    local tex = C_Item.GetItemIconByID(activeID)
-                    if tex then
-                        if tex ~= ourIcon._lastTex then
-                            ourIcon._tex:SetTexture(tex)
-                            ourIcon._lastTex = tex
-                        end
-                        if itemCount <= 0 then
-                            ourIcon._tex:SetDesaturation(1)
-                            ourIcon._cooldown:Clear()
-                            ourIcon._lastDesat = true
-                        else
-                            local cdStart, cdDur = C_Container.GetItemCooldown(activeID)
-                            if cdStart and cdDur and cdDur > 1.5 then
-                                ourIcon._cooldown:SetCooldown(cdStart, cdDur)
-                                if desatOnCD then
-                                    ourIcon._tex:SetDesaturation(1)
-                                    ourIcon._lastDesat = true
-                                elseif ourIcon._lastDesat then
-                                    ourIcon._tex:SetDesaturation(0)
-                                    ourIcon._lastDesat = false
-                                end
-                            else
-                                ourIcon._cooldown:Clear()
-                                if ourIcon._lastDesat then
-                                    ourIcon._tex:SetDesaturation(0)
-                                    ourIcon._lastDesat = false
-                                end
-                            end
-                        end
-                        if showCharges and itemCount > 0 then
-                            ourIcon._chargeText:SetText(tostring(itemCount))
-                            ourIcon._chargeText:Show()
-                        else
-                            ourIcon._chargeText:Hide()
-                        end
-                        ourIcon:Show()
-                        visCount = visCount + 1
-                    else
-                        ourIcon:Hide()
-                    end
+                local iconIsVisible = EUtils.UpdateBagItemIcon(ourIcon, activeID, itemCount, inLockout, 
+                                                     barData.showCharges, barData.desaturateOnCD)
+                if iconIsVisible then
+                    visibleCount = visibleCount + 1
                 end
             else
-            -- Resolve talent override
-            local resolvedID = spellID
-            if C_SpellBook and C_SpellBook.FindSpellOverrideByID then
-                local overrideID = C_SpellBook.FindSpellOverrideByID(spellID)
-                if overrideID and overrideID ~= 0 then
-                    resolvedID = overrideID
-                end
-            end
-            -- Second-level runtime override from Blizzard CDM children cache
-            -- Skip on buff bars: show the base spell's state, not the temporary
-            -- replacement that appears while the spell is on cooldown.
-            if not isBuffBarForOvr then
-                local blizzOverride = _tickBlizzOverrideCache[resolvedID] or _tickBlizzOverrideCache[spellID]
-                if blizzOverride then
-                    resolvedID = blizzOverride
-                end
-            end
+                -- Resolve talent override
+                local resolvedID = EUtils.ResolveSpellOverrideID(spellID)
 
-            -- Propagate charge cache from base to override
-            if resolvedID ~= spellID then
-                local propChild = _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
-                CacheMultiChargeSpell(resolvedID, propChild)
-                if _multiChargeSpells[resolvedID] == nil and _tickBlizzChildCache[resolvedID] then
-                    _multiChargeSpells[resolvedID] = true
-                end
-                if _multiChargeSpells[resolvedID] == nil then
-                    local intermediate = C_SpellBook and C_SpellBook.FindSpellOverrideByID
-                        and C_SpellBook.FindSpellOverrideByID(spellID)
-                    if intermediate and intermediate ~= 0 and intermediate ~= resolvedID then
-                        CacheMultiChargeSpell(intermediate, propChild)
-                        if _multiChargeSpells[intermediate] == true then
-                            _multiChargeSpells[resolvedID] = true
-                            if _maxChargeCount[intermediate] then
-                                _maxChargeCount[resolvedID] = _maxChargeCount[intermediate]
-                            end
-                        end
-                    end
-                end
-                if _multiChargeSpells[resolvedID] == nil then
-                    CacheMultiChargeSpell(spellID, propChild)
-                    if _multiChargeSpells[spellID] == true then
-                        _multiChargeSpells[resolvedID] = true
-                        if _maxChargeCount[spellID] then
-                            _maxChargeCount[resolvedID] = _maxChargeCount[spellID]
-                        end
-                    end
-                end
-            end
-
-            -- Companion child for multi-child buff spells (e.g. Eclipse).
-            -- When set, this specific CDM child is used instead of cache lookups.
-            local assignedChild = companionChild and companionChild[i]
-
-            -- Cache spell icon texture
-            local texID = _spellIconCache[resolvedID]
-            if not texID then
-                local spellInfo = C_Spell.GetSpellInfo(resolvedID)
-                if spellInfo then
-                    texID = spellInfo.iconID
-                    _spellIconCache[resolvedID] = texID
-                end
-            end
-            -- Fallback: C_Spell.GetSpellTexture is more reliable for bar-type
-            -- buff spells where GetSpellInfo may return nil.
-            if not texID then
-                texID = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(resolvedID)
-                if not texID and resolvedID ~= spellID then
-                    texID = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID)
-                end
-                if texID then _spellIconCache[resolvedID] = texID end
-            end
-            local overrideTex = (barKey == "buffs") and ns.BUFF_ICON_OVERRIDES[spellID]
-            -- For buff bars, prefer the CDM child's live Icon texture so
-            -- aura-driven icon changes (e.g. Heating Up -> Hot Streak) are
-            -- reflected each tick instead of staying stuck on the static cache.
-            local blizzBuffChild = isBuffBarForOvr
-                and (assignedChild
-                     or _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
-                     or _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID])
-                or nil
-            local blizzBuffChildTexSet = false
-            if blizzBuffChild and not overrideTex then
-                -- BuffIcon children have Icon as a Texture widget directly.
-                -- BuffBar children wrap it: Icon is a Frame, Icon.Icon is the Texture.
-                local iconWidget = blizzBuffChild.Icon
-                if iconWidget and not iconWidget.GetTexture and iconWidget.Icon then
-                    iconWidget = iconWidget.Icon
-                end
-                if iconWidget and iconWidget.GetTexture then
-                    local childTex = iconWidget:GetTexture()
-                    if childTex then
-                        ourIcon._tex:SetTexture(childTex)
-                        ourIcon._lastTex = 0
-                        blizzBuffChildTexSet = true
-                    end
-                end
-            end
-            local effectiveTex = overrideTex or texID
-            -- Proc-conditional icon override: swap icon while a buff is active
-            local procActive2 = false
-            local procEntry2 = ns.BUFF_PROC_ICON_OVERRIDES[spellID] or ns.BUFF_PROC_ICON_OVERRIDES[resolvedID]
-            if procEntry2 then
-                local buffChild2 = _tickBlizzBuffChildCache[procEntry2.buffID]
-                if IsBufChildCooldownActive(buffChild2) then
-                    local procTex2 = _spellIconCache[procEntry2.replacementSpellID]
-                    if not procTex2 then
-                        local info = C_Spell.GetSpellInfo(procEntry2.replacementSpellID)
-                        if info then procTex2 = info.iconID; _spellIconCache[procEntry2.replacementSpellID] = procTex2 end
-                    end
-                    if procTex2 then effectiveTex = procTex2; procActive2 = true end
-                end
-            end
-            if effectiveTex then
-                if (not blizzBuffChildTexSet or overrideTex or procActive2) and effectiveTex ~= ourIcon._lastTex then
-                    ourIcon._tex:SetTexture(effectiveTex)
-                    ourIcon._lastTex = effectiveTex
+                -- Skip on buff bars: buff bars show the base spell's state/CD, not the
+                -- temporary replacement that appears while the spell is on cooldown.
+                if not isBuffBarForOverride then
+                    resolvedID = SecondLevelSpellIDOverride(spellID, resolvedID)
                 end
 
-                ourIcon._spellID = resolvedID
-                -- Keybind
-                if ourIcon._keybindText and barData.showKeybind then
-                    local cachedKey = _cdmKeybindCache[resolvedID]
-                    if not cachedKey then
-                        local n = C_Spell.GetSpellName and C_Spell.GetSpellName(resolvedID)
-                        if n then cachedKey = _cdmKeybindCache[n] end
-                    end
-                    if not cachedKey and resolvedID ~= spellID then
-                        cachedKey = _cdmKeybindCache[spellID]
-                        if not cachedKey then
-                            local bn = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
-                            if bn then cachedKey = _cdmKeybindCache[bn] end
-                        end
-                    end
-                    if cachedKey then
-                        ourIcon._keybindText:SetText(cachedKey)
-                        ourIcon._keybindText:Show()
-                    elseif ourIcon._keybindText:IsShown() then
-                        ourIcon._keybindText:Hide()
-                    end
+                if resolvedID ~= spellID then
+                    PropagateResolvedSpellChargeCache(spellID, resolvedID)
                 end
 
-                -- Detect active aura state
-                local auraHandled = false
-                local skipCDDisplay = false
-                local hasRuntimeOverride = resolvedID ~= spellID and not isBuffBarForOvr
-                do
+                local texID = CacheSpellIconTexture(spellID, resolvedID)
+
+                -- Buff bars may have a hardcoded icon override for specific spells.
+                local overrideTex = isBuffBarForOverride and ns.BUFF_ICON_OVERRIDES[spellID]
+                -- For buff bars, prefer the CDM child's live Icon texture so
+                -- aura-driven icon changes (e.g. Heating Up -> Hot Streak) are
+                -- reflected each tick instead of staying stuck on the static cache.
+                local assignedChild = companionChild and companionChild[i]
+                local blizzBuffChild = GetBlizzardBuffChild(spellID, resolvedID, isBuffBarForOverride, assignedChild)
+                local blizzBuffChildTexSet = EUtils.CopyBuffWidgetTexture(ourIcon, blizzBuffChild, overrideTex)
+                local effectiveTex = overrideTex or texID
+                -- Proc-conditional icon override: swap icon while a buff is active
+                local procActive
+                effectiveTex, procActive = GetTextureForProcable(spellID, resolvedID, effectiveTex)
+                if effectiveTex then
+                    EUtils.OverrideTextureForProcable(ourIcon, effectiveTex, blizzBuffChildTexSet, overrideTex, procActive)
+                    EUtils.SetIconKeybind(ourIcon, spellID, resolvedID, barData.showKeybind)
+
+                    -- Detect active aura state before applying cooldown.
+                    -- If the spell has an active player aura, show its duration on the
+                    -- cooldown frame (same as the main bar path for buff bars).
+                    -- When the spell has a runtime override (resolvedID != spellID) on
+                    -- a non-buff bar, skip aura display so the override's actual cooldown
+                    -- is shown instead (e.g. a 2min ability that becomes a 24s kick).
+                    local auraHandled = false
+                    local skipCDDisplay = false
+                    local hasRuntimeOverride = resolvedID ~= spellID and not isBuffBarForOverride
+                    auraHandled, skipCDDisplay = EUtils.ApplyAuraCooldownOrDuration(ourIcon, spellID, resolvedID, isBuffBarForOverride,
+                                                                                    activeAnim, hasRuntimeOverride, assignedChild)
+                    -- Spell cooldown + desaturation
+                    ApplySpellCooldown(ourIcon, resolvedID, desatOnCD, showCharges, swAlpha, skipCDDisplay,
+                        assignedChild or _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID], isBuffBarForOverride)
+
+                    -- Buff bars: swipe fills as buff expires (starts empty, ends full).
+                    if isBuffBarForOverride then
+                        ourIcon._cooldown:SetReverse(auraHandled)
+                    end
+
+                    -- Active state animation
+                    ApplyActiveAnimation(ourIcon, auraHandled, barData, barKey, activeAnim, animR, animG, animB, swAlpha)
+
+                    -- Out-of-range overlay (skip buff bars)
+                    if not isBuffBarForOverride then
+                        ApplyRangeOverlay(ourIcon, resolvedID, barData.outOfRangeOverlay)
+                    elseif ourIcon._oorTinted then
+                        if ourIcon._tex then ourIcon._tex:SetVertexColor(1, 1, 1) end
+                        ourIcon._oorTinted = false
+                    end
+
+                    -- Stack count
                     local blizzChild = assignedChild or _tickBlizzAllChildCache[resolvedID]
                     if not blizzChild then
                         local cdID = _spellToCooldownID[resolvedID] or _spellToCooldownID[spellID]
-                        if cdID then
-                            blizzChild = FindCDMChildByCooldownID(cdID)
-                        end
+                        if cdID then blizzChild = EUtils.FindCDMChildByCooldownID(cdID) end
                     end
-                    -- For CD/utility bars, prefer the CD-viewer child over the buff-viewer
-                    -- child so spells that appear in both viewers show their cooldown, not
-                    -- their buff duration (e.g. Voltaic Blaze).
-                    if not isBuffBarForOvr then
-                        local cdChild = _tickBlizzCDChildCache[resolvedID] or _tickBlizzCDChildCache[spellID]
-                        if cdChild then blizzChild = cdChild end
-                    end
-                    local isAura = blizzChild and (blizzChild.wasSetFromAura == true or blizzChild.auraInstanceID ~= nil)
-                    local auraID = blizzChild and blizzChild.auraInstanceID
-                    local auraUnit = blizzChild and blizzChild.auraDataUnit or "player"
+                    ApplyStackCount(ourIcon, resolvedID,
+                        blizzChild and blizzChild.auraInstanceID,
+                        blizzChild and blizzChild.auraDataUnit or "player",
+                        true, blizzChild)
 
-                    if not isAura then
-                        -- For CD/utility bars: only use the active cache if there's no
-                        -- dedicated CD-viewer child for this spell. If there is a CD child,
-                        -- the active cache may have been set by the buff viewer for a
-                        -- dual-viewer spell — trust the CD child's state instead.
-                        local skipActiveCache = not isBuffBarForOvr
-                            and (_tickBlizzCDChildCache[resolvedID] or _tickBlizzCDChildCache[spellID])
-                        if not skipActiveCache then
-                            if _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID] then
-                                isAura = true
-                            end
-                        end
-                    end
+                    -- Store Blizzard child mapping so proc glow hooks can find our icon
+                    ourIcon._blizzChild = blizzChild
 
-                    if isAura and activeAnim ~= "hideActive" then
-                        -- When the spell has a runtime override on a non-buff bar,
-                        -- skip aura duration display so the override spell's actual
-                        -- cooldown is shown (e.g. 2min ability becomes 24s kick).
-                        if hasRuntimeOverride then
-                            auraHandled = false
+                    ourIcon:Show()
+
+                    -- Hide buff icons when inactive
+                    if barData.hideBuffsWhenInactive and isBuffBarForOverride and not EllesmereUI._unlockActive
+                    and not (EllesmereUI._mainFrame and EllesmereUI._mainFrame:IsShown()) then
+                        local isActive = _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID]
+                        -- Fallback: check if the buff-viewer child's cooldown is running
+                        if not isActive then
+                            local blzBufCh = assignedChild or _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
+                                        or _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
+                            if IsBufChildCooldownActive(blzBufCh) then isActive = true end
+                        end
+                        if not isActive then
+                            ourIcon:Hide()
                         else
-                            local isChargeSid = _multiChargeSpells[resolvedID] == true
-                            if auraID and (not isChargeSid or isBuffBarForOvr) then
-                                local ok, auraDurObj = pcall(C_UnitAuras.GetAuraDuration, auraUnit, auraID)
-                                if ok and auraDurObj then
-                                    ourIcon._cooldown:Clear()
-                                    pcall(ourIcon._cooldown.SetCooldownFromDurationObject, ourIcon._cooldown, auraDurObj, true)
-                                    ourIcon._cooldown:SetReverse(false)
-                                    auraHandled = true
-                                    skipCDDisplay = true
-                                else
-                                    -- Totems: skip auraHandled so summon-type fallback shows totem duration
-                                    local bts = blizzChild and blizzChild.preferredTotemUpdateSlot
-                                    if not (bts and type(bts) == "number" and bts > 0) then
-                                        auraHandled = true
-                                    end
-                                end
-                            else
-                                auraHandled = true
-                            end
+                            visibleCount = visibleCount + 1
                         end
-                    end
-
-                    -- Buff bar fallback for spells with no aura (e.g. summons):
-                    -- when the Blizzard CDM marks the spell as active, the effect is active.
-                    -- Also check if the buff-viewer child is visible (covers summon
-                    -- spells like Dreadstalkers that have no aura and no wasSetFromAura).
-                    -- Copy the child's cooldown state to show the effect duration.
-                    if not hasRuntimeOverride and not auraHandled and activeAnim ~= "hideActive" then
-                        if isBuffBarForOvr then
-                            local blzFbActive = _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID]
-                            if not blzFbActive then
-                                local blzBufCh = _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
-                                if IsBufChildCooldownActive(blzBufCh) then blzFbActive = true end
-                            end
-                            if blzFbActive then
-                                local blzFb = assignedChild or _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
-                                auraHandled = true
-                                skipCDDisplay = true
-                                -- Use the cached DurationObject captured by our hook
-                                -- to avoid secret-value arithmetic from GetCooldownTimes.
-                                if blzFb then
-                                    local blzCD = blzFb.Cooldown
-                                    if blzCD then
-                                        ourIcon._cooldown:Clear()
-                                        if _ecmeDurObjCache[blzFb] then
-                                            pcall(ourIcon._cooldown.SetCooldownFromDurationObject, ourIcon._cooldown, _ecmeDurObjCache[blzFb], true)
-                                        elseif _ecmeRawStartCache[blzFb] and _ecmeRawDurCache[blzFb] then
-                                            pcall(ourIcon._cooldown.SetCooldown, ourIcon._cooldown, _ecmeRawStartCache[blzFb], _ecmeRawDurCache[blzFb])
-                                        end
-                                        ourIcon._cooldown:SetReverse(false)
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-
-                -- Spell cooldown + desaturation
-                ApplySpellCooldown(ourIcon, resolvedID, desatOnCD, showCharges, swAlpha, skipCDDisplay,
-                    assignedChild or _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID], isBuffBarForOvr)
-
-                -- Buff bars: swipe fills as buff expires (starts empty, ends full).
-                if isBuffBarForOvr then
-                    ourIcon._cooldown:SetReverse(auraHandled)
-                end
-
-                -- Active state animation
-                ApplyActiveAnimation(ourIcon, auraHandled, barData, barKey, activeAnim, animR, animG, animB, swAlpha)
-
-                -- Out-of-range overlay (skip buff bars)
-                if not isBuffBarForOvr then
-                    ApplyRangeOverlay(ourIcon, resolvedID, barData.outOfRangeOverlay)
-                elseif ourIcon._oorTinted then
-                    if ourIcon._tex then ourIcon._tex:SetVertexColor(1, 1, 1) end
-                    ourIcon._oorTinted = false
-                end
-
-                -- Stack count
-                local blizzChild = assignedChild or _tickBlizzAllChildCache[resolvedID]
-                if not blizzChild then
-                    local cdID = _spellToCooldownID[resolvedID] or _spellToCooldownID[spellID]
-                    if cdID then blizzChild = FindCDMChildByCooldownID(cdID) end
-                end
-                ApplyStackCount(ourIcon, resolvedID,
-                    blizzChild and blizzChild.auraInstanceID,
-                    blizzChild and blizzChild.auraDataUnit or "player",
-                    true, blizzChild)
-
-                -- Store Blizzard child mapping so proc glow hooks can find our icon
-                ourIcon._blizzChild = blizzChild
-
-                ourIcon:Show()
-
-                -- Hide buff icons when inactive
-                if barData.hideBuffsWhenInactive and isBuffBarForOvr and not EllesmereUI._unlockActive
-                   and not (EllesmereUI._mainFrame and EllesmereUI._mainFrame:IsShown()) then
-                    local isActive = _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID]
-                    -- Fallback: check if the buff-viewer child's cooldown is running
-                    if not isActive then
-                        local blzBufCh = assignedChild or _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
-                                      or _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
-                        if IsBufChildCooldownActive(blzBufCh) then isActive = true end
-                    end
-                    if not isActive then
-                        ourIcon:Hide()
                     else
-                        visCount = visCount + 1
+                        visibleCount = visibleCount + 1
                     end
                 else
-                    visCount = visCount + 1
+                    -- No texture available yet (spell not in spellbook?)
+                    ourIcon:Hide()
                 end
-            else
-                -- No texture available yet (spell not in spellbook?)
-                ourIcon:Hide()
-            end
             end -- healthItem else
         end
     end
@@ -4982,15 +4438,16 @@ local function UpdateTrackedBarIcons(barKey)
     -- active, or when hideBuffsWhenInactive can swap which icons are visible
     -- without changing the total count (e.g. Eclipse Solar hides while Lunar
     -- shows — same count but different icons need repositioning).
-    local needsLayout = visCount ~= prevCount or hasCompanions or frame._hadCompanions
-        or (isBuffBarForOvr and barData.hideBuffsWhenInactive)
+    local needsLayout = visibleCount ~= prevCount or hasCompanions or frame._hadCompanions
+        or (isBuffBarForOverride and barData.hideBuffsWhenInactive)
     frame._hadCompanions = hasCompanions
     if needsLayout then
-        frame._prevVisibleCount = visCount
+        frame._prevVisibleCount = visibleCount
         LayoutCDMBar(barKey)
     end
 end
 ns.UpdateTrackedBarIcons = UpdateTrackedBarIcons
+
 
 local function UpdateAllCDMBars(dt)
     cdmUpdateThrottle = cdmUpdateThrottle + dt
@@ -5016,7 +4473,7 @@ local function UpdateAllCDMBars(dt)
     wipe(_tickBlizzMultiChildCache)
     do
         for vi = 1, 4 do
-            local vName = _cdmViewerNames[vi]
+            local vName = EUtils._cdmViewerNames[vi]
             local vf = _G[vName]
             local isBuffViewer = (vi == 3 or vi == 4)
             local isBuffIconViewer = (vi == 3)
@@ -5176,7 +4633,7 @@ local function UpdateAllCDMBars(dt)
                                         local totemSlot = ch.preferredTotemUpdateSlot
                                         local totemOk = true
                                         if totemSlot and type(totemSlot) == "number" and totemSlot > 0 then
-                                            local ht = GetCachedTotemInfo(totemSlot)
+                                            local ht = ECache.GetCachedTotemInfo(totemSlot)
                                             if issecretvalue and issecretvalue(ht) then
                                                 totemOk = true
                                             else
@@ -5184,7 +4641,7 @@ local function UpdateAllCDMBars(dt)
                                             end
                                         end
                                         if totemOk then
-                                            totemOk = IsTotemChildStillValid(ch)
+                                            totemOk = ECache.IsTotemChildStillValid(ch)
                                         end
                                         if totemOk then
                                             _tickBlizzActiveCache[correctSid] = true
@@ -5197,7 +4654,7 @@ local function UpdateAllCDMBars(dt)
                                 local totemSlot = ch.preferredTotemUpdateSlot
                                 local totemValid = true
                                 if totemSlot and type(totemSlot) == "number" and totemSlot > 0 then
-                                    local haveTotem = GetCachedTotemInfo(totemSlot)
+                                    local haveTotem = ECache.GetCachedTotemInfo(totemSlot)
                                     if issecretvalue and issecretvalue(haveTotem) then
                                         totemValid = true
                                     else
@@ -5205,7 +4662,7 @@ local function UpdateAllCDMBars(dt)
                                     end
                                 end
                                 if totemValid then
-                                    totemValid = IsTotemChildStillValid(ch)
+                                    totemValid = ECache.IsTotemChildStillValid(ch)
                                 end
                                 if totemValid and resolvedSid and resolvedSid > 0 then
                                     _tickBlizzActiveCache[resolvedSid] = true
@@ -7279,11 +6736,7 @@ local function ReconcileMainBarSpells()
                     if icons then
                         for i, sid in ipairs(barData.customSpells) do
                             if sid and sid > 0 and icons[i] then
-                                local checkID = sid
-                                if C_SpellBook and C_SpellBook.FindSpellOverrideByID then
-                                    local ovr = C_SpellBook.FindSpellOverrideByID(sid)
-                                    if ovr and ovr ~= 0 then checkID = ovr end
-                                end
+                                local checkID = EUtils.ResolveSpellOverrideID(sid)
                                 local ok2, ov2 = pcall(C_SpellActivationOverlay.IsSpellOverlayed, checkID)
                                 if ok2 and ov2 then
                                     ShowProcGlow(icons[i], PROC_GLOW_R, PROC_GLOW_G, PROC_GLOW_B)
@@ -7496,7 +6949,7 @@ local function ScheduleTalentRebuild()
         wipe(_spellIconCache)
         -- Clear cached viewer child info so the next tick re-reads from API
         -- (overrideSpellID may have changed with the new talent set)
-        for _, vname in ipairs(_cdmViewerNames) do
+        for _, vname in ipairs(EUtils._cdmViewerNames) do
             local vf = _G[vname]
             if vf and vf:GetNumChildren() > 0 then
                 local children = { vf:GetChildren() }
@@ -7768,7 +7221,7 @@ SlashCmdList.CDMCUSTOM = function()
                 if sid and sid > 0 then
                     local name = C_Spell.GetSpellName and C_Spell.GetSpellName(sid) or "?"
                     local cdID = _spellToCooldownID[sid]
-                    local child = cdID and FindCDMChildByCooldownID(cdID)
+                    local child = cdID and EUtils.FindCDMChildByCooldownID(cdID)
                     local inAllCache = _tickBlizzAllChildCache[sid] ~= nil
                     local inActiveCache = _tickBlizzActiveCache[sid] ~= nil
                     local wasAura = child and child.wasSetFromAura
