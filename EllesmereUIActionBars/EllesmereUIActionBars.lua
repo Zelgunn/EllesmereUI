@@ -740,6 +740,34 @@ local function HideBlizzardBars()
                 local btn = _G[info.blizzBtnPrefix .. i]
                 if btn then
                     btn:SetParent(UIParent)
+                    -- Blizzard's TextOverlayContainer (hotkey/count text) has a
+                    -- very high frame level from the original container hierarchy.
+                    -- After reparenting, it sits above everything and eats mouse
+                    -- events. Disable mouse on it so clicks reach the button.
+                    if btn.TextOverlayContainer then
+                        btn.TextOverlayContainer:EnableMouse(false)
+                        if btn.TextOverlayContainer.SetMouseClickEnabled then
+                            btn.TextOverlayContainer:SetMouseClickEnabled(false)
+                            btn.TextOverlayContainer:SetMouseMotionEnabled(false)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Prevent Blizzard's UpdateShownButtons from being called on our
+    -- reparented buttons. Buttons hold a .bar reference to their
+    -- original parent bar. UpdateAction calls self.bar:UpdateShownButtons()
+    -- which hides buttons beyond numButtonsShowable. Nil the .bar
+    -- reference so that call path is broken. This does not taint
+    -- the bar object itself, avoiding taint spread to OverrideActionBar.
+    for _, info in ipairs(BAR_CONFIG) do
+        if info.blizzBtnPrefix and not info.isStance and not info.isPetBar then
+            for i = 1, info.count do
+                local btn = _G[info.blizzBtnPrefix .. i]
+                if btn then
+                    btn.bar = nil
                 end
             end
         end
@@ -781,9 +809,38 @@ local function HideBlizzardBars()
         RegisterAttributeDriver(OverrideActionBar, "state-visibility",
             "[vehicleui][overridebar] show; hide")
     end
-    -- Native Blizzard keybinds: keep actionButtons tables and
-    -- MultiActionButtonDown/Up intact so Blizzard's C-level binding
-    -- system can route key presses to our (re-skinned) buttons.
+    -- Debug: /eabdrag to check button state for drag issues
+    SLASH_EABDRAG1 = "/eabdrag"
+    SlashCmdList["EABDRAG"] = function(msg)
+        local target = msg and msg:match("%S+") or "MainBar"
+        for _, info in ipairs(BAR_CONFIG) do
+            if info.key == target and info.blizzBtnPrefix then
+                for i = 1, info.count do
+                    local btn = _G[info.blizzBtnPrefix .. i]
+                    if btn then
+                        local shown = btn:IsShown()
+                        local visible = btn:IsVisible()
+                        local alpha = btn:GetAlpha()
+                        local mouseClick = btn.IsMouseClickEnabled and btn:IsMouseClickEnabled()
+                        local mouseMotion = btn.IsMouseMotionEnabled and btn:IsMouseMotionEnabled()
+                        local parent = btn:GetParent() and btn:GetParent():GetName() or "nil"
+                        local owned = _ownedFrames[btn:GetParent()] and "yes" or "no"
+                        local clickTypes = btn.GetRegisteredClicks and table.concat({btn:GetRegisteredClicks()}, ",") or "?"
+                        local hasAction = btn.HasAction and btn:HasAction() and "yes" or "no"
+                        local toc = btn.TextOverlayContainer
+                        local tocMouse = toc and toc:IsMouseEnabled() and "ON" or "off"
+                        local tocClick = toc and toc.IsMouseClickEnabled and toc:IsMouseClickEnabled() and "ON" or "off"
+                        print(format("[%d] sh=%s vis=%s a=%.1f clk=%s mot=%s reg=%s act=%s toc=%s/%s",
+                            i, tostring(shown), tostring(visible), alpha,
+                            tostring(mouseClick), tostring(mouseMotion),
+                            clickTypes, hasAction, tocMouse, tocClick))
+                    end
+                end
+                return
+            end
+        end
+        print("Usage: /eabdrag MainBar|Bar2|Bar3|...|Bar8")
+    end
 
     -- Force all Blizzard action bars to be "enabled" via CVars so buttons work
     C_CVar.SetCVar("SHOW_MULTI_ACTIONBAR_1", "1")
@@ -1644,6 +1701,7 @@ local function GetOrCreateButton(slot, parent, info, index, skipProtected)
             btn:SetParent(parent)
             btn:SetID(0)  -- Reset ID to avoid Blizzard paging interference
             btn.Bar = nil  -- Drop reference to Blizzard bar parent
+            btn.bar = nil  -- Lowercase variant used by UpdateAction path
             btn:Show()
         end
     else
@@ -1827,6 +1885,7 @@ local function SetupBar(info, skipProtected)
                         btn:SetParent(frame)
                         btn:SetID(0)
                         btn.Bar = nil
+                        btn.bar = nil
                     end
 
                     -- SetAttribute is allowed in combat on non-protected frames,
@@ -3211,7 +3270,9 @@ function EAB:ApplyAlwaysShowButtons(barKey)
         local btn = buttons[i]
         if btn then
             btn:SetAlpha(0)
-            if not InCombatLockdown() then btn:Hide() end
+            if not InCombatLockdown() then
+                btn:Hide()
+            end
         end
     end
 
@@ -4924,6 +4985,8 @@ local function OnGridChange()
                     if btn:GetAlpha() < 0.01 then
                         btn:SetAlpha(1)
                     end
+                    -- Re-enable mouse so empty slots accept drops
+                    SafeEnableMouse(btn, true)
                 end
             end
         end

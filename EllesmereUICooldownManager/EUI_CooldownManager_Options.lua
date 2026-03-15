@@ -2769,6 +2769,236 @@ initFrame:SetScript("OnEvent", function(self)
             mH = mH + 9
         end
 
+        -- "Custom Spell ID" option for all bar types: opens a popup to enter a spell ID
+        do
+            local csItem = CreateFrame("Button", nil, inner)
+            csItem:SetHeight(ITEM_H)
+            csItem:SetPoint("TOPLEFT", inner, "TOPLEFT", 1, -mH)
+            csItem:SetPoint("TOPRIGHT", inner, "TOPRIGHT", -1, -mH)
+            csItem:SetFrameLevel(menu:GetFrameLevel() + 2)
+
+            local csHl = csItem:CreateTexture(nil, "ARTWORK")
+            csHl:SetAllPoints(); csHl:SetColorTexture(1, 1, 1, 0); csHl:SetAlpha(0)
+
+            local csLbl = csItem:CreateFontString(nil, "OVERLAY")
+            csLbl:SetFont(FONT_PATH, 11, GetCDMOptOutline())
+            csLbl:SetPoint("LEFT", 10, 0)
+            csLbl:SetJustifyH("LEFT")
+            csLbl:SetText("Custom Spell ID")
+            csLbl:SetTextColor(tDimR, tDimG, tDimB, tDimA)
+
+            csItem:SetScript("OnEnter", function()
+                csLbl:SetTextColor(1, 1, 1, 1)
+                csHl:SetColorTexture(1, 1, 1, hlA); csHl:SetAlpha(1)
+            end)
+            csItem:SetScript("OnLeave", function()
+                csLbl:SetTextColor(tDimR, tDimG, tDimB, tDimA)
+                csHl:SetAlpha(0)
+            end)
+            csItem:SetScript("OnClick", function()
+                menu:Hide()
+                local popupName = "EUI_CDM_SpellIDPopup"
+                local popup = _G[popupName]
+                if not popup then
+                    local POPUP_W, POPUP_H = 320, 160
+                    local dimmer = CreateFrame("Frame", popupName .. "Dimmer", UIParent)
+                    dimmer:SetFrameStrata("FULLSCREEN_DIALOG")
+                    dimmer:SetAllPoints(UIParent)
+                    dimmer:EnableMouse(true)
+                    dimmer:Hide()
+                    local dimTex = dimmer:CreateTexture(nil, "BACKGROUND")
+                    dimTex:SetAllPoints(); dimTex:SetColorTexture(0, 0, 0, 0.25)
+                    dimmer:SetScript("OnMouseDown", function(self) self:Hide() end)
+
+                    popup = CreateFrame("Frame", popupName, dimmer)
+                    popup:SetSize(POPUP_W, POPUP_H)
+                    popup:SetPoint("CENTER", UIParent, "CENTER", 0, 60)
+                    popup:SetFrameStrata("FULLSCREEN_DIALOG")
+                    popup:SetFrameLevel(dimmer:GetFrameLevel() + 10)
+                    popup:EnableMouse(true)
+                    local popBg = popup:CreateTexture(nil, "BACKGROUND")
+                    popBg:SetAllPoints(); popBg:SetColorTexture(0.06, 0.08, 0.10, 1)
+                    EllesmereUI.MakeBorder(popup, 1, 1, 1, 0.15, EllesmereUI.PP)
+
+                    local title = popup:CreateFontString(nil, "OVERLAY")
+                    title:SetFont(FONT_PATH, 14, GetCDMOptOutline())
+                    title:SetPoint("TOP", popup, "TOP", 0, -18)
+                    title:SetTextColor(1, 1, 1, 1)
+                    title:SetText("Add Custom Spell")
+                    popup._title = title
+
+                    local editBox = CreateFrame("EditBox", nil, popup)
+                    editBox:SetSize(180, 28)
+                    editBox:SetPoint("TOP", title, "BOTTOM", 0, -16)
+                    editBox:SetAutoFocus(true)
+                    editBox:SetNumeric(true)
+                    editBox:SetMaxLetters(7)
+                    editBox:SetFont(FONT_PATH, 13, GetCDMOptOutline())
+                    editBox:SetTextColor(1, 1, 1, 0.9)
+                    editBox:SetJustifyH("CENTER")
+                    local ebBg = editBox:CreateTexture(nil, "BACKGROUND")
+                    ebBg:SetAllPoints(); ebBg:SetColorTexture(0.04, 0.06, 0.08, 1)
+                    EllesmereUI.MakeBorder(editBox, 1, 1, 1, 0.12, EllesmereUI.PP)
+
+                    local placeholder = editBox:CreateFontString(nil, "ARTWORK")
+                    placeholder:SetFont(FONT_PATH, 12, GetCDMOptOutline())
+                    placeholder:SetPoint("CENTER")
+                    placeholder:SetTextColor(0.5, 0.5, 0.5, 0.5)
+                    placeholder:SetText("Spell ID")
+                    editBox:SetScript("OnTextChanged", function(self)
+                        if self:GetText() == "" then placeholder:Show() else placeholder:Hide() end
+                    end)
+                    popup._editBox = editBox
+
+                    local status = popup:CreateFontString(nil, "OVERLAY")
+                    status:SetFont(FONT_PATH, 11, GetCDMOptOutline())
+                    status:SetPoint("TOP", editBox, "BOTTOM", 0, -6)
+                    status:SetTextColor(1, 0.3, 0.3, 1)
+                    status:SetText("")
+                    popup._status = status
+                    popup._statusTimer = nil
+
+                    local ar, ag, ab = EllesmereUI.GetAccentColor()
+                    local addBtn = CreateFrame("Button", nil, popup)
+                    addBtn:SetSize(80, 28)
+                    addBtn:SetPoint("BOTTOMRIGHT", popup, "BOTTOM", -4, 16)
+                    local addBg = addBtn:CreateTexture(nil, "BACKGROUND")
+                    addBg:SetAllPoints(); addBg:SetColorTexture(ar, ag, ab, 0.15)
+                    EllesmereUI.MakeBorder(addBtn, ar, ag, ab, 0.3, EllesmereUI.PP)
+                    local addLbl = addBtn:CreateFontString(nil, "OVERLAY")
+                    addLbl:SetFont(FONT_PATH, 12, GetCDMOptOutline())
+                    addLbl:SetPoint("CENTER"); addLbl:SetText("Add")
+                    addLbl:SetTextColor(ar, ag, ab, 0.9)
+                    addBtn:SetScript("OnEnter", function() addLbl:SetTextColor(1, 1, 1, 1) end)
+                    addBtn:SetScript("OnLeave", function() addLbl:SetTextColor(ar, ag, ab, 0.9) end)
+                    popup._addBtn = addBtn
+
+                    local cancelBtn = CreateFrame("Button", nil, popup)
+                    cancelBtn:SetSize(80, 28)
+                    cancelBtn:SetPoint("BOTTOMLEFT", popup, "BOTTOM", 4, 16)
+                    local cBg = cancelBtn:CreateTexture(nil, "BACKGROUND")
+                    cBg:SetAllPoints(); cBg:SetColorTexture(0.12, 0.12, 0.12, 0.5)
+                    EllesmereUI.MakeBorder(cancelBtn, 1, 1, 1, 0.10, EllesmereUI.PP)
+                    local cLbl = cancelBtn:CreateFontString(nil, "OVERLAY")
+                    cLbl:SetFont(FONT_PATH, 12, GetCDMOptOutline())
+                    cLbl:SetPoint("CENTER"); cLbl:SetText("Cancel")
+                    cLbl:SetTextColor(0.7, 0.7, 0.7, 0.8)
+                    cancelBtn:SetScript("OnEnter", function() cLbl:SetTextColor(1, 1, 1, 1) end)
+                    cancelBtn:SetScript("OnLeave", function() cLbl:SetTextColor(0.7, 0.7, 0.7, 0.8) end)
+                    cancelBtn:SetScript("OnClick", function() dimmer:Hide() end)
+                    popup._cancelBtn = cancelBtn
+
+                    editBox:SetScript("OnEscapePressed", function() dimmer:Hide() end)
+
+                    local durLabel = popup:CreateFontString(nil, "OVERLAY")
+                    durLabel:SetFont(FONT_PATH, 11, GetCDMOptOutline())
+                    durLabel:SetPoint("TOP", editBox, "BOTTOM", 0, -32)
+                    durLabel:SetTextColor(0.7, 0.7, 0.7, 0.85)
+                    durLabel:SetText("Duration (seconds)")
+                    popup._durLabel = durLabel
+
+                    local durBox = CreateFrame("EditBox", nil, popup)
+                    durBox:SetSize(180, 28)
+                    durBox:SetPoint("TOP", durLabel, "BOTTOM", 0, -6)
+                    durBox:SetNumeric(true)
+                    durBox:SetMaxLetters(5)
+                    durBox:SetFont(FONT_PATH, 13, GetCDMOptOutline())
+                    durBox:SetTextColor(1, 1, 1, 0.9)
+                    durBox:SetJustifyH("CENTER")
+                    local durBg = durBox:CreateTexture(nil, "BACKGROUND")
+                    durBg:SetAllPoints(); durBg:SetColorTexture(0.04, 0.06, 0.08, 1)
+                    EllesmereUI.MakeBorder(durBox, 1, 1, 1, 0.12, EllesmereUI.PP)
+                    local durPlaceholder = durBox:CreateFontString(nil, "ARTWORK")
+                    durPlaceholder:SetFont(FONT_PATH, 12, GetCDMOptOutline())
+                    durPlaceholder:SetPoint("CENTER")
+                    durPlaceholder:SetTextColor(0.5, 0.5, 0.5, 0.5)
+                    durPlaceholder:SetText("Required")
+                    durBox:SetScript("OnTextChanged", function(self)
+                        if self:GetText() == "" then durPlaceholder:Show() else durPlaceholder:Hide() end
+                    end)
+                    durBox:SetScript("OnEscapePressed", function() dimmer:Hide() end)
+                    popup._durBox = durBox
+
+                    popup._dimmer = dimmer
+                    _G[popupName] = popup
+                end
+
+                local function SetStatus(text, r, g, b)
+                    popup._status:SetText(text)
+                    popup._status:SetTextColor(r or 1, g or 0.3, b or 0.3, 1)
+                    if popup._statusTimer then popup._statusTimer:Cancel() end
+                    if text ~= "" then
+                        popup._statusTimer = C_Timer.NewTimer(2.5, function()
+                            popup._status:SetText("")
+                        end)
+                    end
+                end
+
+                local function DoAdd()
+                    local text = popup._editBox:GetText()
+                    local sid = tonumber(text)
+                    if not sid or sid <= 0 then
+                        SetStatus("Enter a valid spell ID")
+                        return
+                    end
+                    sid = math.floor(sid)
+                    local spellName = C_Spell.GetSpellName(sid)
+                    if not spellName then
+                        SetStatus("Unknown spell ID")
+                        return
+                    end
+                    -- Check if already tracked
+                    if bd and bd.customSpells then
+                        for _, existing in ipairs(bd.customSpells) do
+                            if existing == sid then
+                                SetStatus("Already tracked")
+                                return
+                            end
+                        end
+                    end
+                    if bd and bd.trackedSpells then
+                        for _, existing in ipairs(bd.trackedSpells) do
+                            if existing == sid then
+                                SetStatus("Already tracked")
+                                return
+                            end
+                        end
+                    end
+                    if bd and bd.extraSpells then
+                        for _, existing in ipairs(bd.extraSpells) do
+                            if existing == sid then
+                                SetStatus("Already tracked")
+                                return
+                            end
+                        end
+                    end
+                    popup._dimmer:Hide()
+                    if onSelect then onSelect(sid, true) end
+                end
+
+                popup._addBtn:SetScript("OnClick", DoAdd)
+                popup._editBox:SetScript("OnEnterPressed", DoAdd)
+                popup._editBox:SetText("")
+                popup._status:SetText("")
+                popup:SetHeight(160)
+                popup._durLabel:Hide()
+                popup._durBox:Hide()
+                popup._dimmer:Show()
+                popup._editBox:SetFocus()
+            end)
+
+            allItems[#allItems + 1] = csItem
+            mH = mH + ITEM_H
+
+            -- Divider below Custom Spell ID
+            local csDiv = inner:CreateTexture(nil, "ARTWORK")
+            csDiv:SetHeight(1)
+            csDiv:SetColorTexture(1, 1, 1, 0.10)
+            csDiv:SetPoint("TOPLEFT", inner, "TOPLEFT", 1, -mH - 4)
+            csDiv:SetPoint("TOPRIGHT", inner, "TOPRIGHT", -1, -mH - 4)
+            mH = mH + 9
+        end
+
         -- "Custom Item" sub-menu for misc bars: on-use bag items
         -- Bag scan starts immediately when the picker opens so tooltip data
         -- can cache in the background; the sub-menu refreshes live as items load.
@@ -6255,5 +6485,65 @@ initFrame:SetScript("OnEvent", function(self)
     SlashCmdList.ECMEOPT = function()
         if InCombatLockdown and InCombatLockdown() then return end
         EllesmereUI:ShowModule("EllesmereUICooldownManager")
+    end
+
+    -- Debug: /cdmpassive <spellID> -- checks why a spell is or isn't in the picker
+    SLASH_CDMPASSIVE1 = "/cdmpassive"
+    SlashCmdList.CDMPASSIVE = function(msg)
+        local sid = tonumber(msg)
+        if not sid then print("|cffff0000Usage: /cdmpassive <spellID>|r") return end
+        local name = C_Spell.GetSpellName(sid) or "?"
+        local isPassive = C_Spell.IsSpellPassive and C_Spell.IsSpellPassive(sid)
+        local baseCd = C_Spell.GetSpellBaseCooldown and C_Spell.GetSpellBaseCooldown(sid)
+        local charges = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
+        local maxCh = charges and charges.maxCharges or 0
+        print("|cff00ccff[CDM Passive Debug]|r " .. name .. " (" .. sid .. ")")
+        print("  IsSpellPassive: " .. tostring(isPassive))
+        print("  GetSpellBaseCooldown: " .. tostring(baseCd))
+        print("  maxCharges: " .. tostring(maxCh))
+        -- Check all CDM categories for this spell
+        if C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet then
+            for cat = 0, 3 do
+                local allIDs = C_CooldownViewer.GetCooldownViewerCategorySet(cat, true) or {}
+                local knownIDs = C_CooldownViewer.GetCooldownViewerCategorySet(cat, false) or {}
+                local knownSet = {}
+                for _, id in ipairs(knownIDs) do knownSet[id] = true end
+                for _, cdID in ipairs(allIDs) do
+                    local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                    if info then
+                        local infoSid = info.spellID
+                        if info.overrideSpellID and info.overrideSpellID > 0 then infoSid = info.overrideSpellID end
+                        if info.linkedSpellID and info.linkedSpellID > 0 then infoSid = info.linkedSpellID end
+                        if infoSid == sid or info.spellID == sid then
+                            print("  Found in cat " .. cat .. " cdID=" .. cdID .. " known=" .. tostring(knownSet[cdID] or false))
+                        end
+                    end
+                end
+            end
+        end
+        -- Check viewer children
+        local viewers = { "EssentialCooldownViewer", "UtilityCooldownViewer", "BuffIconCooldownViewer", "BuffBarCooldownViewer" }
+        for _, vn in ipairs(viewers) do
+            local vf = _G[vn]
+            if vf then
+                for i = 1, vf:GetNumChildren() do
+                    local child = select(i, vf:GetChildren())
+                    if child then
+                        local csid
+                        if child.GetSpellID then
+                            local ok, v = pcall(child.GetSpellID, child)
+                            if ok and v then csid = v end
+                        end
+                        if not csid and child.GetAuraSpellID then
+                            local ok, v = pcall(child.GetAuraSpellID, child)
+                            if ok and v then csid = v end
+                        end
+                        if csid == sid then
+                            print("  Viewer child in " .. vn .. " index=" .. i)
+                        end
+                    end
+                end
+            end
+        end
     end
 end)

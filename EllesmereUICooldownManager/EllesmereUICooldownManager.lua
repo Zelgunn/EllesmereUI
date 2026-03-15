@@ -1222,9 +1222,11 @@ local function IsTrulyPassive(sid)
     -- If it has a cooldown it's an active ability that happens to be passive-flagged.
     -- GetSpellBaseCooldown returns a plain number (ms), safe to compare unlike
     -- GetSpellCooldown which returns a secret value that taints on comparison.
+    -- nil means the API could not determine the cooldown (e.g. Reincarnation),
+    -- so we only filter when we get an explicit 0.
     local baseCd = C_Spell.GetSpellBaseCooldown and C_Spell.GetSpellBaseCooldown(sid)
-    if baseCd and baseCd > 0 then return false end
-    -- Also check charges — a spell with charges is active regardless of passive flag.
+    if baseCd == nil or baseCd > 0 then return false end
+    -- Also check charges -- a spell with charges is active regardless of passive flag.
     local chargeInfo = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
     if chargeInfo and chargeInfo.maxCharges and chargeInfo.maxCharges > 0 then return false end
     return true
@@ -5287,7 +5289,7 @@ function ns.GetCDMSpellsForBar(barKey)
     -- dropdown loop (which iterates cdIDs without children) can use the
     -- frame-resolved spellID instead of the potentially wrong cooldownInfo.
     local cdIDToChildSID = {}
-    local function ScanViewerSpellIDs(viewerName, filterPassives)
+    local function ScanViewerSpellIDs(viewerName)
         local vf = _G[viewerName]
         if not vf then return end
         for i = 1, vf:GetNumChildren() do
@@ -5295,21 +5297,21 @@ function ns.GetCDMSpellsForBar(barKey)
             if child then
                 local sid = ResolveChildSpellID(child)
                 if sid and sid > 0 then
-                    local skip = filterPassives and IsTrulyPassive(sid)
-                    if not skip then
-                        blizzTracked[sid] = true
-                        -- Map this child's cdID to the frame-resolved spellID
-                        local cdID = child.cooldownID or (child.cooldownInfo and child.cooldownInfo.cooldownID)
-                        if cdID then
-                            cdIDToChildSID[cdID] = sid
-                            -- Also update the persistent correction map
-                            if C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                                local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-                                if info then
-                                    local infoSid = ResolveInfoSpellID(info)
-                                    if infoSid and sid ~= infoSid then
-                                        _cdIDToCorrectSID[cdID] = sid
-                                    end
+                    -- Always add to blizzTracked regardless of passive status.
+                    -- If Blizzard has a viewer child for this spell, it is
+                    -- actively tracked and should appear in the spell picker.
+                    blizzTracked[sid] = true
+                    -- Map this child's cdID to the frame-resolved spellID
+                    local cdID = child.cooldownID or (child.cooldownInfo and child.cooldownInfo.cooldownID)
+                    if cdID then
+                        cdIDToChildSID[cdID] = sid
+                        -- Also update the persistent correction map
+                        if C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+                            local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                            if info then
+                                local infoSid = ResolveInfoSpellID(info)
+                                if infoSid and sid ~= infoSid then
+                                    _cdIDToCorrectSID[cdID] = sid
                                 end
                             end
                         end
@@ -5319,11 +5321,11 @@ function ns.GetCDMSpellsForBar(barKey)
         end
     end
     if isBuffType then
-        ScanViewerSpellIDs("BuffIconCooldownViewer", false)
-        ScanViewerSpellIDs("BuffBarCooldownViewer", false)
+        ScanViewerSpellIDs("BuffIconCooldownViewer")
+        ScanViewerSpellIDs("BuffBarCooldownViewer")
     else
-        ScanViewerSpellIDs("EssentialCooldownViewer", true)
-        ScanViewerSpellIDs("UtilityCooldownViewer", true)
+        ScanViewerSpellIDs("EssentialCooldownViewer")
+        ScanViewerSpellIDs("UtilityCooldownViewer")
     end
 
     local spells = {}
@@ -5384,6 +5386,7 @@ function ns.GetCDMSpellsForBar(barKey)
                 sid = sid or 0
                 if sid > 0 and not seenSpellID[sid] then
                     local skip = filterPassives and IsTrulyPassive(sid)
+                        and not blizzTracked[sid] and not ourPool[sid]
                     if not skip then
                         local name = C_Spell.GetSpellName(sid)
                         local tex = C_Spell.GetSpellTexture(sid)
