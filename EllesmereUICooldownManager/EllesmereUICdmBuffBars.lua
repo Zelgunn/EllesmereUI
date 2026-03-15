@@ -177,6 +177,10 @@ local TBB_DEFAULT_BAR = {
     iconX       = 0,
     iconY       = 0,
     iconBorderSize = 0,
+    stacksPosition = "center",
+    stacksSize     = 11,
+    stacksX        = 0,
+    stacksY        = 0,
 }
 ns.TBB_DEFAULT_BAR = TBB_DEFAULT_BAR
 
@@ -188,96 +192,6 @@ function ns.GetTrackedBuffBars()
         p.trackedBuffBars = { selectedBar = 1, bars = {} }
     end
     return p.trackedBuffBars
-end
-
---- Snapshot Blizzard's buff viewers to auto-populate TBB bars for a new spec.
---- Called the first time a spec profile is loaded (trackedBuffBars == nil).
---- Reads BuffBarCooldownViewer children, creates one
---- TBB bar per unique spell found, using default settings.
-function ns.SnapshotBlizzardBuffBars()
-    if not ECME or not ECME.db then return end
-    local p = ECME.db.profile
-
-    -- Collect unique spellIDs from the buff bar viewer only (not the icon viewer).
-    -- The icon viewer shows tracked procs/buffs as icons -- those remain available
-    -- in the spell pool but should not be auto-populated as bars.
-    local seen = {}
-    local spells = {}
-    local viewerNames = { "BuffBarCooldownViewer" }
-    for _, vName in ipairs(viewerNames) do
-        local vf = _G[vName]
-        if vf then
-            for i = 1, vf:GetNumChildren() do
-                local child = select(i, vf:GetChildren())
-                if child then
-                    -- Read spellID from cooldownInfo (OOC, no secret value risk)
-                    local sid = nil
-                    local ok, info = pcall(function()
-                        return child.cooldownInfo
-                    end)
-                    if ok and info then
-                        if info.spellID and info.spellID > 0 then
-                            sid = info.spellID
-                        elseif info.overrideSpellID and info.overrideSpellID > 0 then
-                            sid = info.overrideSpellID
-                        end
-                    end
-                    if not sid then
-                        local ok2, cdid = pcall(function() return child.cooldownID end)
-                        if ok2 and cdid and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                            local cinfo = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdid)
-                            if cinfo then
-                                if cinfo.spellID and cinfo.spellID > 0 then
-                                    sid = cinfo.spellID
-                                elseif cinfo.overrideSpellID and cinfo.overrideSpellID > 0 then
-                                    sid = cinfo.overrideSpellID
-                                end
-                            end
-                        end
-                    end
-                    if sid and sid > 0 and not seen[sid] then
-                        seen[sid] = true
-                        spells[#spells + 1] = sid
-                    end
-                end
-            end
-        end
-    end
-
-    if #spells == 0 then
-        -- Nothing found -- initialize empty so we don't re-snapshot next time
-        p.trackedBuffBars = { selectedBar = 1, bars = {} }
-        p._tbbNeedsSnapshot = nil
-        local specKey = p.activeSpecKey
-        if specKey and specKey ~= "0" then
-            if not p.specProfiles then p.specProfiles = {} end
-            if not p.specProfiles[specKey] then p.specProfiles[specKey] = {} end
-            p.specProfiles[specKey]._tbbSnapshotDone = true
-        end
-        return
-    end
-
-    local bars = {}
-    for i, sid in ipairs(spells) do
-        local spInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(sid)
-        local spName = (spInfo and spInfo.name) or C_Spell.GetSpellName(sid) or ("Bar " .. i)
-        local newBar = {}
-        for k, v in pairs(TBB_DEFAULT_BAR) do newBar[k] = v end
-        newBar.spellID = sid
-        newBar.name = spName
-        bars[#bars + 1] = newBar
-    end
-
-    p.trackedBuffBars = { selectedBar = 1, bars = bars }
-    p.tbbPositions = {}
-    p._tbbNeedsSnapshot = nil
-    -- Mark this spec as having been snapshotted so we don't re-run on next reload
-    local specKey = p.activeSpecKey
-    if specKey and specKey ~= "0" then
-        if not p.specProfiles then p.specProfiles = {} end
-        if not p.specProfiles[specKey] then p.specProfiles[specKey] = {} end
-        p.specProfiles[specKey]._tbbSnapshotDone = true
-    end
 end
 
 --- Add a new tracked buff bar
@@ -427,6 +341,14 @@ local function CreateTrackedBuffBarFrame(parent, idx)
     nameText:SetPoint("LEFT", bar, "LEFT", 4, 0)
     nameText:SetJustifyH("LEFT")
     wrapFrame._nameText = nameText
+
+    -- Stacks text (positioned relative to the StatusBar)
+    local stacksText = textOverlay:CreateFontString(nil, "OVERLAY")
+    SetTBBFont(stacksText, GetCDMFont(), 11)
+    stacksText:SetTextColor(1, 1, 1, 0.9)
+    stacksText:SetPoint("CENTER", bar, "CENTER", 0, 0)
+    stacksText:Hide()
+    wrapFrame._stacksText = stacksText
 
     -- Icon: child of wrapFrame so it is part of the combined rect.
     local icon = CreateFrame("Frame", nil, wrapFrame)
@@ -654,6 +576,27 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
         bar._icon:Hide()
     end
 
+    -- Stacks text positioning
+    if bar._stacksText then
+        local sPos = cfg.stacksPosition or "center"
+        local sSize = cfg.stacksSize or 11
+        local sX = cfg.stacksX or 0
+        local sY = cfg.stacksY or 0
+        SetTBBFont(bar._stacksText, GetCDMFont(), sSize)
+        bar._stacksText:ClearAllPoints()
+        if sPos == "top" then
+            bar._stacksText:SetPoint("BOTTOM", sb, "TOP", sX, 5 + sY)
+        elseif sPos == "bottom" then
+            bar._stacksText:SetPoint("TOP", sb, "BOTTOM", sX, -5 + sY)
+        elseif sPos == "left" then
+            bar._stacksText:SetPoint("RIGHT", sb, "LEFT", -5 + sX, sY)
+        elseif sPos == "right" then
+            bar._stacksText:SetPoint("LEFT", sb, "RIGHT", 5 + sX, sY)
+        else
+            bar._stacksText:SetPoint("CENTER", sb, "CENTER", sX, sY)
+        end
+    end
+
     -- Border: bdrContainer already has SetAllPoints(wrapFrame) from creation.
     -- wrapFrame IS the combined rect, so the border is always pixel-perfect.
     if bar._barBorder then
@@ -692,16 +635,21 @@ local function _TBBScanByName(name)
         _tbbAura = aData
         local nOk, aName = pcall(_TBBGetName)
         if nOk and aName then
-            -- Guard against secret values that slip through OOC edge cases
+            -- Guard against secret values that slip through OOC edge cases.
+            -- Wrap the comparison itself in pcall so tainted strings that
+            -- bypass issecretvalue cannot propagate an error.
             if issecretvalue and issecretvalue(aName) then
                 -- skip, can't compare
-            elseif aName == name then
-                local sOk, sid = pcall(_TBBGetSpellId)
-                _tbbAura = nil
-                if sOk and sid and not (issecretvalue and issecretvalue(sid)) and sid > 0 then
-                    return aData, sid
+            else
+                local cmpOk, matched = pcall(function() return aName == name end)
+                if cmpOk and matched then
+                    local sOk, sid = pcall(_TBBGetSpellId)
+                    _tbbAura = nil
+                    if sOk and sid and not (issecretvalue and issecretvalue(sid)) and sid > 0 then
+                        return aData, sid
+                    end
+                    return nil, nil
                 end
-                return nil, nil
             end
         end
     end
@@ -899,6 +847,99 @@ function ns.BuildTrackedBuffBars()
     ns.RefreshBuffBarGating()
 end
 
+-- Helper: update stacks text for a TBB bar.
+-- Mirrors the CDM pattern: read the Blizzard child's Applications frame
+-- text via GetText and pass it directly to SetText (no comparison needed,
+-- works with secret values in combat).  Falls back to per-tick aura cache
+-- (same cache CDM uses in ApplyStackCount).
+local function UpdateTBBStacks(bar, cfg)
+    if not bar._stacksText then return end
+
+    local buffChildCache = ns._tickBlizzBuffChildCache
+    local allChildCache  = ns._tickBlizzAllChildCache
+    local auraCache      = ns._tickAuraCache
+
+    -- Multi-ID (popular) bars: check each spellID
+    if cfg.spellIDs then
+        for _, sid in ipairs(cfg.spellIDs) do
+            -- Path 1: Blizzard child Applications frame (works in combat)
+            local blzChild = buffChildCache[sid] or allChildCache[sid]
+            if blzChild and blzChild.Applications and blzChild.Applications:IsShown() then
+                local appsText = blzChild.Applications.Applications
+                if appsText then
+                    local ok, txt = pcall(appsText.GetText, appsText)
+                    if ok and txt then
+                        bar._stacksText:SetText(txt)
+                        bar._stacksText:Show()
+                        return
+                    end
+                end
+            end
+            -- Path 2: per-tick aura cache (same as CDM ApplyStackCount)
+            if auraCache then
+                local aura = auraCache[sid]
+                if aura == nil then
+                    local ok, res = pcall(C_UnitAuras.GetPlayerAuraBySpellID, sid)
+                    aura = (ok and res) or false
+                    auraCache[sid] = aura
+                end
+                if aura then
+                    local apps = aura.applications
+                    if apps ~= nil and not (issecretvalue and issecretvalue(apps)) and apps > 1 then
+                        bar._stacksText:SetText(tostring(apps))
+                        bar._stacksText:Show()
+                        return
+                    end
+                end
+            end
+        end
+        bar._stacksText:Hide()
+        return
+    end
+
+    -- Single-ID bars
+    local resolvedID = bar._resolvedAuraID or cfg.spellID
+    if not resolvedID or resolvedID <= 0 then
+        bar._stacksText:Hide()
+        return
+    end
+
+    -- Path 1: Blizzard child Applications frame (works in combat)
+    local blzChild = buffChildCache[resolvedID] or allChildCache[resolvedID]
+                  or buffChildCache[cfg.spellID] or allChildCache[cfg.spellID]
+    if blzChild and blzChild.Applications and blzChild.Applications:IsShown() then
+        local appsText = blzChild.Applications.Applications
+        if appsText then
+            local ok, txt = pcall(appsText.GetText, appsText)
+            if ok and txt then
+                bar._stacksText:SetText(txt)
+                bar._stacksText:Show()
+                return
+            end
+        end
+    end
+
+    -- Path 2: per-tick aura cache (same as CDM ApplyStackCount)
+    if auraCache then
+        local aura = auraCache[resolvedID]
+        if aura == nil then
+            local ok, res = pcall(C_UnitAuras.GetPlayerAuraBySpellID, resolvedID)
+            aura = (ok and res) or false
+            auraCache[resolvedID] = aura
+        end
+        if aura then
+            local apps = aura.applications
+            if apps ~= nil and not (issecretvalue and issecretvalue(apps)) and apps > 1 then
+                bar._stacksText:SetText(tostring(apps))
+                bar._stacksText:Show()
+                return
+            end
+        end
+    end
+
+    bar._stacksText:Hide()
+end
+
 function ns.UpdateTrackedBuffBarTimers()
     if not ECME or not ECME.db then return end
     local tbb = ns.GetTrackedBuffBars()
@@ -909,6 +950,7 @@ function ns.UpdateTrackedBuffBarTimers()
     local allChildCache = ns._tickBlizzAllChildCache
     local IsBufChildActive = ns.IsBufChildCooldownActive
     local inCombat = InCombatLockdown()
+
     for i, cfg in ipairs(bars) do
         local bar = tbbFrames[i]
         if not bar or not bar._tbbReady then
@@ -946,6 +988,7 @@ function ns.UpdateTrackedBuffBarTimers()
 
             if isActive then
                 if not bar:IsShown() then bar:Show() end
+                UpdateTBBStacks(bar, cfg)
 
                 -- All multi-ID bars use customDuration for the fill animation
                 local activeDur = bar._activeDuration or cfg.customDuration
@@ -993,6 +1036,7 @@ function ns.UpdateTrackedBuffBarTimers()
                 end
             else
                 if bar:IsShown() then bar:Hide() end
+                if bar._stacksText then bar._stacksText:Hide() end
             end
         elseif not cfg.spellID or cfg.spellID == 0 then
             bar:Hide()
@@ -1028,6 +1072,7 @@ function ns.UpdateTrackedBuffBarTimers()
 
             if isActive then
                 if not bar:IsShown() then bar:Show() end
+                UpdateTBBStacks(bar, cfg)
 
                 local activeDur = bar._activeDuration or cfg.customDuration
                 if activeDur and activeDur > 0 and bar._customStart then
@@ -1135,6 +1180,7 @@ function ns.UpdateTrackedBuffBarTimers()
             else
                 -- Buff not active, hide the bar and clear state
                 if bar:IsShown() then bar:Hide() end
+                if bar._stacksText then bar._stacksText:Hide() end
                 bar._resolvedAuraID = nil
                 bar._customStart = nil
                 bar._activeDuration = nil

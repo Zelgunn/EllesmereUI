@@ -750,6 +750,28 @@ local function HideBlizzardBars()
         local bar = _G[name]
         if bar then
             bar:UnregisterAllEvents()
+            -- Only override numButtonsShowable / UpdateShownButtons on the
+            -- numbered action bars.  StanceBar and PetActionBar have their
+            -- own secure visibility systems (ActionBarController_UpdateAll
+            -- calls SetShown -> SetShownBase) and tainting them causes
+            -- ADDON_ACTION_BLOCKED.
+            if name ~= "StanceBar" and name ~= "PetActionBar" then
+                -- Force Blizzard's numButtonsShowable to the maximum so any
+                -- residual Blizzard code (e.g. UpdateShownState) that checks
+                -- the bar's visible button count never hides buttons we want
+                -- shown.  Edit Mode may have set this to fewer than 12, but
+                -- we control button visibility ourselves.
+                if bar.numButtonsShowable ~= nil then
+                    bar.numButtonsShowable = 12
+                end
+                -- Replace UpdateShownButtons with a no-op so Blizzard's
+                -- OnEnter -> UpdateAction chain cannot call SetShown() on
+                -- buttons we manage.  This prevents the stale
+                -- numButtonsShowable from hiding buttons on hover.
+                if bar.UpdateShownButtons then
+                    bar.UpdateShownButtons = function() end
+                end
+            end
             bar:SetParent(hiddenParent)
             bar:Hide()
         end
@@ -3582,6 +3604,14 @@ local function BuildVisibilityString(info, s)
     local key = info.key
     local vis = s.barVisibility or "always"
 
+    -- Build visibility-option hide clauses that can be expressed as macro
+    -- conditionals. These run inside the secure state driver so they work
+    -- even in combat without taint.
+    local visOptHide = ""
+    if s.visHideMounted then visOptHide = visOptHide .. "[mounted] hide; " end
+    if s.visHideNoTarget then visOptHide = visOptHide .. "[noexists] hide; " end
+    if s.visHideNoEnemy then visOptHide = visOptHide .. "[noharm] hide; " end
+
     -- Pet bar has unique logic: it only shows when a pet is active and
     -- the player is not in a vehicle/override/possess state.
     if info.isPetBar then
@@ -3595,7 +3625,7 @@ local function BuildVisibilityString(info, s)
         else
             petShow = "show"
         end
-        return "[petbattle] hide; [novehicleui,pet,nooverridebar,nopossessbar] " .. petShow .. "; hide"
+        return "[petbattle] hide; " .. visOptHide .. "[novehicleui,pet,nooverridebar,nopossessbar] " .. petShow .. "; hide"
     end
 
     -- Build the hide-prefix based on bar type
@@ -3607,6 +3637,9 @@ local function BuildVisibilityString(info, s)
     else
         hidePrefix = "[vehicleui][petbattle][overridebar] hide; "
     end
+
+    -- Inject visibility-option hide clauses after the standard hide-prefix
+    hidePrefix = hidePrefix .. visOptHide
 
     -- Append visibility mode conditions
     if vis == "never" then
@@ -3742,10 +3775,17 @@ function EAB:ApplyAlwaysHidden()
                 end
                 if not InCombatLockdown() then
                     if vis ~= "in_combat" and not s.combatShowEnabled then
-                        frame:Show()
+                        -- ExtraActionButton and EncounterBar holders manage
+                        -- their own visibility based on active content.
+                        if not info.isBlizzardMovable then
+                            frame:Show()
+                        end
                     end
                     if barFrames[key] and frame == barFrames[key] then
                         SafeEnableMouseMotionOnly(frame, not s.clickThrough)
+                    elseif info.isBlizzardMovable then
+                        -- Blizzard movable holders must never eat clicks.
+                        SafeEnableMouse(frame, false)
                     else
                         SafeEnableMouse(frame, not s.clickThrough)
                     end
@@ -3815,16 +3855,61 @@ function EAB:UpdateHousingVisibility()
     -- (e.g. CameraOrSelectOrMoveStop triggering PLAYER_MOUNT_DISPLAY_CHANGED)
     C_Timer.After(0, function()
         if InCombatLockdown() then return end
+        -- Check only housing and instance-only options here. Mounted, target,
+        -- and enemy options are handled by the secure state driver via
+        -- BuildVisibilityString and re-evaluate automatically.
+        local function ShouldHideNonMacro(s)
+            if not s then return false end
+            if s.visOnlyInstances then
+                local _, iType, diffID = GetInstanceInfo()
+                diffID = tonumber(diffID) or 0
+                local inInstance = false
+                if diffID > 0 then
+                    if C_Garrison and C_Garrison.IsOnGarrisonMap and C_Garrison.IsOnGarrisonMap() then
+                        inInstance = false
+                    elseif iType == "party" or iType == "raid" or iType == "scenario" or iType == "arena" or iType == "pvp" then
+                        inInstance = true
+                    end
+                end
+                if not inInstance then return true end
+            end
+            if s.visHideHousing then
+                if C_Map and C_Map.GetBestMapForUnit then
+                    local mapID = C_Map.GetBestMapForUnit("player")
+                    if mapID and mapID > 2600 then return true end
+                end
+            end
+            return false
+        end
+
         for _, info in ipairs(ALL_BARS) do
             local key = info.key
             local s = self.db.profile.bars[key]
             if s then
                 local frame = barFrames[key] or (info.isDataBar and dataBarFrames[key]) or (info.isBlizzardMovable and blizzMovableHolders[key]) or (extraBarHolders[key]) or (info.visibilityOnly and _G[info.frameName])
                 if frame then
-                    if EllesmereUI.CheckVisibilityOptions(s) then
-                        frame:Hide()
+                    -- Secure action bar frames use the state driver for mounted/
+                    -- target/enemy options, so only check housing/instances here.
+                    -- Non-secure frames (data bars, extra bars, visibility-only)
+                    -- need the full check since they have no state driver.
+                    local isSecure = not info.visibilityOnly and not info.isDataBar and not info.isBlizzardMovable and barFrames[key]
+                    local shouldHide = isSecure and ShouldHideNonMacro(s) or (not isSecure and EllesmereUI.CheckVisibilityOptions(s))
+                    if shouldHide then
+                        if isSecure then
+                            RegisterAttributeDriver(frame, "state-visibility", "hide")
+                        else
+                            frame:Hide()
+                        end
                     elseif not s.alwaysHidden and (s.barVisibility or "always") ~= "never" then
-                        frame:Show()
+                        if isSecure then
+                            RegisterAttributeDriver(frame, "state-visibility", BuildVisibilityString(info, s))
+                        elseif not info.isBlizzardMovable then
+                            frame:Show()
+                        end
+                        -- Data bars may need to re-hide (max level, max renown, etc.)
+                        if info.isDataBar and frame._updateFunc then
+                            frame._updateFunc()
+                        end
                     end
                 end
             end
@@ -5192,6 +5277,53 @@ function EAB:OnInitialize()
         end
     end
 
+    -- Diagnostic: /eabmouse -- prints all frames under the cursor that have
+    -- mouse enabled, so we can identify what is eating clicks.
+    SLASH_EABMOUSE1 = "/eabmouse"
+    SlashCmdList["EABMOUSE"] = function()
+        local focus = GetMouseFoci and GetMouseFoci() or { GetMouseFocus and GetMouseFocus() }
+        print("|cff00ccff[EAB Mouse Debug]|r Frames under cursor:")
+        if not focus or #focus == 0 then
+            print("  (none)")
+            return
+        end
+        for i, f in ipairs(focus) do
+            local name = f:GetName() or tostring(f)
+            local pName = f:GetParent() and (f:GetParent():GetName() or tostring(f:GetParent())) or "nil"
+            local shown = f:IsShown() and "shown" or "hidden"
+            local mouse = f:IsMouseEnabled() and "mouse=ON" or "mouse=off"
+            local w, h = f:GetSize()
+            local strata = f:GetFrameStrata()
+            local level = f:GetFrameLevel()
+            print(("  %d: %s [%s, %s] size=%.0fx%.0f strata=%s level=%d parent=%s"):format(
+                i, name, shown, mouse, w or 0, h or 0, strata, level, pName))
+        end
+        -- Also check specific suspect frames
+        local suspects = {
+            { "ExtraAbilityContainer", ExtraAbilityContainer },
+            { "ExtraActionBarFrame", ExtraActionBarFrame },
+            { "ExtraActionButton1", _G["ExtraActionButton1"] },
+            { "PlayerPowerBarAlt", PlayerPowerBarAlt },
+            { "UIWidgetPowerBarContainerFrame", UIWidgetPowerBarContainerFrame },
+            { "UIParentBottomManagedFrameContainer", UIParentBottomManagedFrameContainer },
+        }
+        print("|cff00ccff[EAB Mouse Debug]|r Suspect frames:")
+        for _, s in ipairs(suspects) do
+            local sName, sFrame = s[1], s[2]
+            if sFrame then
+                local shown = sFrame:IsShown() and "shown" or "hidden"
+                local mouse = sFrame:IsMouseEnabled() and "mouse=ON" or "mouse=off"
+                local pName = sFrame:GetParent() and (sFrame:GetParent():GetName() or tostring(sFrame:GetParent())) or "nil"
+                local vis = sFrame:IsVisible() and "visible" or "not-visible"
+                local w, h = sFrame:GetSize()
+                print(("  %s: [%s, %s, %s] size=%.0fx%.0f parent=%s"):format(
+                    sName, shown, vis, mouse, w or 0, h or 0, pName))
+            else
+                print(("  %s: nil"):format(sName))
+            end
+        end
+    end
+
 end
 
 function EAB:OnEnable()
@@ -5215,8 +5347,8 @@ function EAB:OnFirstLogin()
     for barKey, data in pairs(captured) do
         local s = self.db.profile.bars[barKey]
         if s and data then
-            if data.numIcons then s.numIcons = data.numIcons end
-            if data.numRows then s.numRows = data.numRows end
+            if data.numIcons then s.overrideNumIcons = data.numIcons end
+            if data.numRows then s.overrideNumRows = data.numRows end
             if data.orientation then s.orientation = data.orientation end
             if data.blizzIconScale then
                 s.barScale = data.blizzIconScale
@@ -5782,6 +5914,14 @@ function EAB:FinishSetup()
             local bar = _G[name]
             if bar then
                 bar:UnregisterAllEvents()
+                if name ~= "StanceBar" and name ~= "PetActionBar" then
+                    if bar.numButtonsShowable ~= nil then
+                        bar.numButtonsShowable = 12
+                    end
+                    if bar.UpdateShownButtons then
+                        bar.UpdateShownButtons = function() end
+                    end
+                end
                 bar:SetParent(hiddenParent)
                 bar:Hide()
             end
@@ -5938,10 +6078,9 @@ local function UpdateXPBar()
     local bar = frame._bar
     local text = frame._text
 
-    -- Hide at max level
-    local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 80
-    local level = UnitLevel("player")
-    if level >= maxLevel then
+    -- Hide at max level (or XP disabled)
+    if (IsLevelAtEffectiveMaxLevel and IsLevelAtEffectiveMaxLevel(UnitLevel("player")))
+        or (IsXPUserDisabled and IsXPUserDisabled()) then
         frame:Hide()
         return
     end
@@ -6001,8 +6140,8 @@ local function CreateXPBar()
     -- Tooltip
     holder:EnableMouse(true)
     holder:SetScript("OnEnter", function(self)
-        local maxLevel = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion() or 80
-        if UnitLevel("player") >= maxLevel then return end
+        if (IsLevelAtEffectiveMaxLevel and IsLevelAtEffectiveMaxLevel(UnitLevel("player")))
+            or (IsXPUserDisabled and IsXPUserDisabled()) then return end
         GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
         GameTooltip:ClearLines()
         local currentXP = UnitXP("player")
@@ -6095,12 +6234,16 @@ local function UpdateRepBar()
     if not isParagon and not isFriendship and factionID and C_Reputation.IsMajorFaction and C_Reputation.IsMajorFaction(factionID) then
         local majorData = C_MajorFactions and C_MajorFactions.GetMajorFactionData and C_MajorFactions.GetMajorFactionData(factionID)
         if majorData then
+            local hasMax = C_MajorFactions.HasMaximumRenown and C_MajorFactions.HasMaximumRenown(factionID)
+            if hasMax then
+                frame:Hide()
+                return
+            end
             reaction = 10
             standing = "Renown"
             currentReactionThreshold = 0
             nextReactionThreshold = majorData.renownLevelThreshold
-            local hasMax = C_MajorFactions.HasMaximumRenown and C_MajorFactions.HasMaximumRenown(factionID)
-            currentStanding = hasMax and majorData.renownLevelThreshold or (majorData.renownReputationEarned or 0)
+            currentStanding = majorData.renownReputationEarned or 0
         end
     end
 
@@ -6111,30 +6254,26 @@ local function UpdateRepBar()
     local color = REP_COLORS[reaction] or REP_COLORS[4]
     bar:SetStatusBarColor(color.r, color.g, color.b)
 
-    -- Handle capped / maxed factions (nextThreshold == huge or equal thresholds)
+    -- Hide capped / maxed factions (Exalted with no paragon, max friendship, etc.)
     if nextReactionThreshold == math.huge or currentReactionThreshold == nextReactionThreshold then
-        bar:SetMinMaxValues(0, 1)
-        bar:SetValue(1)
-        text:SetText(format("%s: [%s]", name, standing))
-    else
-        local current = currentStanding - currentReactionThreshold
-        local maximum = nextReactionThreshold - currentReactionThreshold
-        if maximum <= 0 then maximum = 1 end
-
-        bar:SetMinMaxValues(0, maximum)
-        bar:SetValue(current)
-
-        local pct = (current / maximum) * 100
-        text:SetText(format("%s: %.0f%% [%s]", name, pct, standing))
+        frame:Hide()
+        return
     end
+
+    local current = currentStanding - currentReactionThreshold
+    local maximum = nextReactionThreshold - currentReactionThreshold
+    if maximum <= 0 then maximum = 1 end
+
+    bar:SetMinMaxValues(0, maximum)
+    bar:SetValue(current)
+
+    local pct = (current / maximum) * 100
+    text:SetText(format("%s: %.0f%% [%s]", name, pct, standing))
 
     -- Auto-size text if bar is too narrow
     local barW = frame:GetWidth()
     if text:GetStringWidth() > barW - 4 then
-        local current = currentStanding - currentReactionThreshold
-        local maximum = nextReactionThreshold - currentReactionThreshold
-        if maximum <= 0 then maximum = 1 end
-        text:SetText(format("%.0f%%", (current / maximum) * 100))
+        text:SetText(format("%.0f%%", pct))
     end
 end
 
@@ -6387,11 +6526,7 @@ local function SetupBlizzardMovableFrame(barKey)
             primaryFrame = ExtraAbilityContainer
             extraFrames[#extraFrames + 1] = ExtraAbilityContainer
         end
-        -- ExtraActionBarFrame itself also needs mouse disabled -- it can absorb
-        -- clicks even when the container has no active ability.
-        if ExtraActionBarFrame and ExtraActionBarFrame:IsMouseEnabled() and not InCombatLockdown() then
-            ExtraActionBarFrame:EnableMouse(false)
-        end
+        -- ExtraActionBarFrame mouse is disabled in the container setup below.
     elseif barKey == "EncounterBar" then
         -- PlayerPowerBarAlt is the classic encounter power bar.
         -- UIWidgetPowerBarContainerFrame is used by newer mechanics.
@@ -6467,45 +6602,71 @@ local function SetupBlizzardMovableFrame(barKey)
         end
     end
 
-    -- Extra Action Button: silence the container's layout loop and mouse so it
-    -- never absorbs clicks or repositions itself. We keep OnShow/OnHide alive
-    -- because they drive child frame (ExtraActionBarFrame, ZoneAbilityFrame)
-    -- visibility -- but we hook them to re-reparent after they fire, since
-    -- Blizzard's OnShow calls UpdateManagedFramePositions which can steal position.
+    -- Extra Action Button: disable the container's layout-driven repositioning
+    -- and reparent it into our holder. Keep OnShow/OnHide nil'd on the
+    -- container so Blizzard's layout code cannot fire, but leave the child
+    -- frames (ExtraActionBarFrame, ZoneAbilityFrame) untouched so they show
+    -- and hide normally.
     if barKey == "ExtraActionButton" and ExtraAbilityContainer then
-        DisableLayoutFrame(ExtraAbilityContainer)
+        -- Disable mouse on ExtraActionBarFrame so it cannot absorb clicks
+        -- when no extra action bar is active.
+        if ExtraActionBarFrame and ExtraActionBarFrame:IsMouseEnabled() then
+            ExtraActionBarFrame:EnableMouse(false)
+        end
 
-        -- Re-reparent after Blizzard's OnShow repositions the container.
-        ExtraAbilityContainer:HookScript("OnShow", function()
-            if ExtraAbilityContainer:GetParent() ~= holder then
-                ReparentIntoHolder()
+        -- Nil container OnShow/OnHide so Blizzard's layout code
+        -- (UpdateManagedFramePositions) cannot fire when the container shows.
+        ExtraAbilityContainer:SetScript("OnShow", nil)
+        ExtraAbilityContainer:SetScript("OnHide", nil)
+
+        -- Hook AddFrame so newly added ability buttons stay clickable.
+        if ExtraAbilityContainer.AddFrame then
+            hooksecurefunc(ExtraAbilityContainer, "AddFrame", function(_, frame)
+                if frame and frame.EnableMouse then
+                    frame:EnableMouse(true)
+                end
+            end)
+        end
+
+        -- Reposition the container into our holder.
+        local function RepositionExtraContainer()
+            if InCombatLockdown() then return end
+            local container = ExtraAbilityContainer
+            container:SetParent(holder)
+            if container.ClearAllPointsBase then
+                container:ClearAllPointsBase()
+                container:SetPointBase("CENTER", holder)
+            else
+                container:ClearAllPoints()
+                container:SetPoint("CENTER", holder)
             end
-        end)
+        end
+        RepositionExtraContainer()
 
-        -- Edit Mode calls ApplySystemAnchor to reposition the container.
-        -- Re-reparent back into our holder whenever that fires.
+        -- Re-reparent when Edit Mode tries to reposition the container.
         if ExtraAbilityContainer.ApplySystemAnchor then
             hooksecurefunc(ExtraAbilityContainer, "ApplySystemAnchor", function()
-                ReparentIntoHolder()
-                -- Also remove from UIParentBottomManagedFrameContainer if present
+                local _, relFrame = ExtraAbilityContainer:GetPoint()
+                if relFrame ~= holder then
+                    RepositionExtraContainer()
+                end
                 if UIParentBottomManagedFrameContainer then
                     UIParentBottomManagedFrameContainer.showingFrames[ExtraAbilityContainer] = nil
                 end
             end)
         end
 
-        -- Hook AddFrame so newly added ability buttons also get mouse disabled.
-        if ExtraAbilityContainer.AddFrame then
-            hooksecurefunc(ExtraAbilityContainer, "AddFrame", function(_, frame)
-                if frame and frame.EnableMouse then
-                    frame:EnableMouse(true) -- buttons themselves must stay clickable
-                end
-            end)
-        end
+        -- Re-reparent after Blizzard's OnShow repositions the container.
+        -- (We nil'd the script, but hooksecurefunc still fires on Show.)
+        hooksecurefunc(ExtraAbilityContainer, "Show", function()
+            if ExtraAbilityContainer:GetParent() ~= holder then
+                RepositionExtraContainer()
+            end
+        end)
     end
 
-    -- Encounter Bar: mark as user-placed so Blizzard's position manager leaves
-    -- it alone, and hook the setup functions that fire when a fight starts.
+    -- Encounter Bar: reparent into holder, mark as user-placed so Blizzard's
+    -- position manager leaves it alone, and hook setup functions to re-reparent.
     if barKey == "EncounterBar" then
         local ppb = PlayerPowerBarAlt
         if ppb then
@@ -6513,7 +6674,10 @@ local function SetupBlizzardMovableFrame(barKey)
             ppb:SetUserPlaced(true)
             ppb:SetDontSavePosition(true)
 
-            -- Blizzard calls SetupPlayerPowerBarPosition when the bar activates.
+            ppb:ClearAllPoints()
+            ppb:SetParent(holder)
+            ppb:SetPoint("CENTER", holder)
+
             if type(ppb.SetupPlayerPowerBarPosition) == "function" then
                 hooksecurefunc(ppb, "SetupPlayerPowerBarPosition", function(bar)
                     if bar:GetParent() ~= holder then
@@ -6522,7 +6686,6 @@ local function SetupBlizzardMovableFrame(barKey)
                 end)
             end
 
-            -- UnitPowerBarAlt_SetUp fires when the encounter bar is initialized.
             if type(UnitPowerBarAlt_SetUp) == "function" then
                 hooksecurefunc("UnitPowerBarAlt_SetUp", function(bar)
                     if bar.isPlayerBar and bar:GetParent() ~= holder then
@@ -6531,7 +6694,6 @@ local function SetupBlizzardMovableFrame(barKey)
                 end)
             end
 
-            -- Resize holder to match the bar when it changes size.
             ppb:HookScript("OnSizeChanged", function(self)
                 local w, h = self:GetSize()
                 if w > 1 and h > 1 then holder:SetSize(w, h) end
@@ -6555,8 +6717,7 @@ local function SetupBlizzardMovableFrame(barKey)
     ReparentIntoHolder()
 
     -- Hook SetParent on every managed frame so we re-reparent immediately if
-    -- Blizzard or another addon steals the frame back. No deferred timer --
-    -- act synchronously when out of combat, queue when in combat.
+    -- Blizzard or another addon steals the frame back.
     for _, f in ipairs(extraFrames) do
         hooksecurefunc(f, "SetParent", function(self, newParent)
             if newParent ~= holder then
@@ -6580,7 +6741,6 @@ _blizzMovableCombatFrame:SetScript("OnEvent", function()
     for barKey in pairs(_blizzMovablePendingOOC) do
         local holder = blizzMovableHolders[barKey] or extraBarHolders[barKey]
         if not holder then
-            -- Extra bar holders (MicroBar, BagBar)
             for _, info in ipairs(EXTRA_BARS) do
                 if info.key == barKey then
                     holder = extraBarHolders[barKey]
@@ -6626,8 +6786,8 @@ _blizzMovableCombatFrame:SetScript("OnEvent", function()
     end
     wipe(_blizzMovablePendingOOC)
 
-    -- ExtraActionBarFrame is a protected frame that Blizzard re-enables mouse
-    -- on when combat ends. Re-disable it here so it never absorbs clicks OOC.
+    -- Re-disable mouse on ExtraActionBarFrame after combat ends.
+    -- Blizzard's secure code re-enables mouse on protected frames during combat.
     if ExtraActionBarFrame and ExtraActionBarFrame:IsMouseEnabled() then
         ExtraActionBarFrame:EnableMouse(false)
     end

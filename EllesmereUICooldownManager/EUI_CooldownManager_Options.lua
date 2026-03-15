@@ -1839,6 +1839,29 @@ initFrame:SetScript("OnEvent", function(self)
                     timer:SetText("3.2")
                 end
 
+                -- Stacks preview
+                do
+                    local sPos = bd.stacksPosition or "center"
+                    local sSize = bd.stacksSize or 11
+                    local sX = bd.stacksX or 0
+                    local sY = bd.stacksY or 0
+                    local pvStacks = pvTextOverlay:CreateFontString(nil, "OVERLAY")
+                    SetPVFont(pvStacks, FONT_PATH, sSize)
+                    pvStacks:SetTextColor(1, 1, 1, 0.9)
+                    pvStacks:SetText("3")
+                    if sPos == "top" then
+                        pvStacks:SetPoint("BOTTOM", pvBar, "TOP", sX, 5 + sY)
+                    elseif sPos == "bottom" then
+                        pvStacks:SetPoint("TOP", pvBar, "BOTTOM", sX, -5 + sY)
+                    elseif sPos == "left" then
+                        pvStacks:SetPoint("RIGHT", pvBar, "LEFT", -5 + sX, sY)
+                    elseif sPos == "right" then
+                        pvStacks:SetPoint("LEFT", pvBar, "RIGHT", 5 + sX, sY)
+                    else
+                        pvStacks:SetPoint("CENTER", pvBar, "CENTER", sX, sY)
+                    end
+                end
+
                 -- Spell name (hidden in vertical orientation)
                 if bd.showName ~= false and not bd.verticalOrientation then
                     local nameFs = pvTextOverlay:CreateFontString(nil, "OVERLAY")
@@ -2189,6 +2212,47 @@ initFrame:SetScript("OnEvent", function(self)
             cogBtn:HookScript("OnShow", UpdateCogDisTimer)
             EllesmereUI.RegisterWidgetRefresh(UpdateCogDisTimer)
             UpdateCogDisTimer()
+        end
+
+        -- Stacks Position (dropdown + resize cog: size, x, y) | empty
+        local stacksRow
+        stacksRow, h = W:DualRow(parent, y,
+            { type = "dropdown", text = "Stacks Position",
+              values = { center = "Center", top = "Top", bottom = "Bottom", left = "Left", right = "Right" },
+              order = { "center", "top", "bottom", "left", "right" },
+              getValue = function() local bd = SelectedTBB(); return bd and bd.stacksPosition or "center" end,
+              setValue = function(v)
+                  local bd = SelectedTBB(); if not bd then return end
+                  bd.stacksPosition = v; RefreshTBB()
+              end },
+            { type = "label", text = "" }
+        );  y = y - h
+        do
+            local rgn = stacksRow._leftRegion
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title = "Stacks Settings",
+                rows = {
+                    { type = "slider", label = "Size", min = 6, max = 24, step = 1,
+                      get = function() local bd = SelectedTBB(); return bd and bd.stacksSize or 11 end,
+                      set = function(v)
+                          local bd = SelectedTBB(); if not bd then return end
+                          bd.stacksSize = v; RefreshTBB()
+                      end },
+                    { type = "slider", label = "X Offset", min = -100, max = 100, step = 1,
+                      get = function() local bd = SelectedTBB(); return bd and bd.stacksX or 0 end,
+                      set = function(v)
+                          local bd = SelectedTBB(); if not bd then return end
+                          bd.stacksX = v; RefreshTBB()
+                      end },
+                    { type = "slider", label = "Y Offset", min = -100, max = 100, step = 1,
+                      get = function() local bd = SelectedTBB(); return bd and bd.stacksY or 0 end,
+                      set = function(v)
+                          local bd = SelectedTBB(); if not bd then return end
+                          bd.stacksY = v; RefreshTBB()
+                      end },
+                },
+            })
+            MakeCogBtn(rgn, cogShow, nil, EllesmereUI.RESIZE_ICON)
         end
 
         -------------------------------------------------------------------

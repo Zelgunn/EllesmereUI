@@ -3731,16 +3731,6 @@ initFrame:SetScript("OnEvent", function(self)
                             end)
                             iXBtn:SetScript("OnClick", function()
                                 if capName == "Default" then return end
-                                -- Skip confirmation for pristine (uncustomized) default profiles
-                                local _, profiles = EllesmereUI.GetProfileList()
-                                local pData = profiles and profiles[capName]
-                                if pData and pData._pristine then
-                                    EllesmereUI.DeleteProfile(capName)
-                                    ddLabel:SetText(EllesmereUI.GetActiveProfileName())
-                                    -- Rebuild the dropdown in-place so it stays open
-                                    RebuildProfileMenu()
-                                    return
-                                end
                                 menu:Hide()
                                 EllesmereUI:ShowConfirmPopup({
                                     title       = "Delete Profile",

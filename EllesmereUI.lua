@@ -5587,7 +5587,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "4.7.9"
+EllesmereUI.VERSION = "4.8"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end
@@ -6212,9 +6212,11 @@ initFrame:SetScript("OnEvent", function(self, event)
         local btn = CreateFrame("Button", "EllesmereUI_GameMenuButton", GameMenuFrame, "MainMenuFrameButtonTemplate")
         btn:SetSize(200, 35)
         btn:SetScript("OnClick", function()
-            if not InCombatLockdown() then
-                HideUIPanel(GameMenuFrame)
+            if InCombatLockdown() then
+                print("|cffff6060[EllesmereUI]|r Cannot open options during combat.")
+                return
             end
+            HideUIPanel(GameMenuFrame)
             EllesmereUI:Toggle()
         end)
         GameMenuFrame.EllesmereUI = btn
@@ -6337,7 +6339,10 @@ initFrame:SetScript("OnEvent", function(self, event)
         btn:SetPoint("CENTER", panel, "CENTER", 0, 0)
         btn:SetText("Open EllesmereUI")
         btn:SetScript("OnClick", function()
-            if InCombatLockdown() then return end
+            if InCombatLockdown() then
+                print("|cffff6060[EllesmereUI]|r Cannot open options during combat.")
+                return
+            end
             -- Close Blizzard settings first, then open ours on next frame to avoid taint
             if SettingsPanel and SettingsPanel:IsShown() then
                 HideUIPanel(SettingsPanel)

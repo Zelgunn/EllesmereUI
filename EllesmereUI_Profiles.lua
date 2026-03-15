@@ -1366,7 +1366,6 @@ function EllesmereUI.CreateDefaultProfile(name)
         end
     end
     db.profiles[name] = snap
-    db.profiles[name]._pristine = true
     local found = false
     for _, n in ipairs(db.profileOrder) do
         if n == name then found = true; break end
@@ -1454,17 +1453,7 @@ function EllesmereUI.AutoSaveActiveProfile()
     if EllesmereUI._profileSaveLocked then return end
     local db = GetProfilesDB()
     local name = db.activeProfile or "Default"
-    local wasPristine = db.profiles[name] and db.profiles[name]._pristine
     db.profiles[name] = EllesmereUI.SnapshotAllAddons()
-    -- Preserve pristine flag: only cleared explicitly when user modifies settings
-    if wasPristine then db.profiles[name]._pristine = true end
-end
-
---- Clear the pristine flag on the active profile (called when a setting changes)
-function EllesmereUI.MarkActiveProfileDirty()
-    local db = GetProfilesDB()
-    local name = db.activeProfile or "Default"
-    if db.profiles[name] then db.profiles[name]._pristine = nil end
 end
 
 -------------------------------------------------------------------------------

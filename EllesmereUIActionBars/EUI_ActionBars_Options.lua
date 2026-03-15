@@ -857,6 +857,7 @@ initFrame:SetScript("OnEvent", function(self)
                     function(k, v)
                         EAB.db.profile.bars[barKey][k] = v
                         EAB:UpdateHousingVisibility()
+                        EAB:ApplyCombatVisibility()
                         EllesmereUI:RefreshPage()
                     end)
                 PP.Point(cbDD, "RIGHT", rightRgn, "RIGHT", -20, 0)
@@ -1006,6 +1007,7 @@ initFrame:SetScript("OnEvent", function(self)
                     function(k, v)
                         EAB.db.profile.bars[barKey][k] = v
                         EAB:UpdateHousingVisibility()
+                        EAB:ApplyCombatVisibility()
                         EllesmereUI:RefreshPage()
                     end)
                 PP.Point(cbDD, "RIGHT", rightRgn, "RIGHT", -20, 0)
@@ -1176,6 +1178,7 @@ initFrame:SetScript("OnEvent", function(self)
                         function(k, v)
                             SB()[k] = v
                             EAB:UpdateHousingVisibility()
+                            EAB:ApplyCombatVisibility()
                             EllesmereUI:RefreshPage()
                         end)
                     local PP = EllesmereUI.PanelPP
@@ -1254,6 +1257,7 @@ initFrame:SetScript("OnEvent", function(self)
                                 end
                             end
                             EAB:UpdateHousingVisibility()
+                            EAB:ApplyCombatVisibility()
                             EllesmereUI:RefreshPage()
                         end,
                         isSynced = function()
@@ -1282,6 +1286,7 @@ initFrame:SetScript("OnEvent", function(self)
                                     end
                                 end
                                 EAB:UpdateHousingVisibility()
+                                EAB:ApplyCombatVisibility()
                                 EllesmereUI:RefreshPage()
                             end,
                         },

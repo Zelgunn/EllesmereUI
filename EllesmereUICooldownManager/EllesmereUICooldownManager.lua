@@ -242,6 +242,7 @@ end
 local _tickGCDCache   = {}  -- [spellID] = bool|nil (GCD check result)
 local _tickChargeCache = {} -- [spellID] = charges table or false
 local _tickAuraCache  = {}  -- [spellID] = aura table or false
+ns._tickAuraCache = _tickAuraCache
 local _tickBlizzActiveCache = {}  -- [spellID] = true when Blizzard CDM marks spell as active (wasSetFromAura)
 ns._tickBlizzActiveCache = _tickBlizzActiveCache
 local _tickBlizzOverrideCache = {} -- [baseSpellID] = overrideSpellID, built each tick from all CDM viewer children
@@ -1543,10 +1544,9 @@ local function LoadSpecProfile(specKey)
             assignments = {},
         }
 
-        -- Reset tracked buff bars so the Blizzard viewer snapshot fires on next build
-        p.trackedBuffBars = nil
+        -- Reset tracked buff bars to empty for this new spec
+        p.trackedBuffBars = { selectedBar = 1, bars = {} }
         p.tbbPositions = nil
-        p._tbbNeedsSnapshot = true
     end
 
     -- Replace any stale racial spellIDs with the current character's racial
@@ -1579,18 +1579,13 @@ local function SwitchSpecProfile(newSpecKey)
     -- Rebuild all CDM systems (deferred so Blizzard CDM frames are ready)
     C_Timer.After(0.5, function()
         BuildAllCDMBars()
-        -- Mark for snapshot if this spec has no buff bars configured yet
+        -- Initialize empty buff bars if this spec has none configured yet
         do
             local pp = ECME.db.profile
             local tbb = pp.trackedBuffBars
             local hasNoBars = (not tbb) or (not tbb.bars) or (#tbb.bars == 0)
-            local alreadyDone = pp.specProfiles
-                and newSpecKey and newSpecKey ~= "0"
-                and pp.specProfiles[newSpecKey]
-                and pp.specProfiles[newSpecKey]._tbbSnapshotDone
-            if hasNoBars and not alreadyDone then
-                pp._tbbNeedsSnapshot = true
-                pp.trackedBuffBars = nil
+            if hasNoBars then
+                pp.trackedBuffBars = { selectedBar = 1, bars = {} }
                 pp.tbbPositions = nil
             end
         end
@@ -1602,13 +1597,6 @@ local function SwitchSpecProfile(newSpecKey)
         ForcePopulateBlizzardViewers(function()
             ForceResnapshotMainBars()
             StartResnapshotRetry()
-            -- Auto-populate buff bars from Blizzard viewers on first use of this spec
-            local pp = ECME.db.profile
-            if pp._tbbNeedsSnapshot and ns.SnapshotBlizzardBuffBars then
-                pp._tbbNeedsSnapshot = nil
-                ns.SnapshotBlizzardBuffBars()
-                ns.BuildTrackedBuffBars()
-            end
         end)
 
         -- Refresh options panel if open
@@ -2604,12 +2592,7 @@ end
 --  grow RIGHT -> near edge = LEFT, grow LEFT -> RIGHT, grow DOWN -> TOP, grow UP -> BOTTOM
 -------------------------------------------------------------------------------
 local function CDMFrameAnchorPoint(anchorSide, grow, centered)
-    if centered ~= false then
-        if anchorSide == "RIGHT"  then return "LEFT"   end
-        if anchorSide == "LEFT"   then return "RIGHT"  end
-        if anchorSide == "BOTTOM" then return "TOP"    end
-        if anchorSide == "TOP"    then return "BOTTOM" end
-    end
+
     if grow == "RIGHT" then return "LEFT"   end
     if grow == "LEFT"  then return "RIGHT"  end
     if grow == "DOWN"  then return "TOP"    end
@@ -2960,7 +2943,9 @@ LayoutCDMBar = function(barKey)
 
     -- Bar opacity (affects entire bar, but respect visibility overrides)
     local vis = barData.barVisibility or "always"
-    if vis == "always" or (vis == "in_combat" and _inCombat) then
+    if _cdmInVehicle or EllesmereUI.CheckVisibilityOptions(barData) then
+        -- Vehicle or visibility options say hide -- don't override
+    elseif vis == "always" or (vis == "in_combat" and _inCombat) then
         frame:SetAlpha(barData.barBgAlpha or 1)
     elseif vis == "mouseover" then
         local state = _cdmHoverStates[barKey]
@@ -7354,20 +7339,13 @@ function ECME:CDMFinishSetup()
     BuildAllCDMBars()
     -- Mark for snapshot if this spec has no buff bars configured yet.
     -- Fires on first load after the feature was added (existing profiles have
-    -- an empty bars table). Uses a per-spec flag so it only runs once.
+    -- Initialize empty buff bars if this spec has none configured yet.
     do
         local pp = ECME.db.profile
-        local specKey = pp.activeSpecKey
         local tbb = pp.trackedBuffBars
         local hasNoBars = (not tbb) or (not tbb.bars) or (#tbb.bars == 0)
-        -- Check per-spec "already snapshotted" flag
-        local alreadyDone = pp.specProfiles
-            and specKey and specKey ~= "0"
-            and pp.specProfiles[specKey]
-            and pp.specProfiles[specKey]._tbbSnapshotDone
-        if hasNoBars and not alreadyDone then
-            pp._tbbNeedsSnapshot = true
-            pp.trackedBuffBars = nil
+        if hasNoBars then
+            pp.trackedBuffBars = { selectedBar = 1, bars = {} }
             pp.tbbPositions = nil
         end
     end
@@ -7422,13 +7400,6 @@ function ECME:CDMFinishSetup()
     ForcePopulateBlizzardViewers(function()
         ForceResnapshotMainBars()
         StartResnapshotRetry()
-        -- Auto-populate buff bars from Blizzard viewers on first use of this spec
-        local pp = ECME.db.profile
-        if pp._tbbNeedsSnapshot and ns.SnapshotBlizzardBuffBars then
-            pp._tbbNeedsSnapshot = nil
-            ns.SnapshotBlizzardBuffBars()
-            ns.BuildTrackedBuffBars()
-        end
     end)
 
     -- Save the initial spec profile so switching away and back preserves it
