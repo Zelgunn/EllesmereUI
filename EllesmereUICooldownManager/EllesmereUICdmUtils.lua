@@ -1,6 +1,7 @@
 local ADDON_NAME, ns = ...
 ns.ECdmUtils = {}
 
+local utils = ns.ECdmUtils
 local ECache = ns.ECdmCache
 
 -- region Spell override
@@ -20,7 +21,7 @@ local function GetSpellOverrideByID(spellID)
     end
     return nil
 end
-ns.ECdmUtils.GetSpellOverrideByID = GetSpellOverrideByID
+utils.GetSpellOverrideByID = GetSpellOverrideByID
 
 -------------------------------------------------------------------------------
 --- Resolve talent override: if the user added Holy Prism but the player
@@ -32,7 +33,7 @@ local function ResolveSpellOverrideID(spellID)
     local overrideID = GetSpellOverrideByID(spellID)
     return overrideID or spellID
 end
-ns.ECdmUtils.ResolveSpellOverrideID = ResolveSpellOverrideID
+utils.ResolveSpellOverrideID = ResolveSpellOverrideID
 -- endregion
 
 -- region CDM Icon update
@@ -65,7 +66,7 @@ local function ApplyItemCooldown(icon, cdStart, cdDuration, enable, desatOnCD)
         end
     end
 end
-ns.ECdmUtils.ApplyItemCooldown = ApplyItemCooldown
+utils.ApplyItemCooldown = ApplyItemCooldown
 
 -------------------------------------------------------------------------------
 ---  Trinket cooldown helper (inventory slot based)
@@ -78,7 +79,7 @@ local function ApplyTrinketCooldown(icon, slot, desatOnCD)
     local cdStart, cdDuration, enable = GetInventoryItemCooldown("player", slot)
     ApplyItemCooldown(icon, cdStart, cdDuration, enable, desatOnCD)
 end
-ns.ECdmUtils.ApplyTrinketCooldown = ApplyTrinketCooldown
+utils.ApplyTrinketCooldown = ApplyTrinketCooldown
 
 -------------------------------------------------------------------------------
 ---  Bag item cooldown helper
@@ -91,7 +92,7 @@ local function ApplyBagItemCooldown(icon, itemID, desatOnCD)
     local cdStart, cdDuration, enable = C_Container.GetItemCooldown(itemID)
     ApplyItemCooldown(icon, cdStart, cdDuration, enable, desatOnCD)
 end
-ns.ECdmUtils.ApplyBagItemCooldown = ApplyBagItemCooldown
+utils.ApplyBagItemCooldown = ApplyBagItemCooldown
 
 -- endregion
 
@@ -132,7 +133,7 @@ local function UpdateTrinketIcon(icon, slot, barType, desatOnCD)
         return false
     end
 end
-ns.ECdmUtils.UpdateTrinketIcon = UpdateTrinketIcon
+utils.UpdateTrinketIcon = UpdateTrinketIcon
 
 -------------------------------------------------------------------------------
 --- Updates the visibility, texture, saturation, cooldown and item count of our icon
@@ -182,7 +183,7 @@ local function UpdateBagItemIcon(icon, itemID, itemCount, inLockout, showCharges
         end
     end
 end
-ns.ECdmUtils.UpdateBagItemIcon = UpdateBagItemIcon
+utils.UpdateBagItemIcon = UpdateBagItemIcon
 
 -- endregion
 
@@ -216,7 +217,7 @@ local function CopyBuffWidgetTexture(icon, blizzardBuffChild, overrideTexture)
     end
     return false
 end
-ns.ECdmUtils.CopyBuffWidgetTexture = CopyBuffWidgetTexture
+utils.CopyBuffWidgetTexture = CopyBuffWidgetTexture
 
 -- endregion
 
@@ -239,7 +240,7 @@ local function OverrideTextureForProcable(icon, effectiveTexture, blizzardBuffCh
         icon._lastTex = effectiveTexture
     end
 end
-ns.ECdmUtils.OverrideTextureForProcable = OverrideTextureForProcable
+utils.OverrideTextureForProcable = OverrideTextureForProcable
 
 -- endregion
 
@@ -277,7 +278,7 @@ local function SetIconKeybind(icon, spellID, resolvedID, showKeybind)
         end
     end
 end
-ns.ECdmUtils.SetIconKeybind = SetIconKeybind
+utils.SetIconKeybind = SetIconKeybind
 
 -- Table of CDM viewer names
 local _cdmViewerNames = {
@@ -286,7 +287,7 @@ local _cdmViewerNames = {
     "BuffIconCooldownViewer",
     "BuffBarCooldownViewer",
 }
-ns.ECdmUtils._cdmViewerNames = _cdmViewerNames
+utils._cdmViewerNames = _cdmViewerNames
 
 -------------------------------------------------------------------------------
 --- Scan all four CDM viewers for a child whose .cooldownID matches the given cooldownID.
@@ -322,7 +323,7 @@ local function FindCDMChildByCooldownID(cooldownID)
     end
     return nil
 end
-ns.ECdmUtils.FindCDMChildByCooldownID = FindCDMChildByCooldownID
+utils.FindCDMChildByCooldownID = FindCDMChildByCooldownID
 
 -------------------------------------------------------------------------------
 --- Check if a Blizzard CDM buff-viewer child represents an actively running effect.
@@ -351,7 +352,7 @@ local function IsBuffChildCooldownActive(child)
     if rawDur and (issecretvalue and issecretvalue(rawDur) or rawDur > 0) then return true end
     return false
 end
-ns.ECdmUtils.IsBuffChildCooldownActive = IsBuffChildCooldownActive
+utils.IsBuffChildCooldownActive = IsBuffChildCooldownActive
 
 
 -------------------------------------------------------------------------------
@@ -490,4 +491,29 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
 
     return false, false
 end
-ns.ECdmUtils.ApplyAuraCooldownOrDuration = ApplyAuraCooldownOrDuration
+utils.ApplyAuraCooldownOrDuration = ApplyAuraCooldownOrDuration
+
+-------------------------------------------------------------------------------
+--- Get the texture for a "procable" buff. If a proc is active, returns the proc's
+---     texture if one can be found. Caches the proc texture if needed. Otherwise,
+---     returns the base texture given as currentTexture
+--- @param spellID number           The base spell ID before resolution
+--- @param resolvedID number        The spell ID after resolution
+--- @param currentTexture number    The base/current texture to fallback to without proc
+--- @return number updatedTexture, boolean procActive  The proc texture if relevant and if it exists, otherwise currentTexture
+--- 
+-------------------------------------------------------------------------------
+local function GetTextureForProcable(spellID, resolvedID, currentTexture)
+    local procEntry = ns.BUFF_PROC_ICON_OVERRIDES[spellID] or ns.BUFF_PROC_ICON_OVERRIDES[resolvedID]
+    if procEntry then
+        local buffChild = ECache.GetTickBlizzardBuffChild(procEntry.buffID)
+        if IsBuffChildCooldownActive(buffChild) then
+            local procTexture = ECache.CacheSpellIconTexture(procEntry.replacementSpellID)
+            if procTexture then
+                return procTexture, true
+            end
+        end
+    end
+    return currentTexture, false
+end
+utils.GetTextureForProcable = GetTextureForProcable

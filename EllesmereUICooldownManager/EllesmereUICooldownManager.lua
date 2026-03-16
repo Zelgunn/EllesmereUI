@@ -10,8 +10,8 @@ local ECME = EllesmereUI.Lite.NewAddon("EllesmereUICooldownManager")
 ns.ECME = ECME
 
 local PP = EllesmereUI.PP
-local ECache = ns.ECdmCache
 local EUtils = ns.ECdmUtils
+local ECache = ns.ECdmCache
 
 -- Snap a value to a whole number of physical pixels at the bar's effective scale.
 -- Uses the same approach as the border system: convert to physical pixels,
@@ -3089,75 +3089,6 @@ end
 -- Reusable buffer for Blizzard CDM children (avoids table allocation per tick)
 local _blizzIconsBuf = {}
 
--- Spell icon texture cache (avoids C_Spell.GetSpellInfo per tick per icon)
-local _spellIconCache = {}
-
-
-
--------------------------------------------------------------------------------
---- Cache spell icon texture to avoid C_Spell.GetSpellInfo per tick
---- 
---- Fallback: C_Spell.GetSpellTexture is more reliable for bar-type
----     buff spells where GetSpellInfo may return nil.
---- @param spellID number           The base spell ID before resolution
---- @param resolvedID number        The spell ID after resolution
---- @return number|nil textureID    The ID of the spell's texture if it exists, otherwise nil
--------------------------------------------------------------------------------
-local function CacheSpellIconTexture(spellID, resolvedID)
-    local textureID = _spellIconCache[resolvedID]
-    if not textureID then
-        local spellInfo = C_Spell.GetSpellInfo(resolvedID)
-        if spellInfo then
-            textureID = spellInfo.iconID
-        end
-    end
-    if not textureID then
-        textureID = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(resolvedID)
-        if not textureID and resolvedID ~= spellID then
-            textureID = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID)
-        end
-    end
-    if textureID then
-        _spellIconCache[resolvedID] = textureID
-    end
-    return textureID
-end
-
-
-
-
--------------------------------------------------------------------------------
---- Get the texture for a "procable" buff. If a proc is active, returns the proc's
----     texture if one can be found. Caches the proc texture if needed. Otherwise,
----     returns the base texture given as currentTexture
---- @param spellID number           The base spell ID before resolution
---- @param resolvedID number        The spell ID after resolution
---- @param currentTexture number    The base/current texture to fallback to without proc
---- @return number updatedTexture, boolean procActive  The proc texture if relevant and if it exists, otherwise currentTexture
---- 
--------------------------------------------------------------------------------
-local function GetTextureForProcable(spellID, resolvedID, currentTexture)
-    local procEntry = ns.BUFF_PROC_ICON_OVERRIDES[spellID] or ns.BUFF_PROC_ICON_OVERRIDES[resolvedID]
-    if procEntry then
-        local buffChild = ECache.GetTickBlizzardBuffChild(procEntry.buffID)
-        if IsBufChildCooldownActive(buffChild) then
-            local procTexture = _spellIconCache[procEntry.replacementSpellID]
-            --- Get procTexture if it was not in the cache yet
-            if not procTexture then
-                local info = C_Spell.GetSpellInfo(procEntry.replacementSpellID)
-                if info then
-                    procTexture = info.iconID
-                    _spellIconCache[procEntry.replacementSpellID] = procTexture
-                end
-            end
-            if procTexture then
-                return procTexture, true
-            end
-        end
-    end
-    return currentTexture, false
-end
-
 -------------------------------------------------------------------------------
 --  Update icons for a CDM bar based on Blizzard CDM children
 --  Default bars (cooldowns/utility/buffs) mirror Blizzard CDM.
@@ -3277,7 +3208,7 @@ local function UpdateCustomBarIcons(barKey)
                         ECache.PropagateResolvedSpellChargeCache(spellID, resolvedID)
                     end
 
-                    local texID = CacheSpellIconTexture(spellID, resolvedID)
+                    local texID = ECache.CacheResolvedSpellIconTexture(spellID, resolvedID)
 
                     -- Buff bars may have a hardcoded icon override for specific spells.
                     local overrideTex = isBuffBarForOverride and ns.BUFF_ICON_OVERRIDES[spellID]
@@ -3289,7 +3220,7 @@ local function UpdateCustomBarIcons(barKey)
                     local effectiveTex = overrideTex or texID
                     -- Proc-conditional icon override: swap icon while a buff is active
                     local procActive = false
-                    effectiveTex, procActive = GetTextureForProcable(spellID, resolvedID, effectiveTex)
+                    effectiveTex, procActive = EUtils.GetTextureForProcable(spellID, resolvedID, effectiveTex)
 
                     if effectiveTex then
                         EUtils.OverrideTextureForProcable(ourIcon, effectiveTex, blizzBuffChildTexSet, overrideTex, procActive)
@@ -3558,11 +3489,7 @@ UpdateCDMBarIcons = function(barKey)
                     if procEntryM then
                         local buffChildM = ECache.GetTickBlizzardBuffChild(procEntryM.buffID)
                         if IsBufChildCooldownActive(buffChildM) then
-                            local procTexM = _spellIconCache[procEntryM.replacementSpellID]
-                            if not procTexM then
-                                local info = C_Spell.GetSpellInfo(procEntryM.replacementSpellID)
-                                if info then procTexM = info.iconID; _spellIconCache[procEntryM.replacementSpellID] = procTexM end
-                            end
+                            local procTexM = ECache.CacheSpellIconTexture(procEntryM.replacementSpellID)
                             if procTexM then ourIcon._tex:SetTexture(procTexM); set = true end
                         end
                     end
@@ -4103,7 +4030,7 @@ local function UpdateTrackedBarIcons(barKey)
                     ECache.PropagateResolvedSpellChargeCache(spellID, resolvedID)
                 end
 
-                local texID = CacheSpellIconTexture(spellID, resolvedID)
+                local texID = ECache.CacheResolvedSpellIconTexture(spellID, resolvedID)
 
                 -- Buff bars may have a hardcoded icon override for specific spells.
                 local overrideTex = isBuffBarForOverride and ns.BUFF_ICON_OVERRIDES[spellID]
@@ -4116,7 +4043,7 @@ local function UpdateTrackedBarIcons(barKey)
                 local effectiveTex = overrideTex or texID
                 -- Proc-conditional icon override: swap icon while a buff is active
                 local procActive
-                effectiveTex, procActive = GetTextureForProcable(spellID, resolvedID, effectiveTex)
+                effectiveTex, procActive = EUtils.GetTextureForProcable(spellID, resolvedID, effectiveTex)
                 if effectiveTex then
                     EUtils.OverrideTextureForProcable(ourIcon, effectiveTex, blizzBuffChildTexSet, overrideTex, procActive)
                     EUtils.SetIconKeybind(ourIcon, spellID, resolvedID, barData.showKeybind)
@@ -6109,10 +6036,7 @@ function ECME:OnEnable()
 
     -- Pre-cache proc replacement spell textures so they are available in combat
     for _, entry in pairs(ns.BUFF_PROC_ICON_OVERRIDES) do
-        if not _spellIconCache[entry.replacementSpellID] then
-            local info = C_Spell.GetSpellInfo(entry.replacementSpellID)
-            if info then _spellIconCache[entry.replacementSpellID] = info.iconID end
-        end
+        ECache.CacheSpellIconTexture(entry.replacementSpellID)
     end
 
     -- Enable CDM cooldown viewer (keep Blizzard CDM running in background
@@ -6706,7 +6630,7 @@ local function ScheduleTalentRebuild()
         ns.RequestTalentReconcile("talent")
         -- Clear spell icon cache so custom bars pick up new textures for
         -- talent-swapped spells
-        wipe(_spellIconCache)
+        ECache.WipeSpellIconCache()
         -- Clear cached viewer child info so the next tick re-reads from API
         -- (overrideSpellID may have changed with the new talent set)
         for _, vname in ipairs(EUtils._cdmViewerNames) do
@@ -6839,7 +6763,7 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo, arg3)
     end
     if event == "PLAYER_ENTERING_WORLD" then
         _inCombat = InCombatLockdown and InCombatLockdown() or false
-        wipe(_spellIconCache)
+        ECache.WipeSpellIconCache()
         -- Wipe hook-captured cooldown caches so stale state from a previous
         -- character doesn't persist after alt switch or reload.
         wipe(_ecmeChildHasDurObj)

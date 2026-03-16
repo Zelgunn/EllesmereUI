@@ -882,11 +882,6 @@ local actionButtonCache = {}
 local function GetActionButton(bar, i)
     bar = bar or 1
     local cacheKey = bar * 100 + i
-    if actionButtonCache[cacheKey] then 
-        print(actionButtonCache[cacheKey]) 
-    else
-        print(bar, i)
-    end
     if actionButtonCache[cacheKey] then return actionButtonCache[cacheKey] end
     local btn
     if bar == 1 then
@@ -906,5 +901,82 @@ local function GetActionButton(bar, i)
     return btn
 end
 cache.GetActionButton = GetActionButton
+
+-- endregion
+
+-- region Spell Icon
+
+-- Spell icon texture cache (avoids C_Spell.GetSpellInfo per tick per icon)
+
+---@type {[number]: number}
+cache._spellIcon = {}
+
+-------------------------------------------------------------------------------
+--- Get the spell icon for spellID (from `_spellIcon`)
+--- @param spellID number           The spell ID to query
+--- @return number|nil spellIcon
+-------------------------------------------------------------------------------
+local function GetSpellIcon(spellID)
+    return cache._spellIcon[spellID]
+end
+cache.GetSpellIcon = GetSpellIcon
+
+-------------------------------------------------------------------------------
+--- Cache spell icon texture to avoid C_Spell.GetSpellInfo per tick
+--- @param spellID number           The base spell ID before resolution
+--- @return number|nil textureID    The ID of the spell's texture if it exists, otherwise nil
+-------------------------------------------------------------------------------
+local function CacheSpellIconTexture(spellID)
+    local textureID = cache._spellIcon[spellID]
+    if not textureID then
+        local spellInfo = C_Spell.GetSpellInfo(spellID)
+        if spellInfo then
+            textureID = spellInfo.iconID
+            cache._spellIcon[spellID] = textureID
+        end
+    end
+    return textureID
+end
+cache.CacheSpellIconTexture = CacheSpellIconTexture
+
+-------------------------------------------------------------------------------
+--- Cache spell icon texture to avoid C_Spell.GetSpellInfo per tick
+--- Uses the resolvedID first then spellID
+--- 
+--- Fallback: C_Spell.GetSpellTexture is more reliable for bar-type
+---     buff spells where GetSpellInfo may return nil.
+--- @param spellID number           The base spell ID before resolution
+--- @param resolvedID number        The spell ID after resolution
+--- @return number|nil textureID    The ID of the spell's texture if it exists, otherwise nil
+-------------------------------------------------------------------------------
+local function CacheResolvedSpellIconTexture(spellID, resolvedID)
+    local textureID = cache._spellIcon[resolvedID]
+    if not textureID then
+        local spellInfo = C_Spell.GetSpellInfo(resolvedID)
+        if spellInfo then
+            textureID = spellInfo.iconID
+        end
+    end
+    if not textureID then
+        textureID = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(resolvedID)
+        if not textureID and resolvedID ~= spellID then
+            textureID = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID)
+        end
+    end
+    if textureID then
+        cache._spellIcon[resolvedID] = textureID
+    end
+    return textureID
+end
+cache.CacheResolvedSpellIconTexture = CacheResolvedSpellIconTexture
+
+-------------------------------------------------------------------------------
+--- Wipes `_spellIcon`
+
+-------------------------------------------------------------------------------
+local function WipeSpellIconCache()
+    wipe(cache._spellIcon)
+end
+cache.WipeSpellIconCache = WipeSpellIconCache
 
 -- endregion
