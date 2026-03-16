@@ -167,7 +167,7 @@ local _ecmeChildHasDurObj = ECache._ecmeChildHasDurObj  -- [ch] = true when we h
 local _ecmeDurObjCache = ECache._ecmeDurObj             -- [ch] = durObj captured from SetCooldownFromDurationObject hook
 local _ecmeRawStartCache = ECache._ecmeRawStart         -- [ch] = start captured from SetCooldown hook
 local _cdmVehicleProxy                                  -- SecureHandlerStateTemplate proxy for [vehicleui]/[petbattle] hiding
-local _placedUnitStartCache = ECache._placedUnitStartCache -- [spellID] = GetTime() when placed unit first detected active
+local _placedUnitStartCache = ECache._placedUnitStart   -- [spellID] = GetTime() when placed unit first detected active
 local _cdmInVehicle = false                             -- true when [vehicleui] or [petbattle] is active
 local _ecmeRawDurCache = ECache._ecmeRawDur             -- [ch] = dur captured from SetCooldown hook
 local _cdmHoverStates = ECache._cdmHoverStates          -- [barKey] = { isHovered=false, fadeDir=nil }
@@ -4012,7 +4012,7 @@ local function UpdateTrackedBarIcons(barKey)
                 local activeID, itemCount = GetActiveHealthItemID(healthItem)
                 local inLockout = _healthCombatLockout[spellID]
                 local iconIsVisible = EUtils.UpdateBagItemIcon(ourIcon, activeID, itemCount, inLockout, 
-                                                     barData.showCharges, barData.desaturateOnCD)
+                                                               barData.showCharges, barData.desaturateOnCD)
                 if iconIsVisible then
                     visibleCount = visibleCount + 1
                 end

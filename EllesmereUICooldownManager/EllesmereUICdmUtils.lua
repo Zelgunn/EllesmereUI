@@ -359,11 +359,9 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
                                          or ns.PLACED_UNIT_DURATIONS[spellID]
                         local fixedSid = fixedDur and (ns.PLACED_UNIT_DURATIONS[resolvedID] and resolvedID or spellID)
                         if fixedDur and isBuffBar then
-                            if not ECache._placedUnitStartCache[fixedSid] then
-                                ECache._placedUnitStartCache[fixedSid] = GetTime()
-                            end
+                            ECache.CachePlacedUnitStart(fixedSid)
                             icon._cooldown:Clear()
-                            pcall(icon._cooldown.SetCooldown, icon._cooldown, ECache._placedUnitStartCache[fixedSid], fixedDur)
+                            pcall(icon._cooldown.SetCooldown, icon._cooldown, ECache.GetPlacedUnitStart(fixedSid), fixedDur)
                             icon._cooldown:SetReverse(false)
                             return true, true
                         else
@@ -401,10 +399,10 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
                 local blzCD = blzCh.Cooldown
                 if blzCD then
                     icon._cooldown:Clear()
-                    if ECache._ecmeDurObj[blzCh] then
-                        pcall(icon._cooldown.SetCooldownFromDurationObject, icon._cooldown, ECache._ecmeDurObj[blzCh], true)
-                    elseif ECache._ecmeRawStart[blzCh] and ECache._ecmeRawDur[blzCh] then
-                        pcall(icon._cooldown.SetCooldown, icon._cooldown, ECache._ecmeRawStart[blzCh], ECache._ecmeRawDur[blzCh])
+                    if ECache.GetECMEDurationObject(blzCh) then
+                        pcall(icon._cooldown.SetCooldownFromDurationObject, icon._cooldown, ECache.GetECMEDurationObject(blzCh), true)
+                    elseif ECache.GetECMERawStart(blzCh) and ECache.GetECMERawDuration(blzCh) then
+                        pcall(icon._cooldown.SetCooldown, icon._cooldown, ECache.GetECMERawStart(blzCh), ECache.GetECMERawDuration(blzCh))
                     end
                     icon._cooldown:SetReverse(false)
                 end

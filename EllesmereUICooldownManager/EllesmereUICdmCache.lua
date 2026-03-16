@@ -2,33 +2,6 @@ local ADDON_NAME, ns = ...
 ns.ECdmCache = {}
 local cache = ns.ECdmCache
 
--- region Tables
-
-cache._activeMultiScratch = {}      -- reusable scratch table for active multi-child filtering and companion child mapping
-
--- Separate tables keyed by child frame reference -- avoids reading tainted fields on Blizzard-owned frames.
--- ch.isActive and ch._ecmeDurObj etc. are tainted secret values; we track state in our own tables instead.
-cache._ecmeChildHasDurObj = {}
-cache._ecmeDurObj = {}                           -- [ch] = durObj captured from SetCooldownFromDurationObject hook
-cache._ecmeRawStart = {}                         -- [ch] = start captured from SetCooldown hook
-cache._placedUnitStartCache = {}                 -- [spellID] = GetTime() when placed unit first detected active
-cache._ecmeRawDur = {}                           -- [ch] = dur captured from SetCooldown hook
-cache._tickTotem = {}                            -- [slot] = haveTotem (cached per tick to avoid inconsistent reads)
-cache._cdmHoverStates = {}                       -- [barKey] = { isHovered=false, fadeDir=nil }
-
--- Export to NS
-ns._ecmeDurObjCache = cache._ecmeDurObj
-ns._ecmeRawStartCache = cache._ecmeRawStart
-ns._placedUnitStartCache = cache._placedUnitStartCache
-
-ns._ecmeRawDurCache = cache._ecmeRawDur
-
--- endregion
-
--- ================== --
--- ================== --
--- ================== --
-
 -- region Per-Tick
 
 -- region Tick GCD
@@ -530,6 +503,8 @@ cache.GetBlizzardBuffChild = GetBlizzardBuffChild
 
 -- region _activeMultiScratch
 
+cache._activeMultiScratch = {}      -- reusable scratch table for active multi-child filtering and companion child mapping
+
 -------------------------------------------------------------------------------
 --- Get the blizzard child at the given `index` from cache `_activeMultiScratch`.
 --- @param index number               The spell ID to query
@@ -887,6 +862,8 @@ cache.CacheCastCountSpell = CacheCastCountSpell
 
 -- region Totem Cache
 
+cache._tickTotem = {}                            -- [slot] = haveTotem (cached per tick to avoid inconsistent reads)
+
 -------------------------------------------------------------------------------
 --- Per-tick cached GetTotemInfo to prevent inconsistent reads during totem expiry.
 --- @param slot number The slot to check
@@ -929,6 +906,87 @@ local function IsTotemChildStillValid(child)
     return false
 end
 cache.IsTotemChildStillValid = IsTotemChildStillValid
+
+-- endregion
+
+-- region ECME Start/Duration
+
+-- Separate tables keyed by child frame reference -- avoids reading tainted fields on Blizzard-owned frames.
+-- ch.isActive and ch._ecmeDurObj etc. are tainted secret values; we track state in our own tables instead.
+cache._ecmeChildHasDurObj = {}
+--- @type {[Frame]: number}
+cache._ecmeDurObj = {}                           -- [ch] = durObj captured from SetCooldownFromDurationObject hook
+cache._ecmeRawStart = {}                         -- [ch] = start captured from SetCooldown hook
+cache._ecmeRawDur = {}                           -- [ch] = dur captured from SetCooldown hook
+cache._cdmHoverStates = {}                       -- [barKey] = { isHovered=false, fadeDir=nil }
+
+-- Export to NS
+ns._ecmeDurObjCache = cache._ecmeDurObj
+ns._ecmeRawStartCache = cache._ecmeRawStart
+ns._ecmeRawDurCache = cache._ecmeRawDur
+
+-------------------------------------------------------------------------------
+--- Get the duration for spellID from the cache `_ecmeDurObj`.
+---   Duration captured from SetCooldownFromDurationObject.
+--- @param blizzardChild Frame     The blizzardChild to query
+--- @return number|nil duration
+-------------------------------------------------------------------------------
+local function GetECMEDurationObject(blizzardChild)
+    return cache._ecmeDurObj[blizzardChild]
+end
+cache.GetECMEDurationObject = GetECMEDurationObject
+
+-------------------------------------------------------------------------------
+--- Get the start time for spellID from the cache `_ecmeRawStart` captured
+---   from SetCooldown hook.
+--- @param blizzardChild Frame     The blizzardChild to query
+--- @return number|nil startTime
+-------------------------------------------------------------------------------
+local function GetECMERawStart(blizzardChild)
+    return cache._ecmeRawStart[blizzardChild]
+end
+cache.GetECMERawStart = GetECMERawStart
+
+-------------------------------------------------------------------------------
+--- Get the duration for spellID from the cache `_ecmeRawDur` captured
+---   from SetCooldown hook.
+--- @param blizzardChild Frame     The blizzardChild to query
+--- @return number|nil duration
+-------------------------------------------------------------------------------
+local function GetECMERawDuration(blizzardChild)
+    return cache._ecmeRawDur[blizzardChild]
+end
+cache.GetECMERawDuration = GetECMERawDuration
+
+-- endregion
+
+-- region Placed Unit Start
+
+--- @type {[number]: number}
+cache._placedUnitStart = {}                 -- [spellID] = GetTime() when placed unit first detected active
+ns._placedUnitStartCache = cache._placedUnitStart
+
+-------------------------------------------------------------------------------
+--- Get the start time for spellID from the cache `_placedUnitStart`
+--- @param spellID number           The spell ID to query
+--- @return number|nil time
+-------------------------------------------------------------------------------
+local function GetPlacedUnitStart(spellID)
+    return cache._placedUnitStart[spellID]
+end
+cache.GetPlacedUnitStart = GetPlacedUnitStart
+
+-------------------------------------------------------------------------------
+--- Stores in `_placedUnitStart` the `time` for `spellID`
+--- @param spellID number       The spell ID to override
+--- @param time number|nil      The time the unit what placed. Defaults to GetTime()
+-------------------------------------------------------------------------------
+local function CachePlacedUnitStart(spellID, time)
+    if not cache._placedUnitStart[spellID] then
+        cache._placedUnitStart[spellID] = time or GetTime()
+    end
+end
+cache.CachePlacedUnitStart = CachePlacedUnitStart
 
 -- endregion
 
