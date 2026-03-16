@@ -410,7 +410,7 @@ local function ApplySpellCooldown(icon, spellID, desatOnCD, showCharges, swAlpha
                 -- Cast count fallback for spells that accumulate stacks via
                 -- the cast count system rather than auras.
                 -- Only attempt for confirmed cast-count spells (cached OOC).
-                -- In combat, returns secret values ΓÇö pass directly to SetText.
+                -- In combat, returns secret values -- pass directly to SetText.
                 ECache.CacheCastCountSpell(spellID)
                 if ECache.IsCachedCastCountSpell(spellID) then
                     local ok, count = pcall(C_Spell.GetSpellCastCount, spellID)
@@ -472,7 +472,7 @@ end
 --  Stack count helper (aura applications text)
 --  Hooks blizzChild.Applications Show/Hide to mirror CDM's stack display onto
 --  our _stackText. CDM already handles secret values and only shows Applications
---  when stacks > 1, so we trust its Show/Hide as the gate ΓÇö no text comparison needed.
+--  when stacks > 1, so we trust its Show/Hide as the gate -- no text comparison needed.
 -------------------------------------------------------------------------------
 local _stackHookedChildren = {}  -- [blizzChild] = true
 
@@ -486,7 +486,7 @@ local function HookBlizzChildApplications(blizzChild)
     _stackHookedChildren[blizzChild] = true
 
     -- CDM only calls Show() on Applications when stacks > 1, so no text check needed.
-    -- GetText() returns a secret string in combat ΓÇö pass it directly to SetText,
+    -- GetText() returns a secret string in combat -- pass it directly to SetText,
     -- WoW renders secret values correctly without comparison.
     hooksecurefunc(appsFrame, "Show", function()
         local ourIcon = blizzChild._ecmeIcon
@@ -541,7 +541,7 @@ local function ApplyStackCount(icon, resolvedSid, auraInstanceID, auraUnit, show
                 end
             end
         end
-        -- Applications frame not showing ΓÇö fall through to aura lookup below.
+        -- Applications frame not showing -- fall through to aura lookup below.
         -- Spells like Sheilun's Gift and Mana Tea accumulate stacks as a
         -- player buff but Blizzard's CDM may not populate the Applications
         -- sub-frame for them.
@@ -576,7 +576,7 @@ local function ApplyStackCount(icon, resolvedSid, auraInstanceID, auraUnit, show
     -- Cast count fallback: spells that accumulate stacks via the cast count
     -- system rather than auras (e.g. Sheilun's Gift clouds, Mana Tea).
     -- Only attempt for spells confirmed to use cast counts (cached OOC).
-    -- In combat, GetSpellCastCount returns secret values ΓÇö pass them directly
+    -- In combat, GetSpellCastCount returns secret values -- pass them directly
     -- to SetText (FontStrings render secrets natively), same as charge text.
     if resolvedSid and resolvedSid > 0 and C_Spell.GetSpellCastCount then
         ECache.CacheCastCountSpell(resolvedSid)
@@ -713,7 +713,7 @@ local DEFAULTS = {
             offsetY     = -200,
         },
         -- Tracked Buff Bars v2 (per-bar buff tracking with individual settings)
-        -- Note: not in defaults ΓÇö lazy-initialized by ns.GetTrackedBuffBars() to avoid AceDB merge issues
+        -- Note: not in defaults -- lazy-initialized by ns.GetTrackedBuffBars() to avoid AceDB merge issues
         -- CDM Bars (our replacement for Blizzard CDM)
         cdmBars = {
             enabled = true,
@@ -910,7 +910,7 @@ local function ValidateSpec()
         _specValidated = true
         return
     end
-    -- Mismatch detected ΓÇö force a full spec switch
+    -- Mismatch detected -- force a full spec switch
     _specValidated = true
     -- SwitchSpecProfile is defined later; called via ns reference
     if ns.SwitchSpecProfile then
@@ -2345,7 +2345,7 @@ local function CDMFrameAnchorPoint(anchorSide, grow, centered)
 end
 
 -------------------------------------------------------------------------------
---  Recursive click-through helper ΓÇö disables/restores mouse on a frame tree
+--  Recursive click-through helper -- disables/restores mouse on a frame tree
 -------------------------------------------------------------------------------
 local function SetFrameClickThrough(frame, clickThrough)
     if not frame then return end
@@ -2569,7 +2569,7 @@ BuildCDMBar = function(barIndex)
             elseif anchorPos == "bottom" then
                 ok = pcall(frame.SetPoint, frame, fp, erbFrame, "BOTTOM", oX, -gap + oY)
             end
-            -- Circular anchor detected ΓÇö fall back to center
+            -- Circular anchor detected -- fall back to center
             if not ok then
                 frame:ClearAllPoints()
                 frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
@@ -4765,7 +4765,7 @@ end
 
 -------------------------------------------------------------------------------
 --  Keybind cache for CDM icons
---  Reads HotKey text directly from action button frames ΓÇö the same source
+--  Reads HotKey text directly from action button frames -- the same source
 --  the action bar itself uses, so it's always correct regardless of bar addon.
 --  Deferred if called during combat; fires on PLAYER_REGEN_ENABLED instead.
 -------------------------------------------------------------------------------
@@ -5391,7 +5391,7 @@ function ns.MoveTrackedSpell(barKey, fromIdx, toIdx)
                 local val = table.remove(combined, fromIdx)
                 table.insert(combined, toIdx, val)
                 -- Split back by position: first tLen slots go to trackedSpells, rest to extraSpells.
-                -- tLen is fixed ΓÇö the boundary doesn't move when items are reordered.
+                -- tLen is fixed -- the boundary doesn't move when items are reordered.
                 b.trackedSpells = {}
                 b.extraSpells = {}
                 for i = 1, tLen do b.trackedSpells[i] = combined[i] end
@@ -6210,7 +6210,7 @@ function ECME:OnEnable()
         end
         _specValidated = true
     else
-        -- GetSpecialization() not ready yet ΓÇö leave activeSpecKey as-is,
+        -- GetSpecialization() not ready yet -- leave activeSpecKey as-is,
         -- ValidateSpec will fix it when SPELLS_CHANGED or PEW fires
         _specValidated = false
     end
@@ -6851,7 +6851,7 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo, arg3)
         return
     end
     if event == "TRAIT_CONFIG_UPDATED" or event == "PLAYER_TALENT_UPDATE" or event == "ACTIVE_TALENT_GROUP_CHANGED" then
-        -- Hero talent or loadout change ΓÇö debounced rebuild
+        -- Hero talent or loadout change -- debounced rebuild
         ScheduleTalentRebuild()
         return
     end
@@ -7013,12 +7013,12 @@ SlashCmdList.ECME = function(msg)
 end
 
 -------------------------------------------------------------------------------
---  /cdmstacks debug ΓÇö dumps stack count data for all visible CDM icons
+--  /cdmstacks debug -- dumps stack count data for all visible CDM icons
 -------------------------------------------------------------------------------
 SLASH_CDMSTACKS1 = "/cdmstacks"
 
 -------------------------------------------------------------------------------
---  /cdmcustom ΓÇö debug active state detection for custom bar spells
+--  /cdmcustom -- debug active state detection for custom bar spells
 -------------------------------------------------------------------------------
 SLASH_CDMCUSTOM1 = "/cdmcustom"
 SlashCmdList.CDMCUSTOM = function()

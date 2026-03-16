@@ -252,7 +252,7 @@ local function PropagateResolvedSpellChargeCache(spellID, resolvedID)
     -- live Blizzard child for it and mark it as a charge spell so
     -- ApplySpellCooldown uses the charge display path.
     if not IsCachedChargeSpell(resolvedID) and cache._tickBlizzChild[resolvedID] then
-        -- We have a live Blizzard child ΓÇö treat as charge spell so the
+        -- We have a live Blizzard child -- treat as charge spell so the
         -- charge display path runs. ApplySpellCooldown will call
         -- GetSpellCharges which may still be secret, but the shadow
         -- cooldown frames will correctly reflect the charge state.
@@ -272,7 +272,7 @@ local function PropagateResolvedSpellChargeCache(spellID, resolvedID)
             end
         end
     end
-    -- If still unknown, propagate from base ΓÇö but only if base is true
+    -- If still unknown, propagate from base -- but only if base is true
     if not IsCachedChargeSpell(resolvedID) then
         CacheMultiChargeSpell(spellID, propChild)
         if IsCachedChargeSpell(spellID) then
@@ -345,7 +345,7 @@ cache.IsCachedCastCountSpell = IsCachedCastCountSpell
 -------------------------------------------------------------------------------
 local function CacheCastCountSpell(spellID)
     if not spellID or not C_Spell.GetSpellCastCount then return end
-    -- Already confirmed not a cast-count spell ΓÇö skip
+    -- Already confirmed not a cast-count spell -- skip
     if cache._castCountSpells[spellID] == false then return end
     local ok, count = pcall(C_Spell.GetSpellCastCount, spellID)
     if not ok or count == nil then return end
@@ -362,7 +362,7 @@ local function CacheCastCountSpell(spellID)
                 db.sv.castCountSpells[spellID] = true
             end
         end
-        -- Don't cache false here ΓÇö spell may just not have stacks yet
+        -- Don't cache false here -- spell may just not have stacks yet
     elseif cache._castCountSpells[spellID] == nil then
         -- Secret (combat): check DB for whether we've ever seen this spell with stacks
         local db = ns.ECME.db
