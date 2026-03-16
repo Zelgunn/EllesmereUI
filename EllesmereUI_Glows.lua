@@ -97,6 +97,10 @@ local function _AntsOnUpdate(self, elapsed)
     local onePixel = d.onePixel
     if w * h == 0 then
         w, h = self:GetSize()
+        -- Strip taint from size values (reparented buttons can return
+        -- "secret number" tainted dimensions from GetSize).
+        w = tonumber(tostring(w)) or 0
+        h = tonumber(tostring(h)) or 0
         if w * h == 0 then return end
         local PP = EllesmereUI.PP
         local es = self:GetEffectiveScale()
@@ -224,6 +228,10 @@ local function _AutoCastOnUpdate(self, elapsed)
     local w, h = d.w, d.h
     if w * h == 0 then
         w, h = self:GetSize()
+        -- Strip taint from size values (reparented buttons can return
+        -- "secret number" tainted dimensions from GetSize).
+        w = tonumber(tostring(w)) or 0
+        h = tonumber(tostring(h)) or 0
         if w * h == 0 then return end
         d.w = w; d.h = h
         local perim = 2 * (w + h)

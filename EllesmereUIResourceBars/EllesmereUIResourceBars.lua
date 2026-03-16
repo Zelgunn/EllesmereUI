@@ -19,6 +19,8 @@ local UnitClass = UnitClass
 local GetSpecialization = GetSpecialization
 local InCombatLockdown = InCombatLockdown
 local GetShapeshiftFormID = GetShapeshiftFormID
+local IsPlayerSpell = IsPlayerSpell
+local UnitSpellHaste = UnitSpellHaste
 
 -------------------------------------------------------------------------------
 --  Constants
@@ -65,6 +67,22 @@ local PT = {
     ESSENCE     = 19, -- Evoker
 }
 
+-------------------------------------------------------------------------------
+--  Channel tick data — spellID → { ticks, [modSpell, modTicks] } or { tickInterval }
+--  ticks: fixed tick count (haste changes tick speed, count stays the same).
+--  tickInterval: fixed interval in seconds (haste extends duration, adding ticks).
+--  modSpell/modTicks: if the player knows modSpell (talent), use modTicks instead.
+--  Spell IDs verified against Wowhead/Warcraft Wiki as of 12.0.1 — if a spell
+--  is reworked or a new channeled spell is added, add a row here.
+-------------------------------------------------------------------------------
+local CHANNEL_TICK_DATA = {
+    [356995]  = { ticks = 4, modSpell = 1219723, modTicks = 5 },                   -- Disintegrate (Evoker) / Azure Celerity
+    [15407]   = { ticks = 6 },                                     -- Mind Flay (Shadow Priest)
+    [5143]    = { ticks = 5 },                                     -- Arcane Missiles (Arcane Mage)
+    [198013]  = { tickInterval = 0.2 },                             -- Eye Beam (Havoc DH) — haste extends duration
+    [473728]  = { tickInterval = 0.2 },                             -- Void Ray (Devourer DH) — haste extends duration
+    [212084]  = { ticks = 10 },                                    -- Fel Devastation (Vengeance DH)
+}
 
 -------------------------------------------------------------------------------
 --  Class/Spec resource mapping
@@ -421,6 +439,13 @@ local DEFAULTS = {
             spellTextY    = 0,
             scale         = 1.0,
             unlockPos     = nil,
+            showChannelTicks  = true,
+            showTickMarks     = true,
+            tickMarksR = 1.0, tickMarksG = 1.0, tickMarksB = 1.0, tickMarksA = 0.7,
+            showLastTick      = false,
+            lastTickR = 1.0, lastTickG = 0.82, lastTickB = 0.0, lastTickA = 0.95,
+            showGCDBoundary   = false,
+            gcdBoundaryR = 1.0, gcdBoundaryG = 0.82, gcdBoundaryB = 0.0, gcdBoundaryA = 0.95,
         },
         general = {
             anchorX     = 0,
@@ -454,6 +479,7 @@ local RefreshAnchoredBarsForUnlockTarget
 local UpdateCastBar
 local BuildCastBar
 local OnCastStart, OnChannelStart, OnChannelUpdate, OnCastStop, OnEmpowerStart, OnEmpowerUpdate
+local ShowChannelTicks, HideChannelTicks
 
 -------------------------------------------------------------------------------
 --  Helpers
@@ -2707,6 +2733,8 @@ BuildCastBar = function()
         castBarFrame._spellName = ""
         castBarFrame._pips = {}
         castBarFrame._numStages = 0
+        castBarFrame._ticks = {}
+        castBarFrame._numTicks = 0
     end
 
     -- Apply settings
@@ -2896,11 +2924,161 @@ end
         end
     end
 
+    -- Hide channel ticks when not channeling
+    HideChannelTicks()
+
     -- Hide when not casting
     if not castBarFrame._casting and not castBarFrame._channeling and not castBarFrame._empowering then
         castBarFrame:Hide()
     else
         castBarFrame:Show()
+    end
+end
+
+
+-------------------------------------------------------------------------------
+--  Channel tick marks
+--  Shows vertical tick marks on the cast bar during channeled spells whose
+--  spell ID appears in CHANNEL_TICK_DATA.  The penultimate tick (the last
+--  safe point to chain/clip) is drawn slightly wider in gold.
+--  Layout mirrors the empower pip code above for visual consistency.
+-------------------------------------------------------------------------------
+ShowChannelTicks = function(spellID)
+    if not castBarFrame then return end
+    local cb = ERB.db.profile.castBar
+    if not cb.showChannelTicks then return end
+
+    local tickData = CHANNEL_TICK_DATA[spellID]
+    local wantTicks = tickData and (cb.showTickMarks or cb.showLastTick)
+    local wantGCD = cb.showGCDBoundary
+
+    -- Nothing to draw: hide stale marks and bail
+    if not wantTicks and not wantGCD then
+        for i = 1, #castBarFrame._ticks do
+            castBarFrame._ticks[i]:Hide()
+        end
+        castBarFrame._numTicks = 0
+        if castBarFrame._gcdMark then castBarFrame._gcdMark:Hide() end
+        return
+    end
+
+    local bar = castBarFrame._bar
+    local barWidth = bar:GetWidth()
+    local barHeight = bar:GetHeight()
+    if barWidth <= 0 or barHeight <= 0 then return end
+
+    -- Pixel-snap helpers (same approach as empower pips)
+    local effectiveScale = bar:GetEffectiveScale()
+    local pixelSize = 1 / effectiveScale
+    local tickWidth = max(pixelSize, floor(2 * effectiveScale + 0.5) / effectiveScale)
+    local highlightWidth = max(pixelSize, floor(3 * effectiveScale + 0.5) / effectiveScale)
+    local snappedHeight = floor(barHeight * effectiveScale + 0.5) / effectiveScale
+
+    -- Tick marks
+    if wantTicks then
+        local numTicks
+        if tickData.tickInterval then
+            local channelDuration = castBarFrame._endTime - castBarFrame._startTime
+            if channelDuration > 0 then
+                numTicks = floor(channelDuration / tickData.tickInterval)
+            else
+                numTicks = 0
+            end
+        else
+            numTicks = tickData.ticks
+            if tickData.modSpell and IsPlayerSpell(tickData.modSpell) then
+                numTicks = tickData.modTicks
+            end
+        end
+
+        -- Pre-read colors once outside the loop
+        local showTickMarks = cb.showTickMarks
+        local showLastTick = cb.showLastTick
+        local tmR, tmG, tmB, tmA = cb.tickMarksR or 1.0, cb.tickMarksG or 1.0, cb.tickMarksB or 1.0, cb.tickMarksA or 0.7
+        local ltR, ltG, ltB, ltA = cb.lastTickR or 1.0, cb.lastTickG or 0.82, cb.lastTickB or 0.0, cb.lastTickA or 0.95
+
+        for i = 1, numTicks - 1 do
+            local isLastTick = (i == numTicks - 1)
+
+            if not showTickMarks and not isLastTick then
+                if castBarFrame._ticks[i] then castBarFrame._ticks[i]:Hide() end
+            else
+                local tick = castBarFrame._ticks[i]
+                if not tick then
+                    tick = bar:CreateTexture(nil, "OVERLAY", nil, 3)
+                    castBarFrame._ticks[i] = tick
+                end
+
+                local snappedOffset = floor(barWidth * (numTicks - i) / numTicks * effectiveScale + 0.5) / effectiveScale
+
+                if isLastTick and showLastTick then
+                    tick:SetColorTexture(ltR, ltG, ltB, ltA)
+                    tick:SetSize(highlightWidth, snappedHeight)
+                else
+                    tick:SetColorTexture(tmR, tmG, tmB, tmA)
+                    tick:SetSize(tickWidth, snappedHeight)
+                end
+
+                tick:ClearAllPoints()
+                tick:SetPoint("CENTER", bar, "LEFT", snappedOffset, 0)
+                tick:Show()
+            end
+        end
+
+        -- Hide extras from a previous channel that had more ticks
+        for i = max(1, numTicks), #castBarFrame._ticks do
+            castBarFrame._ticks[i]:Hide()
+        end
+
+        castBarFrame._numTicks = numTicks
+    else
+        for i = 1, #castBarFrame._ticks do
+            castBarFrame._ticks[i]:Hide()
+        end
+        castBarFrame._numTicks = 0
+    end
+
+    -- GCD boundary mark
+    if wantGCD then
+        local gcdMark = castBarFrame._gcdMark
+        if not gcdMark then
+            gcdMark = bar:CreateTexture(nil, "OVERLAY", nil, 4)
+            castBarFrame._gcdMark = gcdMark
+        end
+
+        local channelDuration = castBarFrame._endTime - castBarFrame._startTime
+        if channelDuration > 0 then
+            local haste = UnitSpellHaste("player") / 100
+            local currentGCD = max(0.75, 1.5 / (1 + haste))
+            local gcdFraction = currentGCD / channelDuration
+
+            if gcdFraction > 0 and gcdFraction < 1 then
+                local snappedGcdOffset = floor(barWidth * (1 - gcdFraction) * effectiveScale + 0.5) / effectiveScale
+
+                gcdMark:SetColorTexture(cb.gcdBoundaryR or 1.0, cb.gcdBoundaryG or 0.82, cb.gcdBoundaryB or 0.0, cb.gcdBoundaryA or 0.95)
+                gcdMark:SetSize(highlightWidth, snappedHeight)
+                gcdMark:ClearAllPoints()
+                gcdMark:SetPoint("CENTER", bar, "LEFT", snappedGcdOffset, 0)
+                gcdMark:Show()
+            else
+                gcdMark:Hide()
+            end
+        else
+            gcdMark:Hide()
+        end
+    elseif castBarFrame._gcdMark then
+        castBarFrame._gcdMark:Hide()
+    end
+end
+
+HideChannelTicks = function()
+    if not castBarFrame or not castBarFrame._ticks then return end
+    for i = 1, #castBarFrame._ticks do
+        castBarFrame._ticks[i]:Hide()
+    end
+    castBarFrame._numTicks = 0
+    if castBarFrame._gcdMark then
+        castBarFrame._gcdMark:Hide()
     end
 end
 
@@ -2980,6 +3158,7 @@ OnCastStart = function()
         for i = 1, #castBarFrame._pips do castBarFrame._pips[i]:Hide() end
     end
     castBarFrame._numStages = 0
+    HideChannelTicks()
 
     -- Icon
     do
@@ -3032,6 +3211,9 @@ OnChannelStart = function()
         end
     end
 
+    -- Channel tick marks
+    ShowChannelTicks(spellID)
+
     castBarFrame:Show()
 end
 
@@ -3039,11 +3221,14 @@ OnChannelUpdate = function()
     if not castBarFrame then return end
     if not castBarFrame._channeling then return end
 
-    local name, _, _, startTimeMS, endTimeMS = UnitChannelInfo("player")
+    local name, _, _, startTimeMS, endTimeMS, _, _, spellID = UnitChannelInfo("player")
     if not name then return end
 
     castBarFrame._startTime = startTimeMS / 1000
     castBarFrame._endTime = endTimeMS / 1000
+
+    -- Recompute tick mark and GCD boundary positions for new duration
+    if spellID then ShowChannelTicks(spellID) end
 end
 
 -- Called for UNIT_SPELLCAST_STOP only (normal cast completion).
@@ -3078,6 +3263,7 @@ local function OnChannelStop(eventCastID)
     if not eventCastID or not castBarFrame._castID or eventCastID ~= castBarFrame._castID then return end
     castBarFrame._channeling = false
     castBarFrame._castID = nil
+    HideChannelTicks()
     castBarFrame:Hide()
 end
 
@@ -3110,6 +3296,7 @@ OnCastStop = function()
         end
     end
     castBarFrame._numStages = 0
+    HideChannelTicks()
     castBarFrame:Hide()
 end
 
@@ -3135,6 +3322,7 @@ OnEmpowerStart = function()
     castBarFrame._spellName = name
     castBarFrame._nameText:SetText(name)
     castBarFrame._bar:SetValue(0)
+    HideChannelTicks()
 
     -- Icon
     do

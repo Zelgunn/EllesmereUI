@@ -69,7 +69,7 @@ ns.TBB_TEXTURE_NAMES = TBB_TEXTURE_NAMES
 local TBB_POPULAR_BUFFS = {
     {
         key            = "bloodlust",
-        name           = "Bloodlust / Heroism",
+        name           = UnitFactionGroup("player") == "Horde" and "Bloodlust" or "Heroism",
         icon           = 132313,
         spellIDs       = { 2825, 32182, 80353, 264667, 390386, 381301, 444062, 444257 },
         customDuration = 40,
@@ -95,14 +95,55 @@ local TBB_POPULAR_BUFFS = {
         spellIDs       = { 371125, 431424, 371133, 371134, 1236551 },
         customDuration = 18,
     },
+    {
+        key            = "time_spiral",
+        name           = "Time Spiral",
+        icon           = 4622479,
+        -- No spellIDs: detected via SPELL_ACTIVATION_OVERLAY_GLOW on movement abilities
+        glowBased      = true,
+        glowSpellIDs   = {
+            48265,   -- Death's Advance
+            195072,  -- Fel Rush
+            189110,  -- Infernal Strike
+            1850,    -- Dash
+            252216,  -- Tiger Dash
+            358267,  -- Hover
+            186257,  -- Aspect of the Cheetah
+            1953,    -- Blink
+            212653,  -- Shimmer
+            361138,  -- Roll
+            119085,  -- Chi Torpedo
+            190784,  -- Divine Steed
+            73325,   -- Leap of Faith
+            2983,    -- Sprint
+            192063,  -- Gust of Wind
+            58875,   -- Spirit Walk
+            79206,   -- Spiritwalker's Grace
+            48020,   -- Demonic Circle: Teleport
+            6544,    -- Heroic Leap
+        },
+        customDuration = 10,
+    },
 }
 ns.TBB_POPULAR_BUFFS = TBB_POPULAR_BUFFS
 
 -- Build a fast lookup: spellID -> popular buff entry (for UNIT_AURA detection)
 local _popularSpellIDMap = {}
 for _, entry in ipairs(TBB_POPULAR_BUFFS) do
-    for _, sid in ipairs(entry.spellIDs) do
-        _popularSpellIDMap[sid] = entry
+    if entry.spellIDs then
+        for _, sid in ipairs(entry.spellIDs) do
+            _popularSpellIDMap[sid] = entry
+        end
+    end
+end
+
+-- Build a fast lookup: glow spellID -> popular buff key (for SPELL_ACTIVATION_OVERLAY)
+local _glowSpellIDMap = {}
+for _, entry in ipairs(TBB_POPULAR_BUFFS) do
+    if entry.glowSpellIDs then
+        for _, sid in ipairs(entry.glowSpellIDs) do
+            _glowSpellIDMap[sid] = entry.key
+        end
     end
 end
 
@@ -139,6 +180,38 @@ tbbCastListener:SetScript("OnEvent", function(_, _, _, _, spellID)
     end
 end)
 
+-- Listen for spell activation overlay glow events to drive glow-based bars
+-- (e.g. Time Spiral). SHOW starts the custom timer, HIDE clears it.
+local tbbGlowListener = CreateFrame("Frame")
+tbbGlowListener:SetScript("OnEvent", function(_, event, spellID)
+    if not spellID then return end
+    -- spellID can be a secret value in combat; bail to avoid taint spread
+    if issecretvalue and issecretvalue(spellID) then return end
+    local key = _glowSpellIDMap[spellID]
+    if not key then return end
+    if not ECME or not ECME.db then return end
+    local tbb = ns.GetTrackedBuffBars()
+    if not tbb or not tbb.bars then return end
+    local isShow = (event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
+    local now = GetTime()
+    for i, cfg in ipairs(tbb.bars) do
+        if cfg.popularKey == key then
+            local bar = tbbFrames[i]
+            if bar and bar._tbbReady then
+                if isShow then
+                    if not bar._customStart then
+                        bar._customStart    = now
+                        bar._activeDuration = cfg.customDuration or 10
+                    end
+                else
+                    bar._customStart    = nil
+                    bar._activeDuration = nil
+                end
+            end
+        end
+    end
+end)
+
 -- Resolve player class color for default fill
 local _tbbClassR, _tbbClassG, _tbbClassB = 0.05, 0.82, 0.62
 do
@@ -164,10 +237,12 @@ local TBB_DEFAULT_BAR = {
     gradientDir = "HORIZONTAL",
     opacity   = 1.0,
     showTimer = true,
+    timerPosition = "right",
     timerSize = 11,
     timerX    = 0,
     timerY    = 0,
     showName  = true,
+    namePosition = "left",
     nameSize  = 11,
     nameX     = 0,
     nameY     = 0,
@@ -181,6 +256,15 @@ local TBB_DEFAULT_BAR = {
     stacksSize     = 11,
     stacksX        = 0,
     stacksY        = 0,
+    stackThresholdEnabled = false,
+    stackThreshold = 5,
+    stackThresholdR = 0.8,
+    stackThresholdG = 0.1,
+    stackThresholdB = 0.1,
+    stackThresholdA = 1,
+    stackThresholdMaxEnabled = false,
+    stackThresholdMax = 10,
+    stackThresholdTicks = "",
 }
 ns.TBB_DEFAULT_BAR = TBB_DEFAULT_BAR
 
@@ -198,10 +282,21 @@ end
 function ns.AddTrackedBuffBar()
     local tbb = ns.GetTrackedBuffBars()
     local newBar = {}
-    -- Copy settings from the last bar if one exists, otherwise use defaults
+    -- Copy settings from the last bar if one exists, otherwise use defaults.
+    -- Stack-related settings are always reset to defaults (not copied).
     local source = (#tbb.bars > 0) and tbb.bars[#tbb.bars] or TBB_DEFAULT_BAR
+    local STACK_KEYS = {
+        stacksPosition = true, stacksSize = true, stacksX = true, stacksY = true,
+        stackThresholdEnabled = true, stackThreshold = true,
+        stackThresholdR = true, stackThresholdG = true, stackThresholdB = true, stackThresholdA = true,
+        stackThresholdMaxEnabled = true, stackThresholdMax = true, stackThresholdTicks = true,
+    }
     for k, v in pairs(TBB_DEFAULT_BAR) do
-        newBar[k] = (source[k] ~= nil) and source[k] or v
+        if STACK_KEYS[k] then
+            newBar[k] = v
+        else
+            newBar[k] = (source[k] ~= nil) and source[k] or v
+        end
     end
     -- Always reset spell-specific fields
     newBar.spellID = 0
@@ -259,6 +354,10 @@ end
 tbbFrames = {}
 local tbbTickFrame
 local _tbbRebuildPending = false
+
+function ns.GetTBBFrame(idx)
+    return tbbFrames[idx]
+end
 
 local CDM_FONT_FALLBACK = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
 local function GetCDMFont()
@@ -382,6 +481,120 @@ local function CreateTrackedBuffBarFrame(parent, idx)
     return wrapFrame
 end
 
+-- Stack threshold overlay: a StatusBar on top of the main fill whose
+-- min/max are set so it fills completely at the threshold. The engine
+-- handles secret value clamping internally -- no Lua comparison needed.
+local function EnsureTBBThresholdOverlay(bar)
+    if bar._threshOverlay then return bar._threshOverlay end
+    local sb = bar._bar
+    if not sb then return nil end
+    local overlay = CreateFrame("StatusBar", nil, sb)
+    overlay:SetAllPoints(sb:GetStatusBarTexture())
+    overlay:SetFrameLevel(sb:GetFrameLevel() + 2)
+    overlay:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+    overlay:SetMinMaxValues(0, 1)
+    overlay:SetValue(0)
+    overlay:Hide()
+    bar._threshOverlay = overlay
+    return overlay
+end
+
+local function SetupTBBThresholdOverlay(bar, cfg)
+    if not cfg.stackThresholdEnabled then
+        if bar._threshOverlay then bar._threshOverlay:Hide() end
+        return
+    end
+    local overlay = EnsureTBBThresholdOverlay(bar)
+    if not overlay then return end
+
+    local texPath = TBB_TEXTURES[cfg.texture or "none"] or "Interface\\Buttons\\WHITE8x8"
+    overlay:SetStatusBarTexture(texPath)
+    overlay:SetOrientation(cfg.verticalOrientation and "VERTICAL" or "HORIZONTAL")
+    overlay:GetStatusBarTexture():SetVertexColor(
+        cfg.stackThresholdR or 0.8,
+        cfg.stackThresholdG or 0.1,
+        cfg.stackThresholdB or 0.1,
+        cfg.stackThresholdA or 1)
+
+    -- Anchor to the main fill texture so the overlay is clipped to the
+    -- filled portion of the bar (matters for passive stack-fill bars).
+    overlay:ClearAllPoints()
+    overlay:SetAllPoints(bar._bar:GetStatusBarTexture())
+
+    local threshold = cfg.stackThreshold or 5
+    overlay:SetMinMaxValues(threshold - 1, threshold)
+    overlay:SetValue(0)
+    overlay:Show()
+end
+
+local function FeedTBBThresholdOverlay(bar)
+    local overlay = bar._threshOverlay
+    if not overlay or not overlay:IsShown() then return end
+    overlay:SetValue(bar._stackCount or 0)
+end
+
+-- Parse comma-separated tick values string into a table of numbers.
+local function ParseTickValues(str)
+    if not str or str == "" then return nil end
+    local vals = {}
+    for s in str:gmatch("[^,]+") do
+        local n = tonumber(s:match("^%s*(.-)%s*$"))
+        if n and n > 0 then vals[#vals + 1] = n end
+    end
+    if #vals == 0 then return nil end
+    return vals
+end
+
+-- Apply tick marks to a bar based on config.
+-- sb: the StatusBar (actual bar or preview bar)
+-- cfg: bar config table (needs stackThresholdTicks, stackThresholdMax)
+-- tickCache: table to store tick textures
+-- isVert: vertical orientation flag
+-- tickParent: optional frame to parent ticks to (above overlay)
+local function ApplyTBBTickMarks(sb, cfg, tickCache, isVert, tickParent)
+    local maxStacks = cfg.stackThresholdMax or 10
+    local vals = ParseTickValues(cfg.stackThresholdTicks)
+
+    if tickCache then
+        for i = 1, #tickCache do tickCache[i]:Hide() end
+    end
+
+    if not cfg.stackThresholdEnabled or not cfg.stackThresholdMaxEnabled or not vals or maxStacks < 1 then return end
+    if not tickCache then return end
+
+    local PP = EllesmereUI and EllesmereUI.PP
+    local parent = tickParent or sb
+    while #tickCache < #vals do
+        local t = parent:CreateTexture(nil, "OVERLAY", nil, 7)
+        t:SetColorTexture(1, 1, 1, 1)
+        t:SetSnapToPixelGrid(false)
+        t:SetTexelSnappingBias(0)
+        tickCache[#tickCache + 1] = t
+    end
+
+    local onePx = PP and PP.Scale(1) or 1
+    local barW = sb:GetWidth()
+    local barH = sb:GetHeight()
+    for i, v in ipairs(vals) do
+        if v <= maxStacks then
+            local t = tickCache[i]
+            local frac = v / maxStacks
+            t:ClearAllPoints()
+            if isVert then
+                local off = PP and PP.Scale(barH * frac) or (barH * frac)
+                t:SetSize(barW, onePx)
+                t:SetPoint("BOTTOMLEFT", sb, "BOTTOMLEFT", 0, off)
+            else
+                local off = PP and PP.Scale(barW * frac) or (barW * frac)
+                t:SetSize(onePx, barH)
+                t:SetPoint("TOPLEFT", sb, "TOPLEFT", off, 0)
+            end
+            t:Show()
+        end
+    end
+end
+ns.ApplyTBBTickMarks = ApplyTBBTickMarks
+
 local function ApplyTrackedBuffBarSettings(bar, cfg)
     -- bar = wrapFrame (top-level container). bar._bar = the StatusBar child.
     if not bar or not cfg then return end
@@ -448,6 +661,7 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
     -- Fill color (user-defined, defaults to class color)
     local fR, fG, fB, fA = cfg.fillR or _tbbClassR, cfg.fillG or _tbbClassG, cfg.fillB or _tbbClassB, cfg.fillA or 1
     sb:GetStatusBarTexture():SetVertexColor(fR, fG, fB, fA)
+    bar._baseFillR, bar._baseFillG, bar._baseFillB, bar._baseFillA = fR, fG, fB, fA
 
     -- Background color
     if bar._bg then
@@ -505,7 +719,8 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
     end
 
     -- Timer
-    if cfg.showTimer then
+    local timerPos = cfg.timerPosition or (cfg.showTimer and "right" or "none")
+    if timerPos ~= "none" then
         bar._timerText:Show()
         local tSize = cfg.timerSize or 11
         SetTBBFont(bar._timerText, GetCDMFont(), tSize)
@@ -514,8 +729,24 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
             bar._timerText:SetPoint("TOP", sb, "TOP", cfg.timerX or 0, -8 + (cfg.timerY or 0))
             bar._timerText:SetJustifyH("CENTER")
         else
-            bar._timerText:SetPoint("RIGHT", sb, "RIGHT", -8 + (cfg.timerX or 0), cfg.timerY or 0)
-            bar._timerText:SetJustifyH("RIGHT")
+            local tX = cfg.timerX or 0
+            local tY = cfg.timerY or 0
+            if timerPos == "center" then
+                bar._timerText:SetPoint("CENTER", sb, "CENTER", tX, tY)
+                bar._timerText:SetJustifyH("CENTER")
+            elseif timerPos == "top" then
+                bar._timerText:SetPoint("BOTTOM", sb, "TOP", tX, 5 + tY)
+                bar._timerText:SetJustifyH("CENTER")
+            elseif timerPos == "bottom" then
+                bar._timerText:SetPoint("TOP", sb, "BOTTOM", tX, -5 + tY)
+                bar._timerText:SetJustifyH("CENTER")
+            elseif timerPos == "left" then
+                bar._timerText:SetPoint("LEFT", sb, "LEFT", 5 + tX, tY)
+                bar._timerText:SetJustifyH("LEFT")
+            else -- "right"
+                bar._timerText:SetPoint("RIGHT", sb, "RIGHT", -5 + tX, tY)
+                bar._timerText:SetJustifyH("RIGHT")
+            end
         end
     else
         bar._timerText:Hide()
@@ -538,13 +769,30 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
     end
 
     -- Name text (hidden in vertical orientation)
-    if cfg.showName ~= false and not isVert then
+    local namePos = cfg.namePosition or ((cfg.showName ~= false) and "left" or "none")
+    if namePos ~= "none" and not isVert then
         bar._nameText:Show()
         local nSize = cfg.nameSize or 11
         SetTBBFont(bar._nameText, GetCDMFont(), nSize)
         bar._nameText:ClearAllPoints()
-        bar._nameText:SetPoint("LEFT", sb, "LEFT", 8 + (cfg.nameX or 0), cfg.nameY or 0)
-        bar._nameText:SetJustifyH("LEFT")
+        local nX = cfg.nameX or 0
+        local nY = cfg.nameY or 0
+        if namePos == "center" then
+            bar._nameText:SetPoint("CENTER", sb, "CENTER", nX, nY)
+            bar._nameText:SetJustifyH("CENTER")
+        elseif namePos == "top" then
+            bar._nameText:SetPoint("BOTTOM", sb, "TOP", nX, 5 + nY)
+            bar._nameText:SetJustifyH("CENTER")
+        elseif namePos == "bottom" then
+            bar._nameText:SetPoint("TOP", sb, "BOTTOM", nX, -5 + nY)
+            bar._nameText:SetJustifyH("CENTER")
+        elseif namePos == "right" then
+            bar._nameText:SetPoint("RIGHT", sb, "RIGHT", -5 + nX, nY)
+            bar._nameText:SetJustifyH("RIGHT")
+        else -- "left"
+            bar._nameText:SetPoint("LEFT", sb, "LEFT", 5 + nX, nY)
+            bar._nameText:SetJustifyH("LEFT")
+        end
         bar._nameText:SetWidth(w - 12 - (cfg.showTimer and 50 or 0))
     else
         bar._nameText:Hide()
@@ -575,21 +823,27 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
     -- Stacks text positioning
     if bar._stacksText then
         local sPos = cfg.stacksPosition or "center"
-        local sSize = cfg.stacksSize or 11
-        local sX = cfg.stacksX or 0
-        local sY = cfg.stacksY or 0
-        SetTBBFont(bar._stacksText, GetCDMFont(), sSize)
-        bar._stacksText:ClearAllPoints()
-        if sPos == "top" then
-            bar._stacksText:SetPoint("BOTTOM", sb, "TOP", sX, 5 + sY)
-        elseif sPos == "bottom" then
-            bar._stacksText:SetPoint("TOP", sb, "BOTTOM", sX, -5 + sY)
-        elseif sPos == "left" then
-            bar._stacksText:SetPoint("RIGHT", sb, "LEFT", -5 + sX, sY)
-        elseif sPos == "right" then
-            bar._stacksText:SetPoint("LEFT", sb, "RIGHT", 5 + sX, sY)
+        if sPos == "none" then
+            bar._stacksText:Hide()
+            bar._stacksHidden = true
         else
-            bar._stacksText:SetPoint("CENTER", sb, "CENTER", sX, sY)
+            bar._stacksHidden = nil
+            local sSize = cfg.stacksSize or 11
+            local sX = cfg.stacksX or 0
+            local sY = cfg.stacksY or 0
+            SetTBBFont(bar._stacksText, GetCDMFont(), sSize)
+            bar._stacksText:ClearAllPoints()
+            if sPos == "top" then
+                bar._stacksText:SetPoint("BOTTOM", sb, "TOP", sX, 5 + sY)
+            elseif sPos == "bottom" then
+                bar._stacksText:SetPoint("TOP", sb, "BOTTOM", sX, -5 + sY)
+            elseif sPos == "left" then
+                bar._stacksText:SetPoint("LEFT", sb, "LEFT", 5 + sX, sY)
+            elseif sPos == "right" then
+                bar._stacksText:SetPoint("RIGHT", sb, "RIGHT", -5 + sX, sY)
+            else
+                bar._stacksText:SetPoint("CENTER", sb, "CENTER", sX, sY)
+            end
         end
     end
 
@@ -611,6 +865,20 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
             bar._barBorder:Hide()
         end
     end
+
+    -- Stack threshold overlay (stacked StatusBar approach, secret-safe)
+    SetupTBBThresholdOverlay(bar, cfg)
+
+    -- Stack threshold tick marks (above the threshold overlay)
+    if not bar._threshTicks then bar._threshTicks = {} end
+    if not bar._tickOverlay then
+        local to = CreateFrame("Frame", nil, sb)
+        to:SetAllPoints(sb)
+        to:SetFrameLevel(sb:GetFrameLevel() + 3)
+        bar._tickOverlay = to
+    end
+    ApplyTBBTickMarks(sb, cfg, bar._threshTicks, isVert, bar._tickOverlay)
+    bar._ticksDirty = true  -- bar may not have valid dimensions yet; re-apply once laid out
 end
 
 -- Reusable helpers for secret-safe aura field access (avoids closure allocation per tick)
@@ -725,9 +993,14 @@ function ns.RefreshBuffBarGating()
         if not tbbAuraListener:IsEventRegistered("UNIT_AURA") then
             tbbAuraListener:RegisterUnitEvent("UNIT_AURA", "player")
         end
+        if not tbbGlowListener:IsEventRegistered("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW") then
+            tbbGlowListener:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
+            tbbGlowListener:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
+        end
     else
         tbbCastListener:UnregisterAllEvents()
         tbbAuraListener:UnregisterAllEvents()
+        tbbGlowListener:UnregisterAllEvents()
     end
 end
 
@@ -781,7 +1054,8 @@ function ns.BuildTrackedBuffBars()
 
             -- Name text: prefer stored name (preserves custom item/spell names),
             -- fall back to spell info only when no name was stored.
-            if cfg.showName ~= false and bar._nameText then
+            local namePos2 = cfg.namePosition or ((cfg.showName ~= false) and "left" or "none")
+            if namePos2 ~= "none" and bar._nameText then
                 local displayName = cfg.name
                 if (not displayName or displayName == "") and cfg.spellID and cfg.spellID > 0 then
                     local spInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(cfg.spellID)
@@ -843,13 +1117,13 @@ function ns.BuildTrackedBuffBars()
     ns.RefreshBuffBarGating()
 end
 
--- Helper: update stacks text for a TBB bar.
--- Mirrors the CDM pattern: read the Blizzard child's Applications frame
--- text via GetText and pass it directly to SetText (no comparison needed,
--- works with secret values in combat).  Falls back to per-tick aura cache
--- (same cache CDM uses in ApplyStackCount).
+-- Helper: update stacks text and count for a TBB bar.
+-- Display: passes Blizzard child Applications text directly (handles secrets).
+-- Count: stores applications value on bar._stackCount for the threshold overlay.
+-- Since the overlay uses SetValue (secret-safe), _stackCount can be secret.
 local function UpdateTBBStacks(bar, cfg)
-    if not bar._stacksText then return end
+    if not bar._stacksText then bar._stackCount = 0; return end
+    if bar._stacksHidden then bar._stacksText:Hide(); bar._stackCount = 0; return end
 
     local buffChildCache = ns._tickBlizzBuffChildCache
     local allChildCache  = ns._tickBlizzAllChildCache
@@ -858,7 +1132,6 @@ local function UpdateTBBStacks(bar, cfg)
     -- Multi-ID (popular) bars: check each spellID
     if cfg.spellIDs then
         for _, sid in ipairs(cfg.spellIDs) do
-            -- Path 1: Blizzard child Applications frame (works in combat)
             local blzChild = buffChildCache[sid] or allChildCache[sid]
             if blzChild and blzChild.Applications and blzChild.Applications:IsShown() then
                 local appsText = blzChild.Applications.Applications
@@ -867,11 +1140,11 @@ local function UpdateTBBStacks(bar, cfg)
                     if ok and txt then
                         bar._stacksText:SetText(txt)
                         bar._stacksText:Show()
+                        bar._stackCount = tonumber(txt) or 0
                         return
                     end
                 end
             end
-            -- Path 2: per-tick aura cache (same as CDM ApplyStackCount)
             if auraCache then
                 local aura = auraCache[sid]
                 if aura == nil then
@@ -879,17 +1152,16 @@ local function UpdateTBBStacks(bar, cfg)
                     aura = (ok and res) or false
                     auraCache[sid] = aura
                 end
-                if aura then
-                    local apps = aura.applications
-                    if apps ~= nil and not (issecretvalue and issecretvalue(apps)) and apps > 1 then
-                        bar._stacksText:SetText(tostring(apps))
-                        bar._stacksText:Show()
-                        return
-                    end
+                if aura and aura.applications and not (issecretvalue and issecretvalue(aura.applications)) and aura.applications > 1 then
+                    bar._stacksText:SetText(tostring(aura.applications))
+                    bar._stacksText:Show()
+                    bar._stackCount = aura.applications
+                    return
                 end
             end
         end
         bar._stacksText:Hide()
+        bar._stackCount = 0
         return
     end
 
@@ -897,12 +1169,14 @@ local function UpdateTBBStacks(bar, cfg)
     local resolvedID = bar._resolvedAuraID or cfg.spellID
     if not resolvedID or resolvedID <= 0 then
         bar._stacksText:Hide()
+        bar._stackCount = 0
         return
     end
 
-    -- Path 1: Blizzard child Applications frame (works in combat)
     local blzChild = buffChildCache[resolvedID] or allChildCache[resolvedID]
                   or buffChildCache[cfg.spellID] or allChildCache[cfg.spellID]
+
+    -- Path 1: Blizzard child Applications frame (works with secrets in combat)
     if blzChild and blzChild.Applications and blzChild.Applications:IsShown() then
         local appsText = blzChild.Applications.Applications
         if appsText then
@@ -910,12 +1184,28 @@ local function UpdateTBBStacks(bar, cfg)
             if ok and txt then
                 bar._stacksText:SetText(txt)
                 bar._stacksText:Show()
+                -- For threshold: get numeric count from aura data
+                local apps
+                if auraCache then
+                    local aura = auraCache[resolvedID]
+                    if aura == nil then
+                        local aOk, res = pcall(C_UnitAuras.GetPlayerAuraBySpellID, resolvedID)
+                        aura = (aOk and res) or false
+                        auraCache[resolvedID] = aura
+                    end
+                    if aura and aura.applications then apps = aura.applications end
+                end
+                if not apps and blzChild.auraInstanceID then
+                    local aOk, ad = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, blzChild.auraDataUnit or "player", blzChild.auraInstanceID)
+                    if aOk and ad and ad.applications then apps = ad.applications end
+                end
+                bar._stackCount = apps or (tonumber(txt) or 0)
                 return
             end
         end
     end
 
-    -- Path 2: per-tick aura cache (same as CDM ApplyStackCount)
+    -- Path 2: aura cache lookup
     if auraCache then
         local aura = auraCache[resolvedID]
         if aura == nil then
@@ -923,17 +1213,37 @@ local function UpdateTBBStacks(bar, cfg)
             aura = (ok and res) or false
             auraCache[resolvedID] = aura
         end
-        if aura then
-            local apps = aura.applications
-            if apps ~= nil and not (issecretvalue and issecretvalue(apps)) and apps > 1 then
-                bar._stacksText:SetText(tostring(apps))
+        if aura and aura.applications then
+            bar._stackCount = aura.applications
+            local isSecret = issecretvalue and issecretvalue(aura.applications)
+            if not isSecret and aura.applications > 1 then
+                bar._stacksText:SetText(tostring(aura.applications))
                 bar._stacksText:Show()
-                return
+            else
+                bar._stacksText:Hide()
             end
+            return
+        end
+    end
+
+    -- Path 3: Blizzard child auraInstanceID fallback
+    if blzChild and blzChild.auraInstanceID then
+        local ok, ad = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, blzChild.auraDataUnit or "player", blzChild.auraInstanceID)
+        if ok and ad and ad.applications then
+            bar._stackCount = ad.applications
+            local isSecret = issecretvalue and issecretvalue(ad.applications)
+            if not isSecret and ad.applications > 1 then
+                bar._stacksText:SetText(tostring(ad.applications))
+                bar._stacksText:Show()
+            else
+                bar._stacksText:Hide()
+            end
+            return
         end
     end
 
     bar._stacksText:Hide()
+    bar._stackCount = 0
 end
 
 function ns.UpdateTrackedBuffBarTimers()
@@ -947,12 +1257,61 @@ function ns.UpdateTrackedBuffBarTimers()
     local IsBufChildActive = ns.IsBufChildCooldownActive
     local inCombat = InCombatLockdown()
 
+    -- Self-heal placeholder mode if user navigated away from Buff Bars
+    if ns._tbbPlaceholderMode then
+        local ap = EllesmereUI and EllesmereUI.GetActivePage and EllesmereUI:GetActivePage()
+        if ap ~= "Buff Bars" then
+            ns._tbbPlaceholderMode = false
+            if ns.HideTBBPlaceholders then ns.HideTBBPlaceholders() end
+        end
+    end
+
     for i, cfg in ipairs(bars) do
         local bar = tbbFrames[i]
         if not bar or not bar._tbbReady then
             -- bar not configured or disabled, skip
+        elseif ns._tbbPlaceholderMode then
+            -- Buff Bars options tab is open; keep bars visible for placeholders
+            if not bar:IsShown() then bar:Show() end
         elseif cfg.enabled == false then
             bar:Hide()
+        elseif cfg.glowBased then
+            -- Glow-based bar (e.g. Time Spiral). Active only while _customStart is set
+            -- by the SPELL_ACTIVATION_OVERLAY_GLOW listener.
+            local sb = bar._bar
+            if bar._customStart then
+                local activeDur = bar._activeDuration or cfg.customDuration or 10
+                local elapsed = now - bar._customStart
+                local remaining = math.max(0, activeDur - elapsed)
+                if remaining > 0 then
+                    if not bar:IsShown() then bar:Show() end
+                    local frac = remaining / activeDur
+                    sb:SetMinMaxValues(0, 1)
+                    sb:SetValue(frac)
+                    if cfg.showTimer and bar._timerText then
+                        local t
+                        if remaining >= 10 then t = format("%d", floor(remaining))
+                        else t = format("%.1f", remaining) end
+                        bar._timerText:SetText(t)
+                        bar._timerText:Show()
+                    end
+                else
+                    bar._customStart    = nil
+                    bar._activeDuration = nil
+                    bar:Hide()
+                end
+                FeedTBBThresholdOverlay(bar)
+                if bar._ticksDirty and sb then
+                    local w = sb:GetWidth()
+                    if w and w > 0 then
+                        ApplyTBBTickMarks(sb, cfg, bar._threshTicks, cfg.verticalOrientation, bar._tickOverlay)
+                        bar._ticksDirty = nil
+                    end
+                end
+            else
+                if bar:IsShown() then bar:Hide() end
+                if bar._stacksText then bar._stacksText:Hide() end
+            end
         elseif cfg.spellIDs then
             -- Multi-ID bar (popular buffs). Active if any ID is in the CDM active cache.
             local sb = bar._bar  -- StatusBar child of wrapFrame
@@ -1013,6 +1372,15 @@ function ns.UpdateTrackedBuffBarTimers()
                     sb:SetValue(1)
                     if cfg.showTimer and bar._timerText then bar._timerText:Hide() end
                 end
+                FeedTBBThresholdOverlay(bar)
+                -- Re-apply tick marks once bar has valid dimensions after layout
+                if bar._ticksDirty and bar._bar then
+                    local w = bar._bar:GetWidth()
+                    if w and w > 0 then
+                        ApplyTBBTickMarks(bar._bar, cfg, bar._threshTicks, cfg.verticalOrientation, bar._tickOverlay)
+                        bar._ticksDirty = nil
+                    end
+                end
             else
                 if bar:IsShown() then bar:Hide() end
                 if bar._stacksText then bar._stacksText:Hide() end
@@ -1032,6 +1400,15 @@ function ns.UpdateTrackedBuffBarTimers()
                 if IsBufChildActive and IsBufChildActive(blzChild) then
                     isActive = true
                 end
+            end
+            -- Fallback: check player auras directly (covers passives and
+            -- buffs not tracked by Blizzard CDM)
+            if not isActive then
+                local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, resolvedID)
+                if not ok or not aura then
+                    ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
+                end
+                if ok and aura then isActive = true end
             end
 
             if not isActive and inCombat and (cfg.customDuration or bar._activeDuration) and bar._customStart then
@@ -1079,7 +1456,10 @@ function ns.UpdateTrackedBuffBarTimers()
                         bar:Hide()
                     end
                 else
-                    -- Standard DurationObject path via Blizzard CDM child
+                    -- Standard path: try DurationObject via Blizzard CDM child.
+                    -- If no duration object is available (passives, permanent
+                    -- buffs, or spells not tracked by Blizzard CDM), default
+                    -- to a full bar with timer hidden.
                     local durObj = nil
                     if blzChild then
                         local auraID = blzChild.auraInstanceID
@@ -1090,10 +1470,40 @@ function ns.UpdateTrackedBuffBarTimers()
                         end
                     end
 
+                    -- Validate the duration object actually has remaining time.
+                    -- Permanent/passive buffs may return a durObj that reads as
+                    -- zero, which would render an empty bar.
+                    -- We cache passive state on the bar so it persists into combat.
+                    local useDurObj = false
                     if durObj then
+                        local ok, rem = pcall(durObj.GetRemainingDuration, durObj)
+                        if ok and rem then
+                            local isSecret = issecretvalue and issecretvalue(rem)
+                            if isSecret then
+                                -- In combat: trust cached passive state if we have it
+                                if bar._isPassive then
+                                    useDurObj = false
+                                else
+                                    useDurObj = true
+                                end
+                            elseif rem > 0 then
+                                useDurObj = true
+                                bar._isPassive = false
+                            else
+                                -- rem == 0 out of combat means passive/permanent
+                                bar._isPassive = true
+                            end
+                        end
+                    else
+                        -- No durObj at all means passive
+                        bar._isPassive = true
+                    end
+
+                    if useDurObj then
                         sb:SetMinMaxValues(0, 1)
                         sb:SetTimerDuration(durObj, Enum.StatusBarInterpolation.None, Enum.StatusBarTimerDirection.RemainingTime)
                         sb:SetToTargetValue()
+                        if cfg.showSpark and bar._spark then bar._spark:Show() end
 
                         if cfg.showTimer and bar._timerText then
                             local ok, remaining = pcall(durObj.GetRemainingDuration, durObj)
@@ -1120,9 +1530,27 @@ function ns.UpdateTrackedBuffBarTimers()
                             end
                         end
                     else
-                        -- Permanent buff or no duration object available
-                        sb:SetValue(1)
-                        if cfg.showTimer and bar._timerText then bar._timerText:Hide() end
+                        -- Permanent/passive buff or no valid duration
+                        local maxS = cfg.stackThresholdMax
+                        if bar._isPassive and cfg.stackThresholdMaxEnabled and maxS and maxS > 0 then
+                            sb:SetMinMaxValues(0, maxS)
+                            sb:SetValue(bar._stackCount or 0)
+                        else
+                            sb:SetMinMaxValues(0, 1)
+                            sb:SetValue(1)
+                        end
+                        if bar._timerText then bar._timerText:Hide() end
+                        if bar._spark then bar._spark:Hide() end
+                    end
+                end
+                -- Feed threshold overlay each tick (secret-safe, no comparison)
+                FeedTBBThresholdOverlay(bar)
+                -- Re-apply tick marks once bar has valid dimensions after layout
+                if bar._ticksDirty and bar._bar then
+                    local w = bar._bar:GetWidth()
+                    if w and w > 0 then
+                        ApplyTBBTickMarks(bar._bar, cfg, bar._threshTicks, cfg.verticalOrientation, bar._tickOverlay)
+                        bar._ticksDirty = nil
                     end
                 end
             else
@@ -1132,6 +1560,7 @@ function ns.UpdateTrackedBuffBarTimers()
                 bar._resolvedAuraID = nil
                 bar._customStart = nil
                 bar._activeDuration = nil
+                bar._isPassive = nil
                 if bar._cooldown then bar._cooldown:Clear() end
             end
         end

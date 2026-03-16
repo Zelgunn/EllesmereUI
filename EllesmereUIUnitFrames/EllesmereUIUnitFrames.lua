@@ -6254,6 +6254,7 @@ function InitializeFrames()
         frames._visFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
         frames._visFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
         frames._visFrame:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
+        frames._visFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
         frames._visFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
         frames._visFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     end
@@ -6334,6 +6335,10 @@ function InitializeFrames()
             end
         end
     end)
+
+    -- Apply all settings (cast bar colors, text, sizes, etc.) now that
+    -- frames are spawned and anchored.
+    ReloadFrames()
 end
 
 
