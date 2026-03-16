@@ -61,6 +61,7 @@ local LABEL_OVERRIDES = {
     ["Power Word: Fortitude"]   = "Fortitude",
     ["Arcane Intellect"]        = "Intellect",
     ["Battle Shout"]            = "Shout",
+    ["Hunter's Mark"]           = "Mark",
 }
 local LABEL_CLASS_OVERRIDES = {
     ROGUE  = "Poison",
@@ -496,6 +497,24 @@ local function PlayerOwnBuffOnAnyGroupMember(spellIDs)
     return false
 end
 
+-- Check if the player's current target has a debuff from the given spell IDs.
+-- Used for Hunter's Mark (debuff on enemy target, not a friendly buff).
+-- Only works OOC (aura data is secret in combat).
+local function TargetHasDebuffByID(spellIDs)
+    if not spellIDs or not spellIDs[1] then return true end
+    if not UnitExists("target") or UnitIsFriend("player", "target") then return true end
+    if InCombat() then return true end  -- can't read debuffs in combat, suppress reminder
+    for i = 1, 40 do
+        local aura = C_UnitAuras.GetAuraDataByIndex("target", i, "HARMFUL")
+        if not aura then break end
+        local sid = aura.spellId
+        if sid and not issecretvalue(sid) then
+            for j = 1, #spellIDs do if sid == spellIDs[j] then return true end end
+        end
+    end
+    return false
+end
+
 -------------------------------------------------------------------------------
 --  Weapon type classification (for weapon enchant matching)
 -------------------------------------------------------------------------------
@@ -542,6 +561,7 @@ local RAID_BUFFS = {
       buffIDs={381732,381741,381746,381748,381749,381750,381751,381752,381753,381754,381756,381757,381758},
       check="raid" },
     { key="sky",    class="SHAMAN",  name="Skyfury",                castSpell=462854, buffIDs={462854},  check="raid" },
+    { key="hmark",  class="HUNTER",  name="Hunter's Mark",          castSpell=257284, buffIDs={257284},  check="targetDebuff" },
 }
 
 -------------------------------------------------------------------------------
@@ -671,6 +691,13 @@ for _, f in ipairs(FLASK_ITEMS) do
     FLASK_BUFF_IDS[#FLASK_BUFF_IDS+1] = f.buffID
     FLASK_BUFF_ID_SET[f.buffID] = true
     FLASK_NAME_SET[f.name] = true
+end
+-- TWW flask buff IDs (detection only, so we don't false-positive when a
+-- player still has a TWW flask active)
+local TWW_FLASK_BUFF_IDS = {432473, 432021, 431974, 431973, 431972, 431971}
+for _, id in ipairs(TWW_FLASK_BUFF_IDS) do
+    FLASK_BUFF_IDS[#FLASK_BUFF_IDS+1] = id
+    FLASK_BUFF_ID_SET[id] = true
 end
 
 -- Food Items (Midnight)
@@ -914,7 +941,7 @@ local defaults = {
             showOthersMissing = true,
             scale = 1.0,
             enabled = {
-                motw=true, bshout=true, fort=true, ai=true, bronze=true, sky=true,
+                motw=true, bshout=true, fort=true, ai=true, bronze=true, sky=true, hmark=true,
             },
         },
         auras = {
@@ -1414,22 +1441,32 @@ if inInstance or rb.showNonInstanced then
             -- In combat, skip buffs whose IDs are not all whitelisted
             local canCheck = true
             if inCombat then
-                for _, id in ipairs(buff.buffIDs) do
-                    if not NON_SECRET_SPELL_IDS[id] then canCheck = false; break end
+                if buff.check == "targetDebuff" then
+                    canCheck = false  -- debuff reads are secret in combat
+                else
+                    for _, id in ipairs(buff.buffIDs) do
+                        if not NON_SECRET_SPELL_IDS[id] then canCheck = false; break end
+                    end
                 end
             end
             if canCheck then
                 local isMissing = false
-                if rb.showOthersMissing and (IsInGroup() or IsInRaid()) then
+                if buff.check == "targetDebuff" then
+                    isMissing = not TargetHasDebuffByID(buff.buffIDs)
+                elseif rb.showOthersMissing and buff.check == "raid" and (IsInGroup() or IsInRaid()) then
                     isMissing = AnyGroupMemberMissingBuff(buff.buffIDs)
                 else
                     isMissing = not PlayerHasAuraByID(buff.buffIDs)
                 end
                 if isMissing then
+                    local isTargetDebuff = (buff.check == "targetDebuff")
                     missing[#missing+1] = {
                         cat = "raidbuff", data = buff, scale = rb.scale or 1.0,
                         setup = function(btn)
                             SetIconSpell(btn, buff.castSpell, Tex(buff.castSpell), buff.name)
+                            if isTargetDebuff and not InCombat() then
+                                btn:SetAttribute("unit", "target")
+                            end
                             btn._text:SetText(ShortLabel(buff.name))
                         end,
                     }
@@ -1517,7 +1554,6 @@ end
 local function CollectConsumables(missing, playerClass, specID, inInstance, inKeystone, inCombat)
 local co = db.profile.consumables
 local specialsActive = inInstance or co.showSpecialsNonInstanced
-if not inKeystone then
     -- Only check consumables out of combat (secret value protection)
     if not inCombat then
 
@@ -1782,8 +1818,6 @@ if not inKeystone then
             end
         end
     end
-
-end -- end consumables
 
 end
 
@@ -2469,6 +2503,32 @@ mainFrame:SetScript("OnEvent", function(_, e, arg1, arg2)
         RequestRefresh()
         BeaconInit()
         C_Timer.After(0.5, RegisterUnlockElements)
+
+        -- Conditionally register group UNIT_AURA only when needed.
+        -- Needed for: showOthersMissing (raid buffs), Earth Shield orbit
+        -- (Resto Shaman), Source of Magic (Evoker ownOnRaid check).
+        local _groupAuraRegistered = false
+        local function UpdateGroupAuraRegistration()
+            local needGroup = false
+            local rb = db.profile.raidBuffs
+            if rb and rb.showOthersMissing then needGroup = true end
+            if not needGroup then
+                local cls = GetPlayerClass()
+                if cls == "SHAMAN" or cls == "EVOKER" then needGroup = true end
+            end
+            if needGroup and not _groupAuraRegistered then
+                mainFrame:RegisterEvent("GROUP_JOINED")
+                mainFrame:RegisterEvent("GROUP_LEFT")
+                _groupAuraRegistered = true
+            elseif not needGroup and _groupAuraRegistered then
+                mainFrame:UnregisterEvent("GROUP_JOINED")
+                mainFrame:UnregisterEvent("GROUP_LEFT")
+                _groupAuraRegistered = false
+            end
+        end
+        _G._EABR_UpdateGroupAuraRegistration = UpdateGroupAuraRegistration
+        UpdateGroupAuraRegistration()
+
         return
     end
 
@@ -2573,6 +2633,7 @@ mainFrame:RegisterEvent("WEAPON_ENCHANT_CHANGED")
 mainFrame:RegisterUnitEvent("UNIT_ENTERED_VEHICLE", "player")
 mainFrame:RegisterUnitEvent("UNIT_EXITED_VEHICLE", "player")
 mainFrame:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
+mainFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 
 -------------------------------------------------------------------------------
 --  /eabr debug prints full diagnostic state to chat
@@ -2622,7 +2683,9 @@ SlashCmdList["EABRDEBUG"] = function()
             elseif not known then status = "spell not known"
             else
                 local isMissing
-                if rb.showOthersMissing and (inGroup or inRaid) then
+                if buff.check == "targetDebuff" then
+                    isMissing = not TargetHasDebuffByID(buff.buffIDs)
+                elseif rb.showOthersMissing and buff.check == "raid" and (inGroup or inRaid) then
                     isMissing = AnyGroupMemberMissingBuff(buff.buffIDs)
                 else
                     isMissing = not PlayerHasAuraByID(buff.buffIDs)

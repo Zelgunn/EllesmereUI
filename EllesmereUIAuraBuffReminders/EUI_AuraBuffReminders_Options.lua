@@ -919,7 +919,7 @@ initFrame:SetScript("OnEvent", function(self)
         raidBufFirstRow, h = W:DualRow(parent, y,
             { type="toggle", text="Show Others Missing",
               getValue=function() local r = RDB(); return r and r.showOthersMissing end,
-              setValue=function(v) local r = RDB(); if r then r.showOthersMissing = v; RefreshAll() end end },
+              setValue=function(v) local r = RDB(); if r then r.showOthersMissing = v; if _G._EABR_UpdateGroupAuraRegistration then _G._EABR_UpdateGroupAuraRegistration() end; RefreshAll() end end },
             { type="toggle", text="Show Buffs Outside Instances",
               getValue=function() local r = RDB(); return r and r.showNonInstanced end,
               setValue=function(v) local r = RDB(); if r then r.showNonInstanced = v; RefreshAll() end end }

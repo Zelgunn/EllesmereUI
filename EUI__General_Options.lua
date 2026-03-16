@@ -804,7 +804,7 @@ initFrame:SetScript("OnEvent", function(self)
                 SetCVarSafe("SpellQueueWindow", v)
               end });  y = y - h
 
-        -- Row: Distance to Target (left, with cog) | Out of Melee Indicator (right, with cog)
+        --[[ DISABLED: Distance to Target / Melee Indicator (WIP)
         local distRow
         distRow, h = W:DualRow(parent, y,
             { type="toggle", text="Distance to Target",
@@ -1005,6 +1005,7 @@ initFrame:SetScript("OnEvent", function(self)
             meleeCogBtn:SetAlpha(meleeOff() and 0.15 or 0.4)
             if meleeOff() then meleeCogBlock:Show() else meleeCogBlock:Hide() end
         end
+        --]] -- END DISABLED: Distance to Target / Melee Indicator
 
         _, h = W:Spacer(parent, y, 20);  y = y - h
 
@@ -2696,8 +2697,9 @@ initFrame:SetScript("OnEvent", function(self)
     end)
 
     ---------------------------------------------------------------------------
-    --  Runtime: Distance to Target & Out of Melee Indicator
+    --  DISABLED: Runtime: Distance to Target & Out of Melee Indicator (WIP)
     ---------------------------------------------------------------------------
+    --[[
     do
         local distFrame, distText
         local meleeFrame, meleeTex
@@ -3077,8 +3079,9 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end)
     end
+    --]] -- END DISABLED: Runtime Distance/Melee
 
-    -- Register Distance Text and Melee Indicator as unlock mode elements
+    --[[ DISABLED: Unlock mode registration for Distance/Melee (WIP)
     C_Timer.After(1.5, function()
         if not EllesmereUI or not EllesmereUI.RegisterUnlockElements then return end
         EllesmereUI:RegisterUnlockElements({
@@ -3172,6 +3175,7 @@ initFrame:SetScript("OnEvent", function(self)
             },
         })
     end)
+    --]] -- END DISABLED: Unlock mode registration for Distance/Melee
 
     -- Hidden button for FPS keybind toggle
     local fpsBind = CreateFrame("Button", "EUI_FPSBindBtn", UIParent)
