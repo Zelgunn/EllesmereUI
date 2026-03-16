@@ -341,6 +341,34 @@ cache.IsSpellCachedInTickBlizzardBuffChild = IsSpellCachedInTickBlizzardBuffChil
 
 -- endregion
 
+-- region _tickBlizzCDChild
+
+-- CD/utility viewer child cache: used by CD bars to
+-- avoid picking up the buff viewer's aura state for
+-- spells that appear in both viewer types.
+
+-------------------------------------------------------------------------------
+--- Get the blizzard CD child for spellID from the cache `_tickBlizzCDChild`
+--- @param spellID number               The spell ID to query
+--- @return Frame|nil blizzardCDChild
+-------------------------------------------------------------------------------
+local function GetTickBlizzardCDChild(spellID)
+    return cache._tickBlizzCDChild[spellID]
+end
+cache.GetTickBlizzardCDChild = GetTickBlizzardCDChild
+
+-------------------------------------------------------------------------------
+--- Stores in the `_tickBlizzCDChild` cache the `blizzardCDChild` for `spellID`
+--- @param spellID number           The spell ID to override
+--- @param blizzardCDChild Frame    The blizzard CD child for spellID
+-------------------------------------------------------------------------------
+local function CacheTickBlizzardCDChild(spellID, blizzardCDChild)
+    cache._tickBlizzCDChild[spellID] = blizzardCDChild
+end
+cache.CacheTickBlizzardCDChild = CacheTickBlizzardCDChild
+
+--
+
 -------------------------------------------------------------------------------
 --- For buff bars, this function returns the CDM's child
 ---   based on assignedChild and cached data.

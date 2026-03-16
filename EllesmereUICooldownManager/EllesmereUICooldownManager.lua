@@ -133,7 +133,6 @@ ECache.InitCastCountSpellsCache()
 --  Avoids redundant C API calls when the same spellID appears on multiple
 --  bars or is queried by both ApplySpellCooldown and ApplyStackCount.
 -------------------------------------------------------------------------------
-local _tickBlizzCDChildCache   = ECache._tickBlizzCDChild -- [resolvedSid] = blizzChild, only from Essential/Utility viewers
 local _tickBlizzMultiChildCache = ECache._tickBlizzMultiChild -- [baseSid] = { ch1, ch2, ... } when multiple CDM children share a base spellID
 local _activeMultiScratch = ECache._activeMultiScratch      -- reusable scratch table for active multi-child filtering and companion child mapping
 
@@ -4448,10 +4447,8 @@ local function UpdateAllCDMBars(dt)
                                         end
                                     end
                                 else
-                                    -- CD/utility viewer child cache: used by CD bars to
-                                    -- avoid picking up the buff viewer's aura state for
-                                    -- spells that appear in both viewer types.
-                                    _tickBlizzCDChildCache[resolvedSid] = ch
+                                    -- Warning: storing in cache but cache is never read
+                                    ECache.CacheTickBlizzardCDChild(resolvedSid, ch)
                                 end
                             end
                             -- Also map the correct spellID for buff viewer children.
