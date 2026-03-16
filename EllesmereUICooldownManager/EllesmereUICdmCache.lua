@@ -369,6 +369,55 @@ cache.CacheTickBlizzardCDChild = CacheTickBlizzardCDChild
 
 --
 
+-- region _tickBlizzMultiChild
+
+-------------------------------------------------------------------------------
+--- Get the list of blizzard CDM children for spellID from the 
+---   cache `_tickBlizzMultiChild`.
+--- @param spellID number               The spell ID to query
+--- @return Frame[]|nil blizzardChildren
+-------------------------------------------------------------------------------
+local function GetTickBlizzardMultiChild(spellID)
+    return cache._tickBlizzMultiChild[spellID]
+end
+cache.GetTickBlizzardMultiChild = GetTickBlizzardMultiChild
+
+-------------------------------------------------------------------------------
+--- Checks if the `spellID` is currently stored in `_tickBlizzMultiChild`
+--- @param spellID number               The spell ID to check
+--- @return boolean spellInCache
+-------------------------------------------------------------------------------
+local function IsSpellCachedInTickBlizzardMultiChild(spellID)
+    return cache._tickBlizzMultiChild[spellID] ~= nil
+end
+cache.IsSpellCachedInTickBlizzardMultiChild = IsSpellCachedInTickBlizzardMultiChild
+
+-------------------------------------------------------------------------------
+--- Stores in the `_tickBlizzMultiChild` cache the list `blizzardChildren` 
+---   for `spellID`. 
+--- If the `spellID` is already present, this function does nothing.
+--- @param spellID number           The spell ID to override
+--- @param blizzardChildren Frame[] The blizzard CD child for spellID
+-------------------------------------------------------------------------------
+local function CacheTickBlizzardMultiChild(spellID, blizzardChildren)
+    if IsSpellCachedInTickBlizzardMultiChild(spellID) then return end
+    cache._tickBlizzMultiChild[spellID] = blizzardChildren
+end
+cache.CacheTickBlizzardMultiChild = CacheTickBlizzardMultiChild
+
+-------------------------------------------------------------------------------
+--- Appends `blizzardChild` to the list for `spellID` in `_tickBlizzMultiChild`.
+--- @param spellID number        The spell ID to override
+--- @param blizzardChild Frame    The blizzard CD child for spellID
+-------------------------------------------------------------------------------
+local function AppendTickBlizzardMultiChild(spellID, blizzardChild)
+    if not IsSpellCachedInTickBlizzardMultiChild(spellID) then return end
+    cache._tickBlizzMultiChild[spellID][#cache._tickBlizzMultiChild[spellID] + 1] = blizzardChild
+end
+cache.AppendTickBlizzardMultiChild = AppendTickBlizzardMultiChild
+
+--
+
 -------------------------------------------------------------------------------
 --- For buff bars, this function returns the CDM's child
 ---   based on assignedChild and cached data.

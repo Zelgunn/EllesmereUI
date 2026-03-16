@@ -133,7 +133,6 @@ ECache.InitCastCountSpellsCache()
 --  Avoids redundant C API calls when the same spellID appears on multiple
 --  bars or is queried by both ApplySpellCooldown and ApplyStackCount.
 -------------------------------------------------------------------------------
-local _tickBlizzMultiChildCache = ECache._tickBlizzMultiChild -- [baseSid] = { ch1, ch2, ... } when multiple CDM children share a base spellID
 local _activeMultiScratch = ECache._activeMultiScratch      -- reusable scratch table for active multi-child filtering and companion child mapping
 
 -- Reusable spell list buffers -- avoids table allocation every tick in update functions
@@ -4062,7 +4061,7 @@ local function UpdateTrackedBarIcons(barKey)
         local baseN = combinedN
         for bi = 1, baseN do
             local sid = combined[bi]
-            local multiChildren = _tickBlizzMultiChildCache[sid]
+            local multiChildren = ECache.GetTickBlizzardMultiChild(sid)
             if multiChildren then
                 -- Collect only active (shown) children to avoid showing inactive eclipses
                 -- and to avoid tainted Icon textures from inactive CDM children.
@@ -4402,11 +4401,9 @@ local function UpdateAllCDMBars(dt)
                                 if baseSid and baseSid > 0 and isBuffViewer then
                                     local prevChild = ECache.GetTickBlizzardAllChild(resolvedSid)
                                     if prevChild and baseSid == resolvedSid
-                                            and prevChild.viewerFrame == ch.viewerFrame then
-                                        if not _tickBlizzMultiChildCache[baseSid] then
-                                            _tickBlizzMultiChildCache[baseSid] = { prevChild }
-                                        end
-                                        _tickBlizzMultiChildCache[baseSid][#_tickBlizzMultiChildCache[baseSid] + 1] = ch
+                                                 and prevChild.viewerFrame == ch.viewerFrame then
+                                        ECache.CacheTickBlizzardMultiChild(baseSid, { prevChild })
+                                        ECache.AppendTickBlizzardMultiChild(baseSid, ch)
                                     end
                                 end
                                 ECache.CacheTickBlizzardAllChild(resolvedSid, ch)
