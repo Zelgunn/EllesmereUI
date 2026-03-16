@@ -1080,6 +1080,7 @@ function ns.BuildTrackedBuffBars()
             bar._tbbReady = true
             bar._isPassive = nil
             bar._resolvedAuraID = nil
+            bar._blizzChild = nil
             bar._customStart = nil
             bar._activeDuration = nil
             bar:Hide()
@@ -1121,10 +1122,67 @@ function ns.BuildTrackedBuffBars()
     ns.RefreshBuffBarGating()
 end
 
+-------------------------------------------------------------------------------
+--  TBB Applications hook: mirrors Blizzard CDM's Applications Show/Hide onto
+--  our _stacksText, same pattern as the main CDM bars' HookBlizzChildApplications.
+--  Blizzard only shows the Applications frame when stacks > 1, so we trust
+--  its Show/Hide as the gate -- no value comparison needed.
+-------------------------------------------------------------------------------
+local _tbbStackHookedChildren = {}
+
+local function HookTBBBlizzChildApplications(blizzChild)
+    if not blizzChild or _tbbStackHookedChildren[blizzChild] then return end
+    local appsFrame = blizzChild.Applications
+    if not appsFrame then return end
+    local appsText = appsFrame.Applications
+    if not appsText then return end
+
+    _tbbStackHookedChildren[blizzChild] = true
+
+    hooksecurefunc(appsFrame, "Show", function()
+        local tbbBar = blizzChild._tbbBar
+        if not tbbBar or not tbbBar._stacksText then return end
+        if tbbBar._blizzChild ~= blizzChild then return end
+        if tbbBar._stacksHidden then return end
+        local ok, txt = pcall(appsText.GetText, appsText)
+        if ok and txt then
+            tbbBar._stacksText:SetText(txt)
+            tbbBar._stacksText:Show()
+            local nOk, n = pcall(tonumber, txt)
+            tbbBar._stackCount = (nOk and n) or 0
+        end
+    end)
+
+    hooksecurefunc(appsFrame, "Hide", function()
+        local tbbBar = blizzChild._tbbBar
+        if tbbBar and tbbBar._stacksText and tbbBar._blizzChild == blizzChild then
+            tbbBar._stacksText:Hide()
+            tbbBar._stackCount = 0
+        end
+    end)
+end
+
+-- Secret-safe helper: returns true if apps should be displayed as stacks.
+-- Non-secret: checks apps > 1. Secret: attempts comparison via pcall;
+-- if it errors (truly opaque), returns true so FontString renders natively.
+local function ShouldShowStacks(apps)
+    if not apps then return false end
+    local isSecret = issecretvalue and issecretvalue(apps)
+    if not isSecret then return apps > 1 end
+    local ok, gt1 = pcall(function() return apps > 1 end)
+    if not ok then return true end
+    return gt1
+end
+
 -- Helper: update stacks text and count for a TBB bar.
 -- Display: passes Blizzard child Applications text directly (handles secrets).
 -- Count: stores applications value on bar._stackCount for the threshold overlay.
 -- Since the overlay uses SetValue (secret-safe), _stackCount can be secret.
+--
+-- Spells from Blizzard's "Tracked Buffs" (buff viewers, vi=3,4) have a native
+-- Applications sub-frame that Blizzard manages -- we just read it directly.
+-- Spells from "Tracked Bars" (CD/utility viewers, vi=1,2) lack that native
+-- handling, so we hook Applications Show/Hide and fall back to aura API.
 local function UpdateTBBStacks(bar, cfg)
     if not bar._stacksText then bar._stackCount = 0; return end
     if bar._stacksHidden then bar._stacksText:Hide(); bar._stackCount = 0; return end
@@ -1136,7 +1194,16 @@ local function UpdateTBBStacks(bar, cfg)
     -- Multi-ID (popular) bars: check each spellID
     if cfg.spellIDs then
         for _, sid in ipairs(cfg.spellIDs) do
+            -- Prefer buff viewer child (native Applications); fall back to bar viewer
+            local isBuffViewer = buffChildCache[sid] ~= nil
             local blzChild = buffChildCache[sid] or allChildCache[sid]
+
+            -- Only hook bar-viewer children (buff viewers handle stacks natively)
+            if blzChild and not isBuffViewer then
+                blzChild._tbbBar = bar
+                bar._blizzChild = blzChild
+                HookTBBBlizzChildApplications(blzChild)
+            end
             if blzChild and blzChild.Applications and blzChild.Applications:IsShown() then
                 local appsText = blzChild.Applications.Applications
                 if appsText then
@@ -1144,20 +1211,22 @@ local function UpdateTBBStacks(bar, cfg)
                     if ok and txt then
                         bar._stacksText:SetText(txt)
                         bar._stacksText:Show()
-                        bar._stackCount = tonumber(txt) or 0
+                        local nOk, n = pcall(tonumber, txt)
+                        bar._stackCount = (nOk and n) or 0
                         return
                     end
                 end
             end
-            if auraCache then
+            -- Aura fallback only for bar-viewer spells (no native Applications)
+            if not isBuffViewer and auraCache then
                 local aura = auraCache[sid]
                 if aura == nil then
                     local ok, res = pcall(C_UnitAuras.GetPlayerAuraBySpellID, sid)
                     aura = (ok and res) or false
                     auraCache[sid] = aura
                 end
-                if aura and aura.applications and not (issecretvalue and issecretvalue(aura.applications)) and aura.applications > 1 then
-                    bar._stacksText:SetText(tostring(aura.applications))
+                if aura and aura.applications and ShouldShowStacks(aura.applications) then
+                    bar._stacksText:SetText(aura.applications)
                     bar._stacksText:Show()
                     bar._stackCount = aura.applications
                     return
@@ -1177,10 +1246,19 @@ local function UpdateTBBStacks(bar, cfg)
         return
     end
 
+    -- Check if the spell lives in a buff viewer (native Applications handling)
+    local isBuffViewer = buffChildCache[resolvedID] ~= nil or buffChildCache[cfg.spellID] ~= nil
     local blzChild = buffChildCache[resolvedID] or allChildCache[resolvedID]
                   or buffChildCache[cfg.spellID] or allChildCache[cfg.spellID]
 
-    -- Path 1: Blizzard child Applications frame (works with secrets in combat)
+    -- Only hook bar-viewer children (buff viewers handle stacks natively)
+    if blzChild and not isBuffViewer then
+        blzChild._tbbBar = bar
+        bar._blizzChild = blzChild
+        HookTBBBlizzChildApplications(blzChild)
+    end
+
+    -- Path 1: Blizzard child Applications frame (works for both viewer types)
     if blzChild and blzChild.Applications and blzChild.Applications:IsShown() then
         local appsText = blzChild.Applications.Applications
         if appsText then
@@ -1188,7 +1266,6 @@ local function UpdateTBBStacks(bar, cfg)
             if ok and txt then
                 bar._stacksText:SetText(txt)
                 bar._stacksText:Show()
-                -- For threshold: get numeric count from aura data
                 local apps
                 if auraCache then
                     local aura = auraCache[resolvedID]
@@ -1203,13 +1280,25 @@ local function UpdateTBBStacks(bar, cfg)
                     local aOk, ad = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, blzChild.auraDataUnit or "player", blzChild.auraInstanceID)
                     if aOk and ad and ad.applications then apps = ad.applications end
                 end
-                bar._stackCount = apps or (tonumber(txt) or 0)
+                bar._stackCount = apps or 0
+                if not apps then
+                    local nOk, n = pcall(tonumber, txt)
+                    if nOk and n then bar._stackCount = n end
+                end
                 return
             end
         end
     end
 
-    -- Path 2: aura cache lookup
+    -- Buff-viewer spells: if Applications frame isn't shown, no stacks to display.
+    -- Skip aura fallbacks that can produce "0" for non-stacking buffs.
+    if isBuffViewer then
+        bar._stacksText:Hide()
+        bar._stackCount = 0
+        return
+    end
+
+    -- Path 2: aura cache lookup (bar-viewer children without Applications frame)
     if auraCache then
         local aura = auraCache[resolvedID]
         if aura == nil then
@@ -1219,9 +1308,8 @@ local function UpdateTBBStacks(bar, cfg)
         end
         if aura and aura.applications then
             bar._stackCount = aura.applications
-            local isSecret = issecretvalue and issecretvalue(aura.applications)
-            if not isSecret and aura.applications > 1 then
-                bar._stacksText:SetText(tostring(aura.applications))
+            if ShouldShowStacks(aura.applications) then
+                bar._stacksText:SetText(aura.applications)
                 bar._stacksText:Show()
             else
                 bar._stacksText:Hide()
@@ -1230,14 +1318,13 @@ local function UpdateTBBStacks(bar, cfg)
         end
     end
 
-    -- Path 3: Blizzard child auraInstanceID fallback
+    -- Path 3: Blizzard child auraInstanceID fallback (bar-viewer only)
     if blzChild and blzChild.auraInstanceID then
         local ok, ad = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, blzChild.auraDataUnit or "player", blzChild.auraInstanceID)
         if ok and ad and ad.applications then
             bar._stackCount = ad.applications
-            local isSecret = issecretvalue and issecretvalue(ad.applications)
-            if not isSecret and ad.applications > 1 then
-                bar._stacksText:SetText(tostring(ad.applications))
+            if ShouldShowStacks(ad.applications) then
+                bar._stacksText:SetText(ad.applications)
                 bar._stacksText:Show()
             else
                 bar._stacksText:Hide()
@@ -1474,6 +1561,43 @@ function ns.UpdateTrackedBuffBarTimers()
                         end
                     end
 
+                    -- Totem/summon fallback: use the DurationObject or raw
+                    -- start+dur that the main CDM already captured via its
+                    -- SetCooldown / SetCooldownFromDurationObject hooks.
+                    if not durObj and blzChild then
+                        local cachedDurObj = ns._ecmeDurObjCache[blzChild]
+                        if cachedDurObj then
+                            durObj = cachedDurObj
+                        end
+                    end
+
+                    -- Raw start+dur fallback (totems): drive the bar manually
+                    -- from the plain numbers the main CDM hooks captured.
+                    local rawRemaining, rawDur
+                    if not durObj and blzChild then
+                        local rs = ns._ecmeRawStartCache[blzChild]
+                        local rd = ns._ecmeRawDurCache[blzChild]
+                        if rs and rd and type(rs) == "number" and type(rd) == "number" and rd > 0 then
+                            rawRemaining = math.max(0, (rs + rd) - now)
+                            rawDur = rd
+                        end
+                    end
+
+                    -- Placed unit fixed duration fallback (e.g. Consecration)
+                    if not durObj and not rawRemaining then
+                        local fixedDur = ns.PLACED_UNIT_DURATIONS[resolvedID]
+                        if fixedDur then
+                            local startCache = ns._placedUnitStartCache
+                            if startCache then
+                                if not startCache[resolvedID] then
+                                    startCache[resolvedID] = now
+                                end
+                                rawRemaining = math.max(0, (startCache[resolvedID] + fixedDur) - now)
+                                rawDur = fixedDur
+                            end
+                        end
+                    end
+
                     -- Validate the duration object actually has remaining time.
                     -- Permanent/passive buffs may return a durObj that reads as
                     -- zero, which would render an empty bar.
@@ -1499,8 +1623,10 @@ function ns.UpdateTrackedBuffBarTimers()
                             end
                         end
                     else
-                        -- No durObj at all means passive
-                        bar._isPassive = true
+                        -- No durObj at all: passive unless raw fallback available
+                        if not (rawRemaining and rawRemaining > 0) then
+                            bar._isPassive = true
+                        end
                     end
 
                     if useDurObj then
@@ -1533,6 +1659,20 @@ function ns.UpdateTrackedBuffBarTimers()
                                 bar._timerText:Hide()
                             end
                         end
+                    elseif rawRemaining and rawRemaining > 0 then
+                        -- Raw start+dur path (totems/summons): manual bar fill
+                        sb:SetMinMaxValues(0, 1)
+                        sb:SetValue(rawRemaining / rawDur)
+                        if cfg.showSpark and bar._spark then bar._spark:Show() end
+                        if cfg.showTimer and bar._timerText then
+                            local t
+                            if rawRemaining >= 3600 then t = format("%dh", floor(rawRemaining / 3600))
+                            elseif rawRemaining >= 60 then t = format("%dm", floor(rawRemaining / 60))
+                            elseif rawRemaining >= 10 then t = format("%d", floor(rawRemaining))
+                            else t = format("%.1f", rawRemaining) end
+                            bar._timerText:SetText(t)
+                            bar._timerText:Show()
+                        end
                     else
                         -- Permanent/passive buff or no valid duration
                         local maxS = cfg.stackThresholdMax
@@ -1562,6 +1702,7 @@ function ns.UpdateTrackedBuffBarTimers()
                 if bar:IsShown() then bar:Hide() end
                 if bar._stacksText then bar._stacksText:Hide() end
                 bar._resolvedAuraID = nil
+                bar._blizzChild = nil
                 bar._customStart = nil
                 bar._activeDuration = nil
                 bar._isPassive = nil

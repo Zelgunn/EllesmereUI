@@ -737,17 +737,16 @@ end
 
 -- Stock bar frames to disable. Each entry carries flags for how to handle it:
 --   retainEvents  = true  -> do NOT unregister events (needed for override state)
---   wipeBtns    = true  -> wipe the actionButtons table after hiding
 local STOCK_BAR_DISPOSAL = {
     { name = "MainActionBar",       retainEvents = true },
     { name = "MainMenuBar" },
-    { name = "MultiBarBottomLeft",  wipeBtns = true },
-    { name = "MultiBarBottomRight", wipeBtns = true },
-    { name = "MultiBarRight",       wipeBtns = true },
-    { name = "MultiBarLeft",        wipeBtns = true },
-    { name = "MultiBar5",           wipeBtns = true },
-    { name = "MultiBar6",           wipeBtns = true },
-    { name = "MultiBar7",           wipeBtns = true },
+    { name = "MultiBarBottomLeft" },
+    { name = "MultiBarBottomRight" },
+    { name = "MultiBarRight" },
+    { name = "MultiBarLeft" },
+    { name = "MultiBar5" },
+    { name = "MultiBar6" },
+    { name = "MultiBar7" },
     { name = "StanceBar" },
     { name = "PetActionBar" },
 }
@@ -1035,17 +1034,15 @@ local function HideBlizzardBars()
             -- We mark them statehidden and kill their events so stock code
             -- never tries to update them. SetupBar re-registers the events
             -- we actually need when we claim each button.
+            -- The actionButtons table is kept intact so Blizzard's keybind
+            -- handlers (MultiActionButtonUp/Down) can still resolve button
+            -- references without erroring.
             local btns = bar.actionButtons
             if btns and type(btns) == "table" then
                 for _, child in pairs(btns) do
                     child:UnregisterAllEvents()
                     child:SetAttributeNoHandler("statehidden", true)
                     child:Hide()
-                end
-                -- Clear the table on multi-bars so stock UpdateShownButtons
-                -- has nothing left to iterate over.
-                if entry.wipeBtns then
-                    table.wipe(btns)
                 end
             end
         end

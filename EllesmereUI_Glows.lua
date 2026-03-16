@@ -101,6 +101,11 @@ local function _AntsOnUpdate(self, elapsed)
         -- "secret number" tainted dimensions from GetSize).
         w = tonumber(tostring(w)) or 0
         h = tonumber(tostring(h)) or 0
+        -- Fallback to the sz passed at start time (SetAllPoints wrappers
+        -- may return 0 before layout resolves)
+        if w * h == 0 and d.fallbackSz and d.fallbackSz > 0 then
+            w = d.fallbackSz; h = d.fallbackSz
+        end
         if w * h == 0 then return end
         local PP = EllesmereUI.PP
         local es = self:GetEffectiveScale()
@@ -142,7 +147,7 @@ local function StartProceduralAnts(wrapper, N, th, period, lineLen, cr, cg, cb, 
     end
     local d = wrapper._euiAntsData
     d.N = N; d.th = th; d.period = period; d.lineLen = lineLen
-    d.w = 0; d.h = 0; d.onePixel = nil  -- reset so OnUpdate re-snaps to physical pixels
+    d.w = 0; d.h = 0; d.onePixel = nil; d.fallbackSz = sz or 0  -- reset so OnUpdate re-snaps to physical pixels
     local totalTex = N * 2
     for i = 1, totalTex do
         if not d.lines[i] then
@@ -232,6 +237,11 @@ local function _AutoCastOnUpdate(self, elapsed)
         -- "secret number" tainted dimensions from GetSize).
         w = tonumber(tostring(w)) or 0
         h = tonumber(tostring(h)) or 0
+        -- Fallback to the sz passed at start time (SetAllPoints wrappers
+        -- may return 0 before layout resolves)
+        if w * h == 0 and d.fallbackSz and d.fallbackSz > 0 then
+            w = d.fallbackSz; h = d.fallbackSz
+        end
         if w * h == 0 then return end
         d.w = w; d.h = h
         local perim = 2 * (w + h)
@@ -296,7 +306,7 @@ local function StartAutoCastShine(wrapper, sz, cr, cg, cb, scale)
         d.dots[idx]:Show()
     end
     for idx = totalDots + 1, #d.dots do d.dots[idx]:Hide() end
-    d.w = 0; d.h = 0
+    d.w = 0; d.h = 0; d.fallbackSz = sz or 0
     wrapper:SetScript("OnUpdate", _AutoCastOnUpdate)
 end
 
