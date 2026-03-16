@@ -125,12 +125,6 @@ local function _CheckIsGCD()
     return cdData and cdData.isOnGCD
 end
 
--- Multi-charge spell cache: populated out of combat when values are not secret.
--- Falls back to SavedVariables for combat /reload scenarios.
--- Maps spellID true for spells with maxCharges > 1
-local _multiChargeSpells = ECache._multiChargeSpells
-local _maxChargeCount    = ECache._maxChargeCount  -- [spellID] = maxCharges, populated alongside _multiChargeSpells
-
 -- Spells that use the charge system but start at 0 and build stacks in combat.
 -- These report maxCharges > 1 but currentCharges = 0 at rest, so we hide the
 -- charge text when it would show "0".
@@ -140,60 +134,6 @@ local _zeroStartChargeSpells = {
     [55090]  = true,  -- Scourge Strike
 }
 
-local function CacheMultiChargeSpell(spellID, blizzChild)
-    if not spellID or not C_Spell.GetSpellCharges then return end
-    if _multiChargeSpells[spellID] ~= nil then return end
-    local charges = C_Spell.GetSpellCharges(spellID)
-    if not charges or charges.maxCharges == nil then return end
-
-    if not issecretvalue(charges.maxCharges) then
-        -- Out of combat (or non-secret): cache live and persist to DB
-        local result = charges.maxCharges > 1
-        _multiChargeSpells[spellID] = result or false
-        if result then
-            _maxChargeCount[spellID] = charges.maxCharges
-            -- Tag the CDM child so variant swaps in combat can inherit
-            -- charge status without needing API calls (SECRET-proof).
-            if blizzChild then
-                blizzChild._ecmeIsChargeSpell = true
-                blizzChild._ecmeMaxCharges = charges.maxCharges
-            end
-            -- Only persist confirmed charge spells — never persist false so
-            -- stale DB entries don't block re-detection on login or talent swap.
-            local db = ECME.db
-            if db and db.sv then
-                if not db.sv.multiChargeSpells then
-                    db.sv.multiChargeSpells = {}
-                end
-                db.sv.multiChargeSpells[spellID] = true
-            end
-        end
-    else
-        -- Secret (in combat): fall back to persisted DB value if available.
-        -- Do NOT cache false here -- after a talent swap the DB may be empty,
-        -- and caching false permanently blocks charge detection for the new
-        -- spell until the next full cache wipe.
-        local db = ECME.db
-        if db and db.sv and db.sv.multiChargeSpells and db.sv.multiChargeSpells[spellID] then
-            _multiChargeSpells[spellID] = true
-        end
-        -- CDM child propagation: for multi-child spells like Eclipse, the
-        -- same CDM child swaps between variant spell IDs (Lunar/Solar).
-        -- If we tagged the child OOC when the previous variant was active,
-        -- inherit that charge status for the new variant.
-        if not _multiChargeSpells[spellID] and blizzChild
-                and blizzChild._ecmeIsChargeSpell then
-            _multiChargeSpells[spellID] = true
-            _maxChargeCount[spellID] = blizzChild._ecmeMaxCharges
-        end
-        -- If no DB entry and no child tag: leave nil so we retry next tick
-    end
-end
--- Expose charge cache to options file for preview rendering
-ns._multiChargeSpells    = _multiChargeSpells
-ns._maxChargeCount       = _maxChargeCount
-ns.CacheMultiChargeSpell = CacheMultiChargeSpell
-
 -- Cast-count spell cache: identifies spells that use GetSpellCastCount for
 -- stack tracking (e.g. Sheilun's Gift, Mana Tea). These spells start at 0
 -- stacks and build them in combat, so we cache the last known non-zero count
@@ -201,40 +141,7 @@ ns.CacheMultiChargeSpell = CacheMultiChargeSpell
 -- Maps spellID -> last known count (number) or false (confirmed not a cast-count spell)
 local _castCountSpells = {}
 
--- Pre-seed zero-start charge spells so the cast-count display path
--- always recognizes them without needing to see count > 0 OOC first.
-for sid in pairs(_zeroStartChargeSpells) do
-    _castCountSpells[sid] = true
-end
-
-local function CacheCastCountSpell(spellID)
-    if not spellID or not C_Spell.GetSpellCastCount then return end
-    -- Already confirmed not a cast-count spell ΓÇö skip
-    if _castCountSpells[spellID] == false then return end
-    local ok, count = pcall(C_Spell.GetSpellCastCount, spellID)
-    if not ok or count == nil then return end
-
-    if not (issecretvalue and issecretvalue(count)) then
-        -- OOC: if count > 0, remember this spell uses cast counts
-        if count > 0 then
-            _castCountSpells[spellID] = count
-            local db = ECME.db
-            if db and db.sv then
-                if not db.sv.castCountSpells then
-                    db.sv.castCountSpells = {}
-                end
-                db.sv.castCountSpells[spellID] = true
-            end
-        end
-        -- Don't cache false here ΓÇö spell may just not have stacks yet
-    elseif _castCountSpells[spellID] == nil then
-        -- Secret (combat): check DB for whether we've ever seen this spell with stacks
-        local db = ECME.db
-        if db and db.sv and db.sv.castCountSpells and db.sv.castCountSpells[spellID] then
-            _castCountSpells[spellID] = true
-        end
-    end
-end
+ECache.InitCastCountSpellsCache()
 
 -------------------------------------------------------------------------------
 --  Per-tick caches: wiped at the start of each UpdateAllCDMBars tick.
@@ -363,9 +270,9 @@ local function ApplySpellCooldown(icon, spellID, desatOnCD, showCharges, swAlpha
     -- Ensure charge cache is populated (cheap: skips if already cached)
     -- Pass blizzChild so in-combat variant swaps can inherit charge status
     -- from the CDM child tag set OOC (e.g. Eclipse Lunar → Solar).
-    CacheMultiChargeSpell(spellID, blizzChild)
+    ECache.CacheMultiChargeSpell(spellID, blizzChild)
 
-    local isChargeSpell = _multiChargeSpells[spellID] == true
+    local isChargeSpell = ECache.IsCachedChargeSpell(spellID)
 
     -- Get duration objects directly (C functions handle secret values natively)
     local ccd = isChargeSpell and C_Spell.GetSpellChargeDuration and C_Spell.GetSpellChargeDuration(spellID)
@@ -543,7 +450,7 @@ local function ApplySpellCooldown(icon, spellID, desatOnCD, showCharges, swAlpha
                 -- the cast count system rather than auras.
                 -- Only attempt for confirmed cast-count spells (cached OOC).
                 -- In combat, returns secret values ΓÇö pass directly to SetText.
-                CacheCastCountSpell(spellID)
+                ECache.CacheCastCountSpell(spellID)
                 if _castCountSpells[spellID] then
                     local ok, count = pcall(C_Spell.GetSpellCastCount, spellID)
                     if ok and count then
@@ -716,7 +623,7 @@ local function ApplyStackCount(icon, resolvedSid, auraInstanceID, auraUnit, show
     -- In combat, GetSpellCastCount returns secret values ΓÇö pass them directly
     -- to SetText (FontStrings render secrets natively), same as charge text.
     if resolvedSid and resolvedSid > 0 and C_Spell.GetSpellCastCount then
-        CacheCastCountSpell(resolvedSid)
+        ECache.CacheCastCountSpell(resolvedSid)
         if _castCountSpells[resolvedSid] then
             local ok, count = pcall(C_Spell.GetSpellCastCount, resolvedSid)
             if ok and count then
@@ -3287,54 +3194,6 @@ local function SecondLevelSpellIDOverride(baseSpellID, resolvedID)
 end
 
 -------------------------------------------------------------------------------
---- Propagate charge cache from base to override so talent-swapped spells
---- show charges correctly even before the override ID has been seen OOC.
---- Always attempt direct detection on the final resolvedID first so it may
---- have charges even if the base spell doesn't (three-level chain).
---- @param spellID number       The base spell ID before resolution
---- @param resolvedID number    The spell ID after resolution
--------------------------------------------------------------------------------
-local function PropagateResolvedSpellChargeCache(spellID, resolvedID)
-    local propChild = _tickBlizzAllChildCache[resolvedID] or _tickBlizzAllChildCache[spellID]
-    -- Always try direct detection on the resolved ID (cheapest path)
-    CacheMultiChargeSpell(resolvedID, propChild)
-    -- If resolved ID still unknown (secret/combat), check if we have a
-    -- live Blizzard child for it and mark it as a charge spell so
-    -- ApplySpellCooldown uses the charge display path.
-    if _multiChargeSpells[resolvedID] == nil and _tickBlizzChildCache[resolvedID] then
-        -- We have a live Blizzard child ΓÇö treat as charge spell so the
-        -- charge display path runs. ApplySpellCooldown will call
-        -- GetSpellCharges which may still be secret, but the shadow
-        -- cooldown frames will correctly reflect the charge state.
-        _multiChargeSpells[resolvedID] = true
-    end
-    -- If still unknown, try propagating from intermediate (only if true)
-    if _multiChargeSpells[resolvedID] == nil then
-        local intermediate = C_SpellBook and C_SpellBook.FindSpellOverrideByID
-            and C_SpellBook.FindSpellOverrideByID(spellID)
-        if intermediate and intermediate ~= 0 and intermediate ~= resolvedID then
-            CacheMultiChargeSpell(intermediate, propChild)
-            if _multiChargeSpells[intermediate] == true then
-                _multiChargeSpells[resolvedID] = true
-                if _maxChargeCount[intermediate] then
-                    _maxChargeCount[resolvedID] = _maxChargeCount[intermediate]
-                end
-            end
-        end
-    end
-    -- If still unknown, propagate from base ΓÇö but only if base is true
-    if _multiChargeSpells[resolvedID] == nil then
-        CacheMultiChargeSpell(spellID, propChild)
-        if _multiChargeSpells[spellID] == true then
-            _multiChargeSpells[resolvedID] = true
-            if _maxChargeCount[spellID] then
-                _maxChargeCount[resolvedID] = _maxChargeCount[spellID]
-            end
-        end
-    end
-end
-
--------------------------------------------------------------------------------
 --- Cache spell icon texture to avoid C_Spell.GetSpellInfo per tick
 --- 
 --- Fallback: C_Spell.GetSpellTexture is more reliable for bar-type
@@ -3531,7 +3390,7 @@ local function UpdateCustomBarIcons(barKey)
                     end
 
                     if resolvedID ~= spellID then
-                        PropagateResolvedSpellChargeCache(spellID, resolvedID)
+                        ECache.PropagateResolvedSpellChargeCache(spellID, resolvedID)
                     end
 
                     local texID = CacheSpellIconTexture(spellID, resolvedID)
@@ -3828,7 +3687,7 @@ UpdateCDMBarIcons = function(barKey)
             local skipCDDisplay = false
 
             if isAura and activeAnim ~= "hideActive" then
-                local isChargeSid = resolvedSid and _multiChargeSpells[resolvedSid] == true
+                local isChargeSid = resolvedSid and ECache.IsCachedChargeSpell(resolvedSid)
                 -- Buff bars always show buff duration; other bars skip aura duration for charge spells
                 local isBuffBar = (barKey == "buffs")
                 local auraID = blizzIcon.auraInstanceID
@@ -4331,7 +4190,7 @@ local function UpdateTrackedBarIcons(barKey)
                 end
 
                 if resolvedID ~= spellID then
-                    PropagateResolvedSpellChargeCache(spellID, resolvedID)
+                    ECache.PropagateResolvedSpellChargeCache(spellID, resolvedID)
                 end
 
                 local texID = CacheSpellIconTexture(spellID, resolvedID)
@@ -6929,15 +6788,14 @@ local function ScheduleTalentRebuild()
         if (GetTime() - _lastSpecSwitchTime) < 3 then return end
         -- Wipe per-spell caches that may reference stale override IDs or
         -- stale charge data from spells that changed with the talent swap.
-        -- Also wipe the persisted DB entries so CacheMultiChargeSpell
+        -- Also wipe the persisted DB entries so ECache.CacheMultiChargeSpell
         -- re-detects from live API rather than reading a stale false entry.
         -- Skip during combat: actual talent changes are combat-locked, so these
         -- events only fire mid-combat from hero talent procs (e.g. Celestial
         -- Infusion). Wiping here would clear charge data for all spells with no
         -- way to re-detect it until the next out-of-combat cache rebuild.
         if not InCombatLockdown() then
-            wipe(_multiChargeSpells)
-            wipe(_maxChargeCount)
+            ECache.WipeMultiChargeSpellCache()
             local db = ECME.db
             if db and db.sv and db.sv.multiChargeSpells then
                 wipe(db.sv.multiChargeSpells)

@@ -5,12 +5,12 @@ local ECache = ns.ECdmCache
 
 -- region Spell override
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --- If it exists, returns the spell override ID and nil otherwise
 --- now has Divine Toll selected, display and track Divine Toll instead.
 --- @param spellID number The original spell ID
 --- @return number|nil overrideID The overrideID if overriden, otherwise nil
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function GetSpellOverrideByID(spellID)
     if C_SpellBook and C_SpellBook.FindSpellOverrideByID then
         local overrideID = C_SpellBook.FindSpellOverrideByID(spellID)
@@ -22,12 +22,12 @@ local function GetSpellOverrideByID(spellID)
 end
 ns.ECdmUtils.GetSpellOverrideByID = GetSpellOverrideByID
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --- Resolve talent override: if the user added Holy Prism but the player
 --- now has Divine Toll selected, display and track Divine Toll instead.
 --- @param spellID number The original spell ID
 --- @return number resolvedID The overrideID if overriden, otherwise spellID
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function ResolveSpellOverrideID(spellID)
     local overrideID = GetSpellOverrideByID(spellID)
     return overrideID or spellID
@@ -39,14 +39,14 @@ ns.ECdmUtils.ResolveSpellOverrideID = ResolveSpellOverrideID
 
 -- region Apply item (bag item or trinket) cooldown (to icon)
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --- General item cooldown helper
 --- @param icon         table Our ECME icon frame (has _cooldown, _tex and _lastDesat)
 --- @param cdStart      number The start time of the cooldown period
 --- @param cdDuration   number The duration of the cooldown period
 --- @param enable       number 1 if the item has a cooldown, 0 otherwise
 --- @param desatOnCD    number 1 if the icon should be desaturated when on CD, 0 otherwise
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function ApplyItemCooldown(icon, cdStart, cdDuration, enable, desatOnCD)
     if cdStart and cdDuration and cdDuration > 1.5 and enable == 1 then
         icon._cooldown:SetCooldown(cdStart, cdDuration)
@@ -67,26 +67,26 @@ local function ApplyItemCooldown(icon, cdStart, cdDuration, enable, desatOnCD)
 end
 ns.ECdmUtils.ApplyItemCooldown = ApplyItemCooldown
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 ---  Trinket cooldown helper (inventory slot based)
 ---  Handles cooldown display and desaturation for trinket slots.
 --- @param icon         table Our ECME icon frame
 --- @param slot         number The inventory slot ID
 --- @param desatOnCD    number 1 if the icon should be desaturated when on CD, 0 otherwise
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function ApplyTrinketCooldown(icon, slot, desatOnCD)
     local cdStart, cdDuration, enable = GetInventoryItemCooldown("player", slot)
     ApplyItemCooldown(icon, cdStart, cdDuration, enable, desatOnCD)
 end
 ns.ECdmUtils.ApplyTrinketCooldown = ApplyTrinketCooldown
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 ---  Bag item cooldown helper
 ---  Handles cooldown display and desaturation for bag items.
 --- @param icon         table Our ECME icon frame
 --- @param itemID       number The ID of the item
 --- @param desatOnCD    number 1 if the icon should be desaturated when on CD, 0 otherwise
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function ApplyBagItemCooldown(icon, itemID, desatOnCD)
     local cdStart, cdDuration, enable = C_Container.GetItemCooldown(itemID)
     ApplyItemCooldown(icon, cdStart, cdDuration, enable, desatOnCD)
@@ -97,14 +97,14 @@ ns.ECdmUtils.ApplyBagItemCooldown = ApplyBagItemCooldown
 
 -- region Update item (bag item or trinket) icon
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 ----
 --- @param icon         table Our ECME icon frame
 --- @param slot         number The inventory slot ID
 --- @param barType      string The bar type (eg. "misc")
 --- @param desatOnCD    number 1 if the icon should be desaturated when on CD, 0 otherwise
 --- @return boolean visibility true if the icon is visible, false otherwise
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function UpdateTrinketIcon(icon, slot, barType, desatOnCD)
     local spellID = -slot
     local itemID = GetInventoryItemID("player", slot)
@@ -134,7 +134,7 @@ local function UpdateTrinketIcon(icon, slot, barType, desatOnCD)
 end
 ns.ECdmUtils.UpdateTrinketIcon = UpdateTrinketIcon
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --- Updates the visibility, texture, saturation, cooldown and item count of our icon
 ---  (for bag items).
 --- @param icon         table Our ECME icon frame (has _cooldown, _tex and _lastDesat)
@@ -144,7 +144,7 @@ ns.ECdmUtils.UpdateTrinketIcon = UpdateTrinketIcon
 --- @param showCharges  boolean true to show item count as charges
 --- @param desatOnCD    number 1 if the icon should be desaturated when on CD, 0 otherwise
 --- @return boolean visibility true if the icon is visible, false otherwise
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function UpdateBagItemIcon(icon, itemID, itemCount, inLockout, showCharges, desatOnCD)
     --- Hide if player has none and not in combat lockout
     if itemCount <= 0 and not inLockout then
@@ -190,7 +190,7 @@ ns.ECdmUtils.UpdateBagItemIcon = UpdateBagItemIcon
 
 -- region Buff bar
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --- Gets the texture of the buff widget (handles BuffIcon and BuffBar)
 --- - BuffIcon children have Icon as a Texture widget directly.
 --- - BuffBar children wrap it: Icon is a Frame, Icon.Icon is the Texture.
@@ -198,7 +198,7 @@ ns.ECdmUtils.UpdateBagItemIcon = UpdateBagItemIcon
 --- @param blizzardBuffChild table                  The Blizzard buff child
 --- @param overrideTexture number|nil               Eventual hardcoded icon override
 --- @return boolean blizzardBuffChildTextureSet     true if the texture was set, false otherwise
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function CopyBuffWidgetTexture(icon, blizzardBuffChild, overrideTexture)
     if blizzardBuffChild and not overrideTexture then
         local iconWidget = blizzardBuffChild.Icon
@@ -222,7 +222,7 @@ ns.ECdmUtils.CopyBuffWidgetTexture = CopyBuffWidgetTexture
 
 -- region "Procables"
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --- Overrides/Sets the texture of the icon to be effectiveTexture if the texture
 ---   of the icon is not already set to the same, and if either an override texture
 ---   was defined or a proc is active or no texture was already set.
@@ -231,7 +231,7 @@ ns.ECdmUtils.CopyBuffWidgetTexture = CopyBuffWidgetTexture
 --- @param blizzardBuffChildTextureSet boolean  true if the texture has already been set
 --- @param overrideTexture number|nil           Eventual hardcoded icon override
 --- @param procActive boolean                   true if a proc is currently active
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function OverrideTextureForProcable(icon, effectiveTexture, blizzardBuffChildTextureSet, overrideTexture, procActive)
     if (not blizzardBuffChildTextureSet or overrideTexture or procActive)
         and effectiveTexture ~= icon._lastTex then
@@ -243,14 +243,14 @@ ns.ECdmUtils.OverrideTextureForProcable = OverrideTextureForProcable
 
 -- endregion
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --- Sets the icon's keybind text to the resolved/cached keybind.
 ---  Adds the keybind to the cache if not already present.
 --- @param icon table           Our ECME icon frame
 --- @param spellID number       The original spell ID
 --- @param resolvedID number    The resolved spell ID
 --- @param showKeybind boolean  true to show keybind, false otherwise
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function SetIconKeybind(icon, spellID, resolvedID, showKeybind)
     -- Cooldown, desaturation, and charge text (consolidated)
     icon._spellID = resolvedID
@@ -288,11 +288,11 @@ local _cdmViewerNames = {
 }
 ns.ECdmUtils._cdmViewerNames = _cdmViewerNames
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --- Scan all four CDM viewers for a child whose .cooldownID matches the given cooldownID.
 --- @param cooldownID number|nil    The ID of the cooldown
 --- @return Frame|nil childFrame    The child frame, or nil if not found.
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function FindCDMChildByCooldownID(cooldownID)
     if not cooldownID then return nil end
     -- Fast path: scan the per-tick all-child cache (already built by the
@@ -324,14 +324,14 @@ local function FindCDMChildByCooldownID(cooldownID)
 end
 ns.ECdmUtils.FindCDMChildByCooldownID = FindCDMChildByCooldownID
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --- Check if a Blizzard CDM buff-viewer child represents an actively running effect.
 --- Uses only our own tracking tables and safe APIs — never reads tainted fields.
 --- For totem-type spells: uses GetCachedTotemInfo(preferredTotemUpdateSlot).
 --- For summon/aura-type spells: uses our hook-captured cooldown state tables.
 --- @param child table      The child to check
 --- @return boolean true    if the buff child cooldown is actively running, false otherwise
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function IsBuffChildCooldownActive(child)
     if not child then return false end
     -- Totem check: preferredTotemUpdateSlot is set by Blizzard on totem CDM children.
@@ -354,7 +354,7 @@ end
 ns.ECdmUtils.IsBuffChildCooldownActive = IsBuffChildCooldownActive
 
 
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --- Detect active aura state before applying cooldown.
 --- If the spell has an active player aura, show its duration on the
 --- cooldown frame (same as the main bar path for buff bars).
@@ -369,7 +369,7 @@ ns.ECdmUtils.IsBuffChildCooldownActive = IsBuffChildCooldownActive
 --- @param hasRuntimeOverride boolean   true if the spell has a runtime override on a non-buff bar
 --- @param assignedChild Frame|nil      The CDM child (for buff bars)
 --- @return boolean auraHandled, boolean skipCDDisplay
-----------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
                                            activeAnim, hasRuntimeOverride, assignedChild)
     -- Primary: look up the Blizzard CDM child for this spell via the
