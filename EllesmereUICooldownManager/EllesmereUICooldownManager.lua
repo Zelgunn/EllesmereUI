@@ -134,7 +134,6 @@ ECache.InitCastCountSpellsCache()
 --  bars or is queried by both ApplySpellCooldown and ApplyStackCount.
 -------------------------------------------------------------------------------
 
-local _tickBlizzChildCache = ECache._tickBlizzChild    -- [overrideSpellID] = blizzChild, for direct charge/cooldown reads on activation overrides
 local _tickBlizzAllChildCache = ECache._tickBlizzAllChild -- [resolvedSid] = blizzChild, for all CDM children (used by custom bars)
 local _tickBlizzBuffChildCache = ECache._tickBlizzBuffChild -- [resolvedSid] = blizzChild, only from BuffIcon/BuffBar viewers
 local _tickBlizzCDChildCache   = ECache._tickBlizzCDChild -- [resolvedSid] = blizzChild, only from Essential/Utility viewers
@@ -3407,7 +3406,7 @@ local function UpdateCustomBarIcons(barKey)
                         -- GetSpellCharges returns secret values in combat for these spells,
                         -- but the Applications frame text is always readable.
                         if barData.showCharges then
-                            local blizzChild = _tickBlizzChildCache[resolvedID]
+                            local blizzChild = ECache.GetTickBlizzardChild(resolvedID)
                             -- Totems on buff bars: skip (ApplySpellCooldown already hid charge text)
                             local bts = blizzChild and blizzChild.preferredTotemUpdateSlot
                             local isTotem = bts and type(bts) == "number" and bts > 0
@@ -4414,7 +4413,7 @@ local function UpdateAllCDMBars(dt)
                                 -- Override cache: base -> override (always, not just when active)
                                 if baseSpellID and cachedOverride and cachedOverride ~= baseSpellID then
                                     ECache.CacheSpellOverridenByBlizzard(baseSpellID, cachedOverride)
-                                    _tickBlizzChildCache[cachedOverride] = ch
+                                    ECache.CacheTickBlizzardChild(cachedOverride, ch)
                                 end
                                 -- Multi-child cache: track children that share a base spellID
                                 -- within the same viewer (e.g. Eclipse has two BuffIcon children).
