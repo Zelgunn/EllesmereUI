@@ -1671,7 +1671,10 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                 if not EllesmereUIDB then EllesmereUIDB = {} end
                 EllesmereUIDB.showRestedIndicator = v
-                if _G._EUF_ReloadFrames then _G._EUF_ReloadFrames() end
+                local pf = _G["EllesmereUIUnitFrames_Player"]
+                if pf and pf._restIndicator then
+                    if v and IsResting() then pf._restIndicator:Show() else pf._restIndicator:Hide() end
+                end
                 EllesmereUI:RefreshPage()
               end }
         );  y = y - h
