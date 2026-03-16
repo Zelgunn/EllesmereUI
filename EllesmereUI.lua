@@ -1306,6 +1306,18 @@ local function ResolveFontName(fontName)
     -- SharedMedia fonts store their path in FONT_SM_PATHS (populated at init)
     local smPath = EllesmereUI._smFontPaths and EllesmereUI._smFontPaths[fontName]
     if smPath then return smPath end
+    -- LSM fallback for late-loading SM addons not yet in _smFontPaths
+    if fontName then
+        local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
+        if LSM then
+            local fetched = LSM:Fetch("font", fontName)
+            if fetched then
+                if not EllesmereUI._smFontPaths then EllesmereUI._smFontPaths = {} end
+                EllesmereUI._smFontPaths[fontName] = fetched
+                return fetched
+            end
+        end
+    end
     -- Fallback to Expressway
     return MEDIA_PATH .. "fonts\\Expressway.TTF"
 end
@@ -1817,6 +1829,19 @@ EllesmereUI.EXPRESSWAY = EXPRESSWAY
 EllesmereUI.MEDIA_PATH = MEDIA_PATH
 EllesmereUI.ICONS_PATH = ICONS_PATH
 
+-- Safe scroll range helper (avoids tainted secret number values)
+function EllesmereUI.SafeScrollRange(sf)
+    local ok, val = pcall(sf.GetVerticalScrollRange, sf)
+    if ok and val then
+        local ok2, n = pcall(tonumber, val)
+        if ok2 and n then
+            local ok3, gt = pcall(function() return n > 0 end)
+            if ok3 and gt then return n end
+        end
+    end
+    return 0
+end
+
 -- Utility functions
 EllesmereUI.SolidTex          = SolidTex
 EllesmereUI.MakeFont          = MakeFont
@@ -1863,6 +1888,35 @@ end
 
 -------------------------------------------------------------------------------
 --  SharedMedia helpers
+-------------------------------------------------------------------------------
+
+-- Resolve a texture key to a file path. Handles "sm:" prefixed keys by
+-- falling back to LSM:Fetch when the key isn't in the local lookup table.
+-- This covers the case where a SharedMedia addon loads after our init.
+--   texTable  – the addon's local texture lookup (e.g. TBB_TEXTURES)
+--   key       – the saved texture key (e.g. "sm:ElvUI Gloss" or "beautiful")
+--   fallback  – path to use if nothing resolves (optional)
+function EllesmereUI.ResolveTexturePath(texTable, key, fallback)
+    if not key then return fallback end
+    local path = texTable and texTable[key]
+    if path then return path end
+    -- If the key has an "sm:" prefix, try LSM directly
+    local smName = key:match("^sm:(.+)")
+    if smName then
+        local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
+        if LSM then
+            local fetched = LSM:Fetch("statusbar", smName)
+            if fetched then
+                -- Cache it back into the table so future lookups are instant
+                if texTable then texTable[key] = fetched end
+                return fetched
+            end
+        end
+    end
+    return fallback
+end
+
+-------------------------------------------------------------------------------
 --  Append LibSharedMedia-3.0 statusbar textures into a runtime texture table.
 --  Signature: AppendSharedMediaTextures(names, order, castBarNames, textures)
 --    names        – key → display-name string table
@@ -2367,7 +2421,7 @@ local function CreateInfoPopup()
     local dragStartY, dragStartScroll
 
     local function UpdateThumb()
-        local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
         if maxScroll <= 0 then scrollTrack:Hide(); return end
         scrollTrack:Show()
         local trackH = scrollTrack:GetHeight()
@@ -2382,7 +2436,7 @@ local function CreateInfoPopup()
 
     smoothFrame:SetScript("OnUpdate", function(_, elapsed)
         local cur = sf:GetVerticalScroll()
-        local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
         scrollTarget = math.max(0, math.min(maxScroll, scrollTarget))
         local diff = scrollTarget - cur
         if math.abs(diff) < 0.3 then
@@ -2399,7 +2453,7 @@ local function CreateInfoPopup()
     end)
 
     local function SmoothScrollTo(target)
-        local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
         scrollTarget = math.max(0, math.min(maxScroll, target))
         if not isSmoothing then
             isSmoothing = true
@@ -2408,7 +2462,7 @@ local function CreateInfoPopup()
     end
 
     sf:SetScript("OnMouseWheel", function(self, delta)
-        local maxScroll = tonumber(self:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(self)
         if maxScroll <= 0 then return end
         local base = isSmoothing and scrollTarget or self:GetVerticalScroll()
         SmoothScrollTo(base - delta * SCROLL_STEP)
@@ -2438,7 +2492,7 @@ local function CreateInfoPopup()
             local trackH = scrollTrack:GetHeight()
             local maxTravel = trackH - self2:GetHeight()
             if maxTravel <= 0 then return end
-            local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+            local maxScroll = EllesmereUI.SafeScrollRange(sf)
             local newScroll = math.max(0, math.min(maxScroll, dragStartScroll + (deltaY / maxTravel) * maxScroll))
             scrollTarget = newScroll
             sf:SetVerticalScroll(newScroll)
@@ -3736,7 +3790,7 @@ local function CreateMainFrame()
     end
 
     UpdateScrollThumb = function()
-        local maxScroll = tonumber(scrollFrame:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(scrollFrame)
         if maxScroll <= 0 then
             scrollTrack:Hide()
             return
@@ -3758,7 +3812,7 @@ local function CreateMainFrame()
     smoothFrame:Hide()
     smoothFrame:SetScript("OnUpdate", function(_, elapsed)
         local cur = scrollFrame:GetVerticalScroll()
-        local maxScroll = tonumber(scrollFrame:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(scrollFrame)
         -- Snap max downward so we never try to scroll past a pixel-aligned boundary
         local scale = scrollFrame:GetEffectiveScale()
         maxScroll = math.floor(maxScroll * scale) / scale
@@ -3790,7 +3844,7 @@ local function CreateMainFrame()
     end)
 
     local function SmoothScrollTo(target)
-        local maxScroll = tonumber(scrollFrame:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(scrollFrame)
         local scale = scrollFrame:GetEffectiveScale()
         -- Snap max downward so target never exceeds a pixel-aligned boundary
         maxScroll = math.floor(maxScroll * scale) / scale
@@ -3818,7 +3872,7 @@ local function CreateMainFrame()
     end
 
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
-        local maxScroll = tonumber(self:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(self)
         if maxScroll <= 0 then return end
         -- Accumulate on top of the current target (not current position) for responsive chained scrolls
         local base = isSmoothing and scrollTarget or self:GetVerticalScroll()
@@ -3844,7 +3898,7 @@ local function CreateMainFrame()
         local trackH = scrollTrack:GetHeight()
         local maxThumbTravel = trackH - self:GetHeight()
         if maxThumbTravel <= 0 then return end
-        local maxScroll = tonumber(scrollFrame:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(scrollFrame)
         local newScroll = math.max(0, math.min(maxScroll, dragStartScroll + (deltaY / maxThumbTravel) * maxScroll))
         -- Snap to whole pixels to prevent sub-pixel widget jitter
         local scale = scrollFrame:GetEffectiveScale()
@@ -3875,7 +3929,7 @@ local function CreateMainFrame()
         -- Cancel any smooth animation
         isSmoothing = false
         smoothFrame:Hide()
-        local maxScroll = tonumber(scrollFrame:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(scrollFrame)
         if maxScroll <= 0 then return end
         -- Jump to cursor position
         local _, cy = GetCursorPosition()
@@ -5266,7 +5320,7 @@ function EllesmereUI:RefreshPage(force)
     isSmoothing = false
     if smoothFrame then smoothFrame:Hide() end
     if scrollFrame then
-        local maxScroll = tonumber(scrollFrame:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(scrollFrame)
         local restored = math.min(savedScroll, maxScroll)
         scrollTarget = math.min(savedTarget, maxScroll)
         scrollFrame:SetVerticalScroll(restored)
@@ -5587,7 +5641,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "4.8.5"
+EllesmereUI.VERSION = "4.8.8"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end

@@ -359,8 +359,7 @@ initFrame:SetScript("OnEvent", function(self)
         pvSmoothFrame:Hide()
 
         local function UpdatePVThumb()
-            local ok, raw = pcall(sf.GetVerticalScrollRange, sf)
-            local maxScroll = (ok and tonumber(raw)) or 0
+            local maxScroll = EllesmereUI.SafeScrollRange(sf)
             if maxScroll <= 0 then pvTrack:Hide(); return end
             pvTrack:Show()
             local trackH = pvTrack:GetHeight()
@@ -368,8 +367,15 @@ initFrame:SetScript("OnEvent", function(self)
             local ratio = visH / (visH + maxScroll)
             local thumbH = math.max(20, trackH * ratio)
             pvThumb:SetHeight(thumbH)
-            local okS, rawS = pcall(sf.GetVerticalScroll, sf)
-            local scrollRatio = ((okS and tonumber(rawS)) or 0) / maxScroll
+            local curScroll = 0
+            do
+                local ok, val = pcall(sf.GetVerticalScroll, sf)
+                if ok and val then
+                    local ok2, n = pcall(tonumber, val)
+                    if ok2 and n then curScroll = n end
+                end
+            end
+            local scrollRatio = curScroll / maxScroll
             local maxTravel = trackH - thumbH
             pvThumb:ClearAllPoints()
             pvThumb:SetPoint("TOP", pvTrack, "TOP", 0, -(scrollRatio * maxTravel))
@@ -377,7 +383,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         pvSmoothFrame:SetScript("OnUpdate", function(_, elapsed)
             local cur = sf:GetVerticalScroll()
-            local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+            local maxScroll = EllesmereUI.SafeScrollRange(sf)
             pvScrollTarget = math.max(0, math.min(maxScroll, pvScrollTarget))
             local diff = pvScrollTarget - cur
             if math.abs(diff) < 0.3 then
@@ -394,7 +400,7 @@ initFrame:SetScript("OnEvent", function(self)
         end)
 
         local function PVSmoothScrollTo(target)
-            local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+            local maxScroll = EllesmereUI.SafeScrollRange(sf)
             pvScrollTarget = math.max(0, math.min(maxScroll, target))
             if not pvSmoothing then
                 pvSmoothing = true
@@ -403,7 +409,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         sf:SetScript("OnMouseWheel", function(self, delta)
-            local maxScroll = tonumber(self:GetVerticalScrollRange()) or 0
+            local maxScroll = EllesmereUI.SafeScrollRange(self)
             if maxScroll <= 0 then return end
             local base = pvSmoothing and pvScrollTarget or self:GetVerticalScroll()
             PVSmoothScrollTo(base - delta * PV_SCROLL_STEP)
@@ -429,7 +435,7 @@ initFrame:SetScript("OnEvent", function(self)
                 local trackH = pvTrack:GetHeight()
                 local maxTravel = trackH - self2:GetHeight()
                 if maxTravel <= 0 then return end
-                local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+                local maxScroll = EllesmereUI.SafeScrollRange(sf)
                 local newScroll = math.max(0, math.min(maxScroll,
                     dragStartScroll + (deltaY / maxTravel) * maxScroll))
                 pvScrollTarget = newScroll
@@ -636,6 +642,10 @@ initFrame:SetScript("OnEvent", function(self)
             local parentH = frameH * self._previewScale
             local maxH = self._PREVIEW_MAX_H
             if parentH > maxH then
+                -- Add bottom padding so the last icon row is fully visible
+                -- when scrolled to the bottom
+                local paddedH = Snap(gridH + 20 + scaledBtnH)
+                self:SetHeight(paddedH)
                 self._wrapper:SetHeight(maxH)
             else
                 self._wrapper:SetHeight(parentH)
@@ -3224,10 +3234,10 @@ initFrame:SetScript("OnEvent", function(self)
         -- Stop all current animations
         f._loopGroup:Stop()
         f._loopTex:Hide()
-        ns.StopProceduralAnts(f)
-        ns.StopButtonGlow(f)
-        ns.StopAutoCastShine(f)
-        ns.StopShapeGlow(f)
+        ns.Glows.StopProceduralAnts(f)
+        ns.Glows.StopButtonGlow(f)
+        ns.Glows.StopAutoCastShine(f)
+        ns.Glows.StopShapeGlow(f)
 
         -- If disabled (None selected), keep the icon visible but grayed out
         if p.procGlowEnabled == false or (p.procGlowType == 0) then
@@ -3267,14 +3277,14 @@ initFrame:SetScript("OnEvent", function(self)
             local lineLen = math.floor((iconSize + iconSize) * (2 / N - 0.1))
             lineLen = math.min(lineLen, iconSize)
             if lineLen < 1 then lineLen = 1 end
-            ns.StartProceduralAnts(f, N, th, period, lineLen, cr, cg, cb)
+            ns.Glows.StartProceduralAnts(f, N, th, period, lineLen, cr, cg, cb)
         elseif loopEntry.buttonGlow then
             -- Custom Proc Glow preview
             local baseScale = loopEntry.previewScale or 1.0
-            ns.StartButtonGlow(f, iconSize, cr, cg, cb, baseScale * (p.procGlowScale or 1.0))
+            ns.Glows.StartButtonGlow(f, iconSize, cr, cg, cb, baseScale * (p.procGlowScale or 1.0))
         elseif loopEntry.autocast then
             -- Auto-Cast Shine preview
-            ns.StartAutoCastShine(f, iconSize, cr, cg, cb, p.procGlowScale or 1.0)
+            ns.Glows.StartAutoCastShine(f, iconSize, cr, cg, cb, p.procGlowScale or 1.0)
         elseif loopEntry.shapeGlow then
             -- Shape Glow preview — use first bar's shape mask
             local maskPath
@@ -3285,7 +3295,7 @@ initFrame:SetScript("OnEvent", function(self)
                 end
             end
             local baseScale = loopEntry.previewScale or 1.20
-            ns.StartShapeGlow(f, iconSize, cr, cg, cb, baseScale * (p.procGlowScale or 1.0), { maskPath = maskPath })
+            ns.Glows.StartShapeGlow(f, iconSize, cr, cg, cb, baseScale * (p.procGlowScale or 1.0), { maskPath = maskPath })
         else
             -- FlipBook preview
             local texSz = iconSize * (loopEntry.previewScale or loopEntry.scale or 1) * (p.procGlowScale or 1.0)

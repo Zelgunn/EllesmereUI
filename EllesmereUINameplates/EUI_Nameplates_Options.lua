@@ -1348,12 +1348,8 @@ initFrame:SetScript("OnEvent", function(self)
             -- Preview bar texture: apply via SetStatusBarTexture
             do
                 local texKey = DBVal("healthBarTexture") or "none"
-                local texPath = ns.healthBarTextures[texKey]
-                if texPath then
-                    health:SetStatusBarTexture(texPath)
-                else
-                    health:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
-                end
+                local texPath = EllesmereUI.ResolveTexturePath(ns.healthBarTextures, texKey, "Interface\\Buttons\\WHITE8x8")
+                health:SetStatusBarTexture(texPath)
                 UnsnapTex(health:GetStatusBarTexture())
             end
 

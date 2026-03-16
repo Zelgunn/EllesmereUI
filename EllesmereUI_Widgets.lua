@@ -1,4 +1,4 @@
-﻿-------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --  EllesmereUI_Widgets.lua
 --  Shared Widget Helpers + Widget Factory
 --  Split from EllesmereUI.lua -- see EllesmereUI.lua for constants & utilities
@@ -822,7 +822,7 @@ local function BuildDropdownMenu(ddBtn, menuW, order, values, getValue, setValue
         ddSmoothFrame:Hide()
 
         local function UpdateDDThumb()
-            local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+            local maxScroll = EllesmereUI.SafeScrollRange(sf)
             if maxScroll <= 0 then ddTrack:Hide(); return end
             ddTrack:Show()
             local trackH = ddTrack:GetHeight()
@@ -838,7 +838,7 @@ local function BuildDropdownMenu(ddBtn, menuW, order, values, getValue, setValue
 
         ddSmoothFrame:SetScript("OnUpdate", function(_, elapsed)
             local cur = sf:GetVerticalScroll()
-            local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+            local maxScroll = EllesmereUI.SafeScrollRange(sf)
             ddScrollTarget = math.max(0, math.min(maxScroll, ddScrollTarget))
             local diff = ddScrollTarget - cur
             if math.abs(diff) < 0.3 then
@@ -855,7 +855,7 @@ local function BuildDropdownMenu(ddBtn, menuW, order, values, getValue, setValue
         end)
 
         local function DDSmoothScrollTo(target)
-            local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+            local maxScroll = EllesmereUI.SafeScrollRange(sf)
             ddScrollTarget = math.max(0, math.min(maxScroll, target))
             if not ddSmoothing then
                 ddSmoothing = true
@@ -864,7 +864,7 @@ local function BuildDropdownMenu(ddBtn, menuW, order, values, getValue, setValue
         end
 
         sf:SetScript("OnMouseWheel", function(self, delta)
-            local maxScroll = tonumber(self:GetVerticalScrollRange()) or 0
+            local maxScroll = EllesmereUI.SafeScrollRange(self)
             if maxScroll <= 0 then return end
             local base = ddSmoothing and ddScrollTarget or self:GetVerticalScroll()
             DDSmoothScrollTo(base - delta * SCROLL_STEP)
@@ -895,7 +895,7 @@ local function BuildDropdownMenu(ddBtn, menuW, order, values, getValue, setValue
                 local trackH = ddTrack:GetHeight()
                 local maxTravel = trackH - self2:GetHeight()
                 if maxTravel <= 0 then return end
-                local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+                local maxScroll = EllesmereUI.SafeScrollRange(sf)
                 local newScroll = math.max(0, math.min(maxScroll,
                     ddDragStartScroll + (deltaY / maxTravel) * maxScroll))
                 ddScrollTarget = newScroll
@@ -3942,7 +3942,8 @@ local function BuildCogPopup(opts)
             for _, rw in ipairs(rowWidgets) do
                 if rw.type == "slider" then
                     if rw.disOverlay and rw.disCheck then
-                        local dis = type(rw.disCheck) == "function" and rw.disCheck() or rw.disCheck
+                        local dis
+                        if type(rw.disCheck) == "function" then dis = rw.disCheck() else dis = rw.disCheck end
                         if dis then rw.disOverlay:Show() else rw.disOverlay:Hide() end
                     end
                     if rw.updateVisual and rw.get then rw.updateVisual(rw.get()) end
@@ -3950,7 +3951,8 @@ local function BuildCogPopup(opts)
                     if rw.updateVisual then rw.updateVisual() end
                 elseif rw.type == 'colorpicker' then
                     if rw.disCheck then
-                        local dis = type(rw.disCheck) == "function" and rw.disCheck() or rw.disCheck
+                        local dis
+                        if type(rw.disCheck) == "function" then dis = rw.disCheck() else dis = rw.disCheck end
                         if rw.swatch then rw.swatch:SetAlpha(dis and 0.3 or 1) end
                         if rw.swBlock then if dis then rw.swBlock:Show() else rw.swBlock:Hide() end end
                         if rw.lblBlock then if dis then rw.lblBlock:Show() else rw.lblBlock:Hide() end end
@@ -3963,7 +3965,8 @@ local function BuildCogPopup(opts)
                     end
                 elseif rw.type == 'input' then
                     if rw.disOverlay and rw.disCheck then
-                        local dis = type(rw.disCheck) == "function" and rw.disCheck() or rw.disCheck
+                        local dis
+                        if type(rw.disCheck) == "function" then dis = rw.disCheck() else dis = rw.disCheck end
                         if dis then rw.disOverlay:Show() else rw.disOverlay:Hide() end
                     end
                     if rw.box and rw.get and not rw.box:HasFocus() then

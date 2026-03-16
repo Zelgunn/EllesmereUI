@@ -153,9 +153,20 @@ do
     local function ApplyCombatTextFont()
         local saved = EllesmereUIDB and EllesmereUIDB.fctFont
         if not saved or type(saved) ~= "string" or saved == "" then return end
-        _G.DAMAGE_TEXT_FONT = saved
+        -- Resolve "smf:" prefixed SharedMedia font keys to actual paths
+        local fontPath = saved
+        local smName = saved:match("^smf:(.+)")
+        if smName then
+            local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
+            local fetched = LSM and LSM:Fetch("font", smName)
+            -- If the SM addon is missing or hasn't loaded yet, skip entirely
+            -- so Blizzard's default combat text font stays intact.
+            if not fetched then return end
+            fontPath = fetched
+        end
+        _G.DAMAGE_TEXT_FONT = fontPath
         if _G.CombatTextFont then
-            _G.CombatTextFont:SetFont(saved, 120, "")
+            _G.CombatTextFont:SetFont(fontPath, 120, "")
         end
     end
 

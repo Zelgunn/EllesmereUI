@@ -2802,12 +2802,8 @@ BuildCastBar = function()
         castBarFrame._bg:ClearAllPoints()
         castBarFrame._bg:SetAllPoints(castBarFrame)
     else
-        local texPath = CAST_BAR_TEXTURES[texKey]
-        if texPath then
-            bar:SetStatusBarTexture(texPath)
-        else
-            bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
-        end
+        local texPath = EllesmereUI.ResolveTexturePath(CAST_BAR_TEXTURES, texKey, "Interface\\Buttons\\WHITE8x8")
+        bar:SetStatusBarTexture(texPath)
         castBarFrame._bg:SetTexture(nil)
         castBarFrame._bg:SetColorTexture(cb.bgR, cb.bgG, cb.bgB, cb.bgA)
     end
@@ -2847,12 +2843,8 @@ if cb.gradientEnabled then
 
     -- Match the selected cast bar texture
     local texKey = cb.texture
-    local texPath = CAST_BAR_TEXTURES[texKey]
-    if texPath then
-        tex:SetTexture(texPath)
-    else
-        tex:SetTexture("Interface\\Buttons\\WHITE8x8")
-    end
+    local texPath = EllesmereUI.ResolveTexturePath(CAST_BAR_TEXTURES, texKey, "Interface\\Buttons\\WHITE8x8")
+    tex:SetTexture(texPath)
 
     tex:SetVertexColor(1, 1, 1, 1)
     tex:SetGradient(dir,

@@ -2293,7 +2293,7 @@ local function BuildStringPopup(title, subtitle, readOnly, onConfirm, confirmLab
     smoothFrame:Hide()
 
     local function UpdateThumb()
-        local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
         if maxScroll <= 0 then scrollTrack:Hide(); return end
         scrollTrack:Show()
         local trackH = scrollTrack:GetHeight()
@@ -2308,7 +2308,7 @@ local function BuildStringPopup(title, subtitle, readOnly, onConfirm, confirmLab
 
     smoothFrame:SetScript("OnUpdate", function(_, elapsed)
         local cur = sf:GetVerticalScroll()
-        local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
         scrollTarget = math.max(0, math.min(maxScroll, scrollTarget))
         local diff = scrollTarget - cur
         if math.abs(diff) < 0.3 then
@@ -2323,13 +2323,13 @@ local function BuildStringPopup(title, subtitle, readOnly, onConfirm, confirmLab
     end)
 
     local function SmoothScrollTo(target)
-        local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
         scrollTarget = math.max(0, math.min(maxScroll, target))
         if not isSmoothing then isSmoothing = true; smoothFrame:Show() end
     end
 
     sf:SetScript("OnMouseWheel", function(self, delta)
-        local maxScroll = tonumber(self:GetVerticalScrollRange()) or 0
+        local maxScroll = EllesmereUI.SafeScrollRange(self)
         if maxScroll <= 0 then return end
         SmoothScrollTo((isSmoothing and scrollTarget or self:GetVerticalScroll()) - delta * SCROLL_STEP)
     end)
@@ -2357,7 +2357,7 @@ local function BuildStringPopup(title, subtitle, readOnly, onConfirm, confirmLab
             local trackH   = scrollTrack:GetHeight()
             local maxTravel = trackH - self2:GetHeight()
             if maxTravel <= 0 then return end
-            local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+            local maxScroll = EllesmereUI.SafeScrollRange(sf)
             local newScroll = math.max(0, math.min(maxScroll,
                 dragStartScroll + ((dragStartY - cy2) / maxTravel) * maxScroll))
             scrollTarget = newScroll

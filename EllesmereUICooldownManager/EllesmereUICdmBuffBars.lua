@@ -507,7 +507,7 @@ local function SetupTBBThresholdOverlay(bar, cfg)
     local overlay = EnsureTBBThresholdOverlay(bar)
     if not overlay then return end
 
-    local texPath = TBB_TEXTURES[cfg.texture or "none"] or "Interface\\Buttons\\WHITE8x8"
+    local texPath = EllesmereUI.ResolveTexturePath(TBB_TEXTURES, cfg.texture or "none", "Interface\\Buttons\\WHITE8x8")
     overlay:SetStatusBarTexture(texPath)
     overlay:SetOrientation(cfg.verticalOrientation and "VERTICAL" or "HORIZONTAL")
     overlay:GetStatusBarTexture():SetVertexColor(
@@ -652,7 +652,7 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
     sb:SetOrientation(isVert and "VERTICAL" or "HORIZONTAL")
 
     -- Texture (only re-set if changed to avoid fill flash)
-    local texPath = TBB_TEXTURES[cfg.texture or "none"] or "Interface\\Buttons\\WHITE8x8"
+    local texPath = EllesmereUI.ResolveTexturePath(TBB_TEXTURES, cfg.texture or "none", "Interface\\Buttons\\WHITE8x8")
     if bar._lastTexPath ~= texPath then
         sb:SetStatusBarTexture(texPath)
         bar._lastTexPath = texPath
@@ -1078,6 +1078,10 @@ function ns.BuildTrackedBuffBars()
             -- Mark bar as ready but keep hidden; the tick will show it
             -- when the tracked buff is actually active on the player.
             bar._tbbReady = true
+            bar._isPassive = nil
+            bar._resolvedAuraID = nil
+            bar._customStart = nil
+            bar._activeDuration = nil
             bar:Hide()
         end
     end

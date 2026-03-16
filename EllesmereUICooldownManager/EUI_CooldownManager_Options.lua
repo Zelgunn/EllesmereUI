@@ -1853,9 +1853,8 @@ initFrame:SetScript("OnEvent", function(self)
             if bd then
                 local pvBar = CreateFrame("StatusBar", nil, pvFrame)
                 pvBar:SetAllPoints()
-                local texPath = ns.TBB_TEXTURES and ns.TBB_TEXTURES[bd.texture or "none"]
-                if texPath then pvBar:SetStatusBarTexture(texPath)
-                else pvBar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8") end
+                local texPath = EllesmereUI.ResolveTexturePath(ns.TBB_TEXTURES, bd.texture or "none", "Interface\\Buttons\\WHITE8x8")
+                pvBar:SetStatusBarTexture(texPath)
                 pvBar:SetMinMaxValues(0, 1)
                 pvBar:SetValue(0.65)
                 local pvFillR, pvFillG, pvFillB, pvFillA = bd.fillR or 0.05, bd.fillG or 0.82, bd.fillB or 0.62, bd.fillA or 1
@@ -2598,6 +2597,8 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type = "slider", text = "Stack Threshold",
               min = 0, max = 50, step = 1,
+              disabled = function() local bd = SelectedTBB(); return not bd or not bd.stackThresholdEnabled end,
+              disabledTooltip = EllesmereUI.DisabledTooltip("Enable Stack Threshold"),
               getValue = function() local bd = SelectedTBB(); return bd and bd.stackThreshold or 5 end,
               setValue = function(v)
                   local bd = SelectedTBB(); if not bd then return end
@@ -2643,7 +2644,7 @@ initFrame:SetScript("OnEvent", function(self)
             local rgn = threshRow._rightRegion
             local function maxStacksOff()
                 local bd = SelectedTBB()
-                return not bd or not bd.stackThresholdEnabled or not bd.stackThresholdMaxEnabled
+                return not bd or not bd.stackThresholdMaxEnabled
             end
             local _, cogShow = EllesmereUI.BuildCogPopup({
                 title = "Threshold Settings",
@@ -2652,7 +2653,7 @@ initFrame:SetScript("OnEvent", function(self)
                       get = function() local bd = SelectedTBB(); return bd and bd.stackThresholdMaxEnabled end,
                       set = function(v)
                           local bd = SelectedTBB(); if not bd then return end
-                          bd.stackThresholdMaxEnabled = v; RefreshTBB(); EllesmereUI:RefreshPage()
+                          bd.stackThresholdMaxEnabled = v; RefreshTBB()
                       end },
                     { type = "slider", label = "Max Stacks", min = 1, max = 50, step = 1,
                       disabled = maxStacksOff,
@@ -2673,19 +2674,24 @@ initFrame:SetScript("OnEvent", function(self)
                 },
             })
             local cogBtn = MakeCogBtn(rgn, cogShow, nil, EllesmereUI.RESIZE_ICON)
-            local cogDis = CreateFrame("Frame", nil, rgn)
-            cogDis:SetAllPoints(cogBtn); cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
-            cogDis:EnableMouse(true)
-            cogDis:SetScript("OnEnter", function()
-                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Enable Stack Threshold"))
-            end)
-            cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
             local function UpdateThreshCogState()
                 local bd = SelectedTBB()
                 local off = not bd or not bd.stackThresholdEnabled
-                if off then cogBtn:SetAlpha(0.15); cogDis:Show()
-                else cogBtn:SetAlpha(0.4); cogDis:Hide() end
+                if off then
+                    cogBtn:SetAlpha(0.15); cogBtn:Disable()
+                else
+                    cogBtn:SetAlpha(0.4); cogBtn:Enable()
+                end
             end
+            cogBtn:SetScript("OnEnter", function(self)
+                local bd = SelectedTBB()
+                if bd and bd.stackThresholdEnabled then self:SetAlpha(0.7)
+                else EllesmereUI.ShowWidgetTooltip(self, EllesmereUI.DisabledTooltip("Enable Stack Threshold")) end
+            end)
+            cogBtn:SetScript("OnLeave", function(self)
+                UpdateThreshCogState(); EllesmereUI.HideWidgetTooltip()
+            end)
+            cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
             EllesmereUI.RegisterWidgetRefresh(UpdateThreshCogState)
             UpdateThreshCogState()
         end

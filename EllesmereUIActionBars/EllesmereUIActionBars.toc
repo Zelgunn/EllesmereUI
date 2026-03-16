@@ -4,13 +4,14 @@
 ## Group: EllesmereUI
 ## Notes: Custom Action Bars
 ## Author: Ellesmere
-## Version: 4.8.5
+## Version: 4.8.8
 ## Dependencies: EllesmereUI
 ## SavedVariables: EllesmereUIActionBarsDB
 ## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
 
 # Main Luas
 EllesmereUIActionBars.lua
+EUI_ActionBars_Flyout.lua
 
 # Options
 EUI_ActionBars_Options.lua

@@ -639,14 +639,8 @@ local function ApplyHealthBarTexture(health, unitKey)
     if not health then return end
     local s = unitKey and db.profile[unitKey]
     local texKey = (s and s.healthBarTexture) or db.profile.healthBarTexture or "none"
-    local path   = healthBarTextures[texKey]
-
-    -- Apply texture directly to the StatusBar fill
-    if path then
-        health:SetStatusBarTexture(path)
-    else
-        health:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
-    end
+    local path   = EllesmereUI.ResolveTexturePath(healthBarTextures, texKey, "Interface\\Buttons\\WHITE8x8")
+    health:SetStatusBarTexture(path)
     local hFill = health:GetStatusBarTexture()
     if hFill then UnsnapTex(hFill) end
 
