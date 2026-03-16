@@ -163,12 +163,8 @@ local _viewerChildBuf = {}
 
 -- Separate tables keyed by child frame reference -- avoids reading tainted fields on Blizzard-owned frames.
 -- ch.isActive and ch._ecmeDurObj etc. are tainted secret values; we track state in our own tables instead.
-local _ecmeChildHasDurObj = ECache._ecmeChildHasDurObj  -- [ch] = true when we have captured a DurationObject for this child
-local _ecmeDurObjCache = ECache._ecmeDurObj             -- [ch] = durObj captured from SetCooldownFromDurationObject hook
-local _ecmeRawStartCache = ECache._ecmeRawStart         -- [ch] = start captured from SetCooldown hook
 local _cdmVehicleProxy                                  -- SecureHandlerStateTemplate proxy for [vehicleui]/[petbattle] hiding
 local _cdmInVehicle = false                             -- true when [vehicleui] or [petbattle] is active
-local _ecmeRawDurCache = ECache._ecmeRawDur             -- [ch] = dur captured from SetCooldown hook
 local _cdmHoverStates = ECache._cdmHoverStates          -- [barKey] = { isHovered=false, fadeDir=nil }
 
 
@@ -3570,10 +3566,10 @@ UpdateCDMBarIcons = function(barKey)
                     skipCDDisplay = true
                     if blizzIcon and blizzIcon.Cooldown then
                         ourIcon._cooldown:Clear()
-                        if _ecmeDurObjCache[blizzIcon] then
-                            pcall(ourIcon._cooldown.SetCooldownFromDurationObject, ourIcon._cooldown, _ecmeDurObjCache[blizzIcon], true)
-                        elseif _ecmeRawStartCache[blizzIcon] and _ecmeRawDurCache[blizzIcon] then
-                            pcall(ourIcon._cooldown.SetCooldown, ourIcon._cooldown, _ecmeRawStartCache[blizzIcon], _ecmeRawDurCache[blizzIcon])
+                        if ECache.GetECMEDurationObject(blizzIcon) then
+                            pcall(ourIcon._cooldown.SetCooldownFromDurationObject, ourIcon._cooldown, ECache.GetECMEDurationObject(blizzIcon), true)
+                        elseif ECache.GetIsCachedInRawCooldownTimes(blizzIcon) then
+                            pcall(ourIcon._cooldown.SetCooldown, ourIcon._cooldown, ECache.GetECMERawStart(blizzIcon), ECache.GetECMERawDuration(blizzIcon))
                         end
                         ourIcon._cooldown:SetReverse(false)
                     end
@@ -4363,34 +4359,25 @@ local function UpdateAllCDMBars(dt)
                                 ch._ecmeHooked = true
                                 if ch.Cooldown.SetCooldownFromDurationObject then
                                     hooksecurefunc(ch.Cooldown, "SetCooldownFromDurationObject", function(_, durObj)
-                                        _ecmeDurObjCache[ch] = durObj
-                                        _ecmeChildHasDurObj[ch] = true
+                                        ECache.CacheECMEObjectDuration(ch, durObj)
                                     end)
                                 end
                                 hooksecurefunc(ch.Cooldown, "SetCooldown", function(_, start, dur)
                                     if issecretvalue and (issecretvalue(dur) or issecretvalue(start)) then
                                         -- Secret values (in combat): store as-is, sink handles them
-                                        _ecmeRawStartCache[ch] = start
-                                        _ecmeRawDurCache[ch] = dur
+                                        ECache.CacheECMERawCooldownTime(ch, start, dur)
                                     elseif dur and dur > 0 then
-                                        _ecmeRawStartCache[ch] = start
-                                        _ecmeRawDurCache[ch] = dur
+                                        ECache.CacheECMERawCooldownTime(ch, start, dur)
                                     else
                                         -- dur=0 means inactive; wipe like Clear() (0 is truthy in Lua)
-                                        _ecmeDurObjCache[ch] = nil
-                                        _ecmeChildHasDurObj[ch] = nil
-                                        _ecmeRawStartCache[ch] = nil
-                                        _ecmeRawDurCache[ch] = nil
+                                        ECache.ClearECMEInactiveCooldown(ch)
                                     end
                                 end)
                                 -- Clear hook: wipe our cached state when Blizzard clears the cooldown.
                                 -- This ensures IsBufChildCooldownActive returns false after expiry.
                                 if ch.Cooldown.Clear then
                                     hooksecurefunc(ch.Cooldown, "Clear", function()
-                                        _ecmeDurObjCache[ch] = nil
-                                        _ecmeChildHasDurObj[ch] = nil
-                                        _ecmeRawStartCache[ch] = nil
-                                        _ecmeRawDurCache[ch] = nil
+                                        ECache.ClearECMEInactiveCooldown(ch)
                                     end)
                                 end
                             end
@@ -6738,10 +6725,7 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo, arg3)
         ECache.WipeSpellIconCache()
         -- Wipe hook-captured cooldown caches so stale state from a previous
         -- character doesn't persist after alt switch or reload.
-        wipe(_ecmeChildHasDurObj)
-        wipe(_ecmeDurObjCache)
-        wipe(_ecmeRawStartCache)
-        wipe(_ecmeRawDurCache)
+        ECache.WipeECMECooldownTimeCaches()
         RECONCILE.lastZoneInAt = GetTime()
         -- Validate spec on every zone-in (catches auto spec swaps, login, etc.)
         C_Timer.After(0.5, function()

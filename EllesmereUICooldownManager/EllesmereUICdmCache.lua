@@ -913,11 +913,15 @@ cache.IsTotemChildStillValid = IsTotemChildStillValid
 
 -- Separate tables keyed by child frame reference -- avoids reading tainted fields on Blizzard-owned frames.
 -- ch.isActive and ch._ecmeDurObj etc. are tainted secret values; we track state in our own tables instead.
+--- @type {[Frame]: boolean}
 cache._ecmeChildHasDurObj = {}
 --- @type {[Frame]: number}
 cache._ecmeDurObj = {}                           -- [ch] = durObj captured from SetCooldownFromDurationObject hook
+--- @type {[Frame]: number}
 cache._ecmeRawStart = {}                         -- [ch] = start captured from SetCooldown hook
+--- @type {[Frame]: number}
 cache._ecmeRawDur = {}                           -- [ch] = dur captured from SetCooldown hook
+--- @type {[number]: {isHovered: boolean, fadeDir: string}}
 cache._cdmHoverStates = {}                       -- [barKey] = { isHovered=false, fadeDir=nil }
 
 -- Export to NS
@@ -925,8 +929,20 @@ ns._ecmeDurObjCache = cache._ecmeDurObj
 ns._ecmeRawStartCache = cache._ecmeRawStart
 ns._ecmeRawDurCache = cache._ecmeRawDur
 
+
 -------------------------------------------------------------------------------
---- Get the duration for spellID from the cache `_ecmeDurObj`.
+--- Get if the blizzardChild has a duration object from the cache `_ecmeChildHasDurObj`.
+---   Captured from SetCooldownFromDurationObject.
+--- @param blizzardChild Frame     The blizzardChild to query
+--- @return boolean|nil childHasDurationObject
+-------------------------------------------------------------------------------
+local function GetECMEChildHasDurationObject(blizzardChild)
+    return cache._ecmeChildHasDurObj[blizzardChild]
+end
+cache.GetECMEChildHasDurationObject = GetECMEChildHasDurationObject
+
+-------------------------------------------------------------------------------
+--- Get the duration for blizzardChild from the cache `_ecmeDurObj`.
 ---   Duration captured from SetCooldownFromDurationObject.
 --- @param blizzardChild Frame     The blizzardChild to query
 --- @return number|nil duration
@@ -937,7 +953,7 @@ end
 cache.GetECMEDurationObject = GetECMEDurationObject
 
 -------------------------------------------------------------------------------
---- Get the start time for spellID from the cache `_ecmeRawStart` captured
+--- Get the start time for blizzardChild from the cache `_ecmeRawStart` captured
 ---   from SetCooldown hook.
 --- @param blizzardChild Frame     The blizzardChild to query
 --- @return number|nil startTime
@@ -948,7 +964,7 @@ end
 cache.GetECMERawStart = GetECMERawStart
 
 -------------------------------------------------------------------------------
---- Get the duration for spellID from the cache `_ecmeRawDur` captured
+--- Get the duration for blizzardChild from the cache `_ecmeRawDur` captured
 ---   from SetCooldown hook.
 --- @param blizzardChild Frame     The blizzardChild to query
 --- @return number|nil duration
@@ -957,6 +973,75 @@ local function GetECMERawDuration(blizzardChild)
     return cache._ecmeRawDur[blizzardChild]
 end
 cache.GetECMERawDuration = GetECMERawDuration
+
+-------------------------------------------------------------------------------
+--- Caches the duration for blizzardChild in `_ecmeDurObj` captured
+---   from SetCooldownFromDurationObject hook and sets the matching value 
+---   in `_ecmeChildHasDurObj` to true if `durationObject` is not nil 
+---   (clears otherwise).
+--- @param blizzardChild Frame      The blizzardChild to query
+--- @param durationObject number    The duration object
+-------------------------------------------------------------------------------
+local function CacheECMEObjectDuration(blizzardChild, durationObject)
+    cache._ecmeDurObj[blizzardChild] = durationObject
+    if durationObject ~= nil then
+        cache._ecmeChildHasDurObj[blizzardChild] = true
+    else
+        cache._ecmeChildHasDurObj[blizzardChild] = nil
+    end
+end
+cache.CacheECMEObjectDuration = CacheECMEObjectDuration
+
+-------------------------------------------------------------------------------
+--- Caches the start time and duration captured for blizzardChild 
+---   from SetCooldown hook in `_ecmeRawStart` and `_ecmeRawDur` respectively.
+--- @param blizzardChild Frame     The blizzardChild to query
+--- @param startTime number        The raw start time of the cooldown
+--- @param duration number         The raw duration of the cooldown
+-------------------------------------------------------------------------------
+local function CacheECMERawCooldownTime(blizzardChild, startTime, duration)
+    cache._ecmeRawStart[blizzardChild] = startTime
+    cache._ecmeRawDur[blizzardChild] = duration
+end
+cache.CacheECMERawCooldownTime = CacheECMERawCooldownTime
+
+-------------------------------------------------------------------------------
+--- Returns `true` if `blizzardChild` is present in  `_ecmeRawStart` and 
+---   `_ecmeRawDur`.
+--- @param blizzardChild Frame     The blizzardChild to query
+--- @return boolean isCached
+-------------------------------------------------------------------------------
+local function GetIsCachedInRawCooldownTimes(blizzardChild)
+    return (cache._ecmeRawStart[blizzardChild] ~= nil)
+           and (cache._ecmeRawDur[blizzardChild] ~= nil)
+end
+cache.GetIsCachedInRawCooldownTimes = GetIsCachedInRawCooldownTimes
+
+-------------------------------------------------------------------------------
+--- Clear cooldown duration/time data for blizzardChild. 
+---   Useful when duration=0 or when Blizzard clears the cooldown.
+--- @param blizzardChild Frame     The blizzardChild to clear caches for
+-------------------------------------------------------------------------------
+local function ClearECMEInactiveCooldown(blizzardChild)
+    cache._ecmeDurObj[blizzardChild] = nil
+    cache._ecmeChildHasDurObj[blizzardChild] = nil
+    cache._ecmeRawStart[blizzardChild] = nil
+    cache._ecmeRawDur[blizzardChild] = nil
+end
+cache.ClearECMEInactiveCooldown = ClearECMEInactiveCooldown
+
+-------------------------------------------------------------------------------
+--- Wipe hook-captured cooldown caches
+---   (`_ecmeChildHasDurObj`, `_ecmeDurObj`, `_ecmeRawStart` and `_ecmeRawDur`)
+--- 
+-------------------------------------------------------------------------------
+local function WipeECMECooldownTimeCaches()
+    wipe(cache._ecmeChildHasDurObj)
+    wipe(cache._ecmeDurObj)
+    wipe(cache._ecmeRawStart)
+    wipe(cache._ecmeRawDur)
+end
+cache.WipeECMECooldownTimeCaches = WipeECMECooldownTimeCaches
 
 -- endregion
 
