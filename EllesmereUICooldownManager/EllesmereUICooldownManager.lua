@@ -118,29 +118,6 @@ ECME_DESAT_CURVE:AddPoint(0.001, 1)
 -- Forward declarations for glow helpers (defined later, used by consolidated helpers)
 local StartNativeGlow, StopNativeGlow
 
--- Reusable helpers to avoid closure allocation in hot-path pcall calls
-local _gcdCheckSid
-local function _CheckIsGCD()
-    local cdData = C_Spell.GetSpellCooldown(_gcdCheckSid)
-    return cdData and cdData.isOnGCD
-end
-
--- Spells that use the charge system but start at 0 and build stacks in combat.
--- These report maxCharges > 1 but currentCharges = 0 at rest, so we hide the
--- charge text when it would show "0".
-local _zeroStartChargeSpells = {
-    [399491] = true,  -- Teachings of the Monastery
-    [115294] = true,  -- Mana Tea
-    [55090]  = true,  -- Scourge Strike
-}
-
--- Cast-count spell cache: identifies spells that use GetSpellCastCount for
--- stack tracking (e.g. Sheilun's Gift, Mana Tea). These spells start at 0
--- stacks and build them in combat, so we cache the last known non-zero count
--- OOC and persist to SavedVariables for combat use.
--- Maps spellID -> last known count (number) or false (confirmed not a cast-count spell)
-local _castCountSpells = {}
-
 ECache.InitCastCountSpellsCache()
 
 -------------------------------------------------------------------------------
@@ -148,9 +125,6 @@ ECache.InitCastCountSpellsCache()
 --  Avoids redundant C API calls when the same spellID appears on multiple
 --  bars or is queried by both ApplySpellCooldown and ApplyStackCount.
 -------------------------------------------------------------------------------
-local _tickGCDCache = ECache._tickGCD
-local _tickChargeCache = ECache._tickCharge -- [spellID] = charges table or false
-local _tickAuraCache  = ECache._tickAura  -- [spellID] = aura table or false
 local _tickBlizzActiveCache = ECache._tickBlizzActive  -- [spellID] = true when Blizzard CDM marks spell as active (wasSetFromAura)
 local _tickBlizzOverrideCache = ECache._tickBlizzOverride -- [baseSpellID] = overrideSpellID, built each tick from all CDM viewer children
 local _tickBlizzChildCache = ECache._tickBlizzChild    -- [overrideSpellID] = blizzChild, for direct charge/cooldown reads on activation overrides
@@ -279,13 +253,7 @@ local function ApplySpellCooldown(icon, spellID, desatOnCD, showCharges, swAlpha
     local scd = C_Spell.GetSpellCooldownDuration(spellID)
 
     -- GCD check (per-tick cached to avoid pcall garbage per icon)
-    local isGCD = _tickGCDCache[spellID]
-    if isGCD == nil then
-        _gcdCheckSid = spellID
-        local okG, gcdVal = pcall(_CheckIsGCD)
-        isGCD = okG and gcdVal or false
-        _tickGCDCache[spellID] = isGCD
-    end
+    local isGCD = ECache.IsGCD(spellID)
 
     ---------------------------------------------------------------------------
     -- Dual invisible shadow Cooldown frames for charge state detection.
@@ -427,13 +395,9 @@ local function ApplySpellCooldown(icon, spellID, desatOnCD, showCharges, swAlpha
         -- Zero-start charge spells (e.g. Teachings of the Monastery, Mana Tea)
         -- report as charge spells but start at 0 stacks. Treat them as non-charge
         -- so they fall through to the aura/cast-count path which handles 0 correctly.
-        local useChargePath = isChargeSpell and not _zeroStartChargeSpells[spellID]
+        local useChargePath = isChargeSpell and not ECache.IsZeroChargeSpell(spellID)
         if useChargePath then
-            local charges = _tickChargeCache[spellID]
-            if charges == nil then
-                charges = C_Spell.GetSpellCharges(spellID) or false
-                _tickChargeCache[spellID] = charges
-            end
+            local charges = ECache.GetTickCharge(spellID)
             if charges and charges.currentCharges ~= nil then
                 icon._chargeText:SetText(charges.currentCharges)
                 icon._chargeText:Show()
@@ -442,12 +406,7 @@ local function ApplySpellCooldown(icon, spellID, desatOnCD, showCharges, swAlpha
             end
         else
             -- Fallback: show aura stack count for buff spells (per-tick cached)
-            local aura = _tickAuraCache[spellID]
-            if aura == nil then
-                local ok, res = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
-                aura = (ok and res) or false
-                _tickAuraCache[spellID] = aura
-            end
+            local aura = ECache.GetTickAura(spellID)
             if aura and aura.applications and not (issecretvalue and issecretvalue(aura.applications)) and aura.applications > 1 then
                 icon._chargeText:SetText(aura.applications)
                 icon._chargeText:Show()
@@ -457,7 +416,7 @@ local function ApplySpellCooldown(icon, spellID, desatOnCD, showCharges, swAlpha
                 -- Only attempt for confirmed cast-count spells (cached OOC).
                 -- In combat, returns secret values ΓÇö pass directly to SetText.
                 ECache.CacheCastCountSpell(spellID)
-                if _castCountSpells[spellID] then
+                if ECache.IsCachedCastCountSpell(spellID) then
                     local ok, count = pcall(C_Spell.GetSpellCastCount, spellID)
                     if ok and count then
                         if issecretvalue and issecretvalue(count) then
@@ -594,12 +553,7 @@ local function ApplyStackCount(icon, resolvedSid, auraInstanceID, auraUnit, show
 
     -- Aura-based stack lookup: check the resolved spell ID for applications
     if resolvedSid and resolvedSid > 0 then
-        local aura = _tickAuraCache[resolvedSid]
-        if aura == nil then
-            local ok, res = pcall(C_UnitAuras.GetPlayerAuraBySpellID, resolvedSid)
-            aura = (ok and res) or false
-            _tickAuraCache[resolvedSid] = aura
-        end
+        local aura = ECache.GetTickAura(resolvedSid)
         if aura then
             local apps = aura.applications
             if apps ~= nil and not (issecretvalue and issecretvalue(apps)) and apps > 1 then
@@ -630,7 +584,7 @@ local function ApplyStackCount(icon, resolvedSid, auraInstanceID, auraUnit, show
     -- to SetText (FontStrings render secrets natively), same as charge text.
     if resolvedSid and resolvedSid > 0 and C_Spell.GetSpellCastCount then
         ECache.CacheCastCountSpell(resolvedSid)
-        if _castCountSpells[resolvedSid] then
+        if ECache.IsCachedCastCountSpell(resolvedSid) then
             local ok, count = pcall(C_Spell.GetSpellCastCount, resolvedSid)
             if ok and count then
                 if issecretvalue and issecretvalue(count) then
@@ -4324,10 +4278,7 @@ local function UpdateAllCDMBars(dt)
     cdmUpdateThrottle = 0
 
     -- Wipe per-tick caches (GCD, charges, auras, totem info)
-    wipe(_tickGCDCache)
-    wipe(_tickChargeCache)
-    wipe(_tickAuraCache)
-    wipe(_tickTotemCache)
+    ECache.WipePerTickCaches()
     -- Build per-tick Blizzard active state cache: scan all CDM viewers for
     -- children marked wasSetFromAura, map their resolved spellID -> true.
     -- Also build override cache: maps base spellID -> current overrideSpellID

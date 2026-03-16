@@ -4,9 +4,7 @@ local cache = ns.ECdmCache
 
 -- region Tables
 
-cache._tickGCD   = {}  -- [spellID] = bool|nil (GCD check result)
-cache._tickCharge = {} -- [spellID] = charges table or false
-cache._tickAura  = {}  -- [spellID] = aura table or false
+
 cache._tickBlizzActive = {}  -- [spellID] = true when Blizzard CDM marks spell as active (wasSetFromAura)
 cache._tickBlizzOverride = {} -- [baseSpellID] = overrideSpellID, built each tick from all CDM viewer children
 cache._tickBlizzChild = {}    -- [overrideSpellID] = blizzChild, for direct charge/cooldown reads on activation overrides
@@ -17,7 +15,6 @@ cache._tickBlizzMultiChild = {} -- [baseSid] = { ch1, ch2, ... } when multiple C
 cache._activeMultiScratch = {}      -- reusable scratch table for active multi-child filtering and companion child mapping
 
 -- Export to NS
-ns._tickAuraCache = cache._tickAura
 ns._tickBlizzActiveCache = cache._tickBlizzActive
 ns._tickBlizzAllChildCache = cache._tickBlizzAllChild
 ns._tickBlizzBuffChildCache = cache._tickBlizzBuffChild
@@ -43,6 +40,103 @@ ns._ecmeDurObjCache = cache._ecmeDurObj
 ns._ecmeRawStartCache = cache._ecmeRawStart
 ns._ecmeRawDurCache = cache._ecmeRawDur
 
+-- endregion
+
+-- region Tick
+
+-- region Tick GCD
+
+cache._tickGCD   = {}  -- [spellID] = bool|nil (GCD check result)
+
+-- Reusable helpers to avoid closure allocation in hot-path pcall calls
+local _gcdCheckSid
+local function _CheckIsGCD()
+    local cdData = C_Spell.GetSpellCooldown(_gcdCheckSid)
+    return cdData and cdData.isOnGCD
+end
+
+-------------------------------------------------------------------------------
+--- Checks the GCD for the spell with given ID
+---   (per-tick cached to avoid pcall garbage per icon)
+--- @param spellID number       The ID of the spell to cache
+--- @return boolean isGCD       true if the spell is on the GCD, false otherwise
+-------------------------------------------------------------------------------
+local function IsGCD(spellID)
+    local isGCD = cache._tickGCD[spellID]
+    if isGCD == nil then
+        _gcdCheckSid = spellID
+        local okG, gcdVal = pcall(_CheckIsGCD)
+        isGCD = okG and gcdVal or false
+        cache._tickGCD[spellID] = isGCD
+    end
+    return isGCD
+end
+cache.IsGCD = IsGCD
+
+-- endregion
+
+-- region Tick Charge
+
+cache._tickCharge = {} -- [spellID] = charges table or false
+
+-------------------------------------------------------------------------------
+--- Gets charges for the given spellID, from the cache if present otherwise
+---   using C_Spell.GetSpellCharges (and caches the result).
+--- @param spellID number   The ID of the spell to check
+--- @return SpellChargeInfo charges  Charges for the given spell
+-------------------------------------------------------------------------------
+local function GetTickCharge(spellID)
+    local charges = cache._tickCharge[spellID]
+    if charges == nil then
+        charges = C_Spell.GetSpellCharges(spellID) or false
+        cache._tickCharge[spellID] = charges
+    end
+    return charges
+end
+cache.GetTickCharge = GetTickCharge
+
+-- endregion
+
+-- region Tick Aura
+
+cache._tickAura  = {}  -- [spellID] = aura table or false
+ns._tickAuraCache = cache._tickAura
+
+-------------------------------------------------------------------------------
+--- Gets the AuraData from either the cache or C_UnitAuras.GetPlayerAuraBySpellID
+---   for the given spellID. Stores in the cache if found and not present in the
+---   cache.
+--- @param spellID number           The ID of the spell to check
+--- @return AuraData|boolean aura   The AuraData if found, false otherwise
+-------------------------------------------------------------------------------
+local function GetTickAura(spellID)
+    local aura = cache._tickAura[spellID]
+    if aura == nil then
+        local ok, res = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
+        aura = (ok and res) or false
+        cache._tickAura[spellID] = aura
+    end
+    return aura
+end
+cache.GetTickAura = GetTickAura
+
+-- endregion
+
+-------------------------------------------------------------------------------
+--- Wipe per-tick caches (GCD, charges, auras, totem info)
+---
+-------------------------------------------------------------------------------
+local function WipePerTickCaches()
+    wipe(cache._tickGCD)
+    wipe(cache._tickCharge)
+    wipe(cache._tickAura)
+    wipe(cache._tickTotem)
+end
+cache.WipePerTickCaches = WipePerTickCaches
+
+-- endregion
+
+-- region Multi-charge spells
 
 -- Multi-charge spell cache: populated out of combat when values are not secret.
 -- Falls back to SavedVariables for combat /reload scenarios.
@@ -53,10 +147,6 @@ cache._maxChargeCount    = {}  -- [spellID] = maxCharges, populated alongside _m
 -- Export to NS (Expose charge cache to options file for preview rendering)
 ns._multiChargeSpells    = cache._multiChargeSpells
 ns._maxChargeCount       = cache._maxChargeCount
-
--- endregion
-
--- region Multi-charge spells
 
 -------------------------------------------------------------------------------
 --- Wipe multi-charge spells cache (_multiChargeSpells and _maxChargeCount)
@@ -208,6 +298,17 @@ local _zeroStartChargeSpells = {
     [55090]  = true,  -- Scourge Strike
 }
 
+-------------------------------------------------------------------------------
+--- Returns true if the spell ID is registered in `_zeroStartChargeSpells` 
+---   (with value true)
+--- @param spellID number   The ID of the spell to check
+--- @returns boolean isZeroChargeSpell
+-------------------------------------------------------------------------------
+local function IsZeroChargeSpell(spellID)
+    return _zeroStartChargeSpells[spellID] == true
+end
+cache.IsZeroChargeSpell = IsZeroChargeSpell
+
 -- Cast-count spell cache: identifies spells that use GetSpellCastCount for
 -- stack tracking (e.g. Sheilun's Gift, Mana Tea). These spells start at 0
 -- stacks and build them in combat, so we cache the last known non-zero count
@@ -227,6 +328,16 @@ local function InitCastCountSpellsCache()
 end
 cache.InitCastCountSpellsCache = InitCastCountSpellsCache
 
+-------------------------------------------------------------------------------
+--- Returns true if the spell ID is registered in `_castCountSpells`
+---   (and not nil)
+--- @param spellID number   The ID of the spell to check
+--- @returns boolean isCachedCastCountSpell
+-------------------------------------------------------------------------------
+local function IsCachedCastCountSpell(spellID)
+    return cache._castCountSpells[spellID] ~= nil
+end
+cache.IsCachedCastCountSpell = IsCachedCastCountSpell
 
 -------------------------------------------------------------------------------
 --- Adds a cast-count spell to the cache (if it is a cache-count spell)
@@ -310,3 +421,6 @@ end
 cache.IsTotemChildStillValid = IsTotemChildStillValid
 
 -- endregion
+
+
+
