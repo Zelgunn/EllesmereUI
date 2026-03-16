@@ -294,6 +294,73 @@ cache.IsSpellCachedInTickBlizzardAllChild = IsSpellCachedInTickBlizzardAllChild
 
 -- endregion
 
+-- region _tickBlizzBuffChild
+
+-------------------------------------------------------------------------------
+--- Get the blizzard buff child for spellID from the cache `_tickBlizzBuffChild`
+--- @param spellID number           The spell ID to query
+--- @return Frame|nil blizzardBuffChild
+-------------------------------------------------------------------------------
+local function GetTickBlizzardBuffChild(spellID)
+    return cache._tickBlizzBuffChild[spellID]
+end
+cache.GetTickBlizzardBuffChild = GetTickBlizzardBuffChild
+
+-------------------------------------------------------------------------------
+--- Stores in the `_tickBlizzBuffChild` cache the `blizzardBuffChild` for `spellID`
+--- @param spellID number           The spell ID to override
+--- @param blizzardBuffChild Frame      The blizzard child for spellID
+-------------------------------------------------------------------------------
+local function CacheTickBlizzardBuffChild(spellID, blizzardBuffChild)
+    cache._tickBlizzBuffChild[spellID] = blizzardBuffChild
+end
+cache.CacheTickBlizzardBuffChild = CacheTickBlizzardBuffChild
+
+-------------------------------------------------------------------------------
+--- Returns the first blizzard child between `resolvedID` and `spellID`
+---   (`resolvedID` has priority over `spellID`.)
+--- Uses `_tickBlizzBuffChild` as the reference cache.
+--- @param spellID number           The (original) spell ID to query
+--- @param resolvedID number|nil    The resolved spell ID to query
+--- @return Frame|nil blizzardBuffChild
+-------------------------------------------------------------------------------
+local function GetResolvedBlizzardBuffChild(spellID, resolvedID)
+    return cache._tickBlizzBuffChild[resolvedID] or cache._tickBlizzBuffChild[spellID]
+end
+cache.GetResolvedBlizzardBuffChild = GetResolvedBlizzardBuffChild
+
+-------------------------------------------------------------------------------
+--- Checks if spellID is cached in `_tickBlizzBuffChild`
+--- @param spellID number           The spell ID to check
+--- @return boolean spellCachedInTickBlizzardBuffChild
+-------------------------------------------------------------------------------
+local function IsSpellCachedInTickBlizzardBuffChild(spellID)
+    return cache._tickBlizzBuffChild[spellID] ~= nil
+end
+cache.IsSpellCachedInTickBlizzardBuffChild = IsSpellCachedInTickBlizzardBuffChild
+
+-- endregion
+
+-------------------------------------------------------------------------------
+--- For buff bars, this function returns the CDM's child
+---   based on assignedChild and cached data.
+--- Returns nil otherwise.
+--- @param spellID number           The base spell ID before resolution
+--- @param resolvedID number        The spell ID after resolution
+--- @param isBuffBar boolean        true if the current bar is a buff bar, otherwise false
+--- @param assignedChild table|nil  Companion child for multi-child buff spells (e.g. Eclipse)
+---  When set, this specific CDM child is used instead of cache lookups.
+--- @return table|nil blizzardBuffChild The CDM's child's live icon if it exists
+-------------------------------------------------------------------------------
+local function GetBlizzardBuffChild(spellID, resolvedID, isBuffBar, assignedChild)
+    return isBuffBar
+        and (assignedChild
+             or GetResolvedBlizzardBuffChild(spellID, resolvedID)
+             or GetResolvedBlizzardAllChild(spellID, resolvedID))
+        or nil
+end
+cache.GetBlizzardBuffChild = GetBlizzardBuffChild
+
 -- endregion
 
 -------------------------------------------------------------------------------

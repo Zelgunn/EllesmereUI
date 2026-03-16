@@ -133,7 +133,6 @@ ECache.InitCastCountSpellsCache()
 --  Avoids redundant C API calls when the same spellID appears on multiple
 --  bars or is queried by both ApplySpellCooldown and ApplyStackCount.
 -------------------------------------------------------------------------------
-local _tickBlizzBuffChildCache = ECache._tickBlizzBuffChild -- [resolvedSid] = blizzChild, only from BuffIcon/BuffBar viewers
 local _tickBlizzCDChildCache   = ECache._tickBlizzCDChild -- [resolvedSid] = blizzChild, only from Essential/Utility viewers
 local _tickBlizzMultiChildCache = ECache._tickBlizzMultiChild -- [baseSid] = { ch1, ch2, ... } when multiple CDM children share a base spellID
 local _activeMultiScratch = ECache._activeMultiScratch      -- reusable scratch table for active multi-child filtering and companion child mapping
@@ -3170,24 +3169,7 @@ local function CacheSpellIconTexture(spellID, resolvedID)
     return textureID
 end
 
--------------------------------------------------------------------------------
---- For buff bars, this function returns the CDM's child
----   based on assignedChild and cached data.
---- Returns nil otherwise.
---- @param spellID number           The base spell ID before resolution
---- @param resolvedID number        The spell ID after resolution
---- @param isBuffBar boolean        true if the current bar is a buff bar, otherwise false
---- @param assignedChild table|nil  Companion child for multi-child buff spells (e.g. Eclipse)
----  When set, this specific CDM child is used instead of cache lookups.
---- @return table|nil blizzardBuffChild The CDM's child's live icon if it exists
--------------------------------------------------------------------------------
-local function GetBlizzardBuffChild(spellID, resolvedID, isBuffBar, assignedChild)
-    return isBuffBar
-        and (assignedChild
-             or _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
-             or ECache.GetResolvedBlizzardAllChild(spellID, resolvedID))
-        or nil
-end
+
 
 
 -------------------------------------------------------------------------------
@@ -3203,7 +3185,7 @@ end
 local function GetTextureForProcable(spellID, resolvedID, currentTexture)
     local procEntry = ns.BUFF_PROC_ICON_OVERRIDES[spellID] or ns.BUFF_PROC_ICON_OVERRIDES[resolvedID]
     if procEntry then
-        local buffChild = _tickBlizzBuffChildCache[procEntry.buffID]
+        local buffChild = ECache.GetTickBlizzardBuffChild(procEntry.buffID)
         if IsBufChildCooldownActive(buffChild) then
             local procTexture = _spellIconCache[procEntry.replacementSpellID]
             --- Get procTexture if it was not in the cache yet
@@ -3348,7 +3330,7 @@ local function UpdateCustomBarIcons(barKey)
                     -- For buff bars, prefer the CDM child's live Icon texture so
                     -- aura-driven icon changes (e.g. Heating Up -> Hot Streak) are
                     -- reflected each tick instead of staying stuck on the static cache.
-                    local blizzBuffChild = GetBlizzardBuffChild(spellID, resolvedID, isBuffBarForOverride, nil)
+                    local blizzBuffChild = ECache.GetBlizzardBuffChild(spellID, resolvedID, isBuffBarForOverride, nil)
                     local blizzBuffChildTexSet = EUtils.CopyBuffWidgetTexture(ourIcon, blizzBuffChild, overrideTex)
                     local effectiveTex = overrideTex or texID
                     -- Proc-conditional icon override: swap icon while a buff is active
@@ -3459,7 +3441,7 @@ local function UpdateCustomBarIcons(barKey)
                             -- Fallback: check buff-viewer child, then all-child cache (covers totems in
                             -- Essential/Utility viewers and summons like Dreadstalkers with no aura)
                             if not isActive then
-                                local blzBufCh = _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
+                                local blzBufCh = ECache.GetResolvedBlizzardBuffChild(spellID, resolvedID)
                                                  or ECache.GetResolvedBlizzardAllChild(spellID, resolvedID)
                                 if IsBufChildCooldownActive(blzBufCh) then isActive = true end
                             end
@@ -3620,7 +3602,7 @@ UpdateCDMBarIcons = function(barKey)
                     -- Proc-conditional icon override: swap icon while a buff is active
                     local procEntryM = ns.BUFF_PROC_ICON_OVERRIDES[spellID] or (resolvedSid and ns.BUFF_PROC_ICON_OVERRIDES[resolvedSid])
                     if procEntryM then
-                        local buffChildM = _tickBlizzBuffChildCache[procEntryM.buffID]
+                        local buffChildM = ECache.GetTickBlizzardBuffChild(procEntryM.buffID)
                         if IsBufChildCooldownActive(buffChildM) then
                             local procTexM = _spellIconCache[procEntryM.replacementSpellID]
                             if not procTexM then
@@ -3702,7 +3684,7 @@ UpdateCDMBarIcons = function(barKey)
                 local baseSpellFb = blizzIcon and blizzIcon._ecmeBaseSpellID
                 local blzFbActive = ECache.IsTickBlizzardActive(resolvedSid) or (baseSpellFb and ECache.IsTickBlizzardActive(baseSpellFb))
                 if not blzFbActive then
-                    local blzBufCh = _tickBlizzBuffChildCache[resolvedSid] or (baseSpellFb and _tickBlizzBuffChildCache[baseSpellFb])
+                    local blzBufCh = ECache.GetTickBlizzardBuffChild(resolvedSid) or (baseSpellFb and ECache.GetTickBlizzardBuffChild(baseSpellFb))
                     if IsBufChildCooldownActive and blzBufCh then
                         if IsBufChildCooldownActive(blzBufCh) then blzFbActive = true end
                     end
@@ -3789,7 +3771,7 @@ UpdateCDMBarIcons = function(barKey)
                 local isActive = ECache.IsTickBlizzardActive(resolvedSid)
                 -- Fallback: check buff-viewer child, then all-child cache (covers totems)
                 if not isActive then
-                    local blzBufCh = _tickBlizzBuffChildCache[resolvedSid]
+                    local blzBufCh = ECache.GetTickBlizzardBuffChild(resolvedSid)
                                      or ECache.GetTickBlizzardAllChild(resolvedSid)
                     if IsBufChildCooldownActive(blzBufCh) then isActive = true end
                 end
@@ -4209,7 +4191,7 @@ local function UpdateTrackedBarIcons(barKey)
                 -- aura-driven icon changes (e.g. Heating Up -> Hot Streak) are
                 -- reflected each tick instead of staying stuck on the static cache.
                 local assignedChild = companionChild and companionChild[i]
-                local blizzBuffChild = GetBlizzardBuffChild(spellID, resolvedID, isBuffBarForOverride, assignedChild)
+                local blizzBuffChild = ECache.GetBlizzardBuffChild(spellID, resolvedID, isBuffBarForOverride, assignedChild)
                 local blizzBuffChildTexSet = EUtils.CopyBuffWidgetTexture(ourIcon, blizzBuffChild, overrideTex)
                 local effectiveTex = overrideTex or texID
                 -- Proc-conditional icon override: swap icon while a buff is active
@@ -4272,7 +4254,7 @@ local function UpdateTrackedBarIcons(barKey)
                         local isActive = ECache.IsTickBlizzardActive(spellID, resolvedID)
                         -- Fallback: check if the buff-viewer child's cooldown is running
                         if not isActive then
-                            local blzBufCh = assignedChild or _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
+                            local blzBufCh = assignedChild or ECache.GetResolvedBlizzardBuffChild(spellID, resolvedID)
                                              or ECache.GetResolvedBlizzardAllChild(spellID, resolvedID)
                             if IsBufChildCooldownActive(blzBufCh) then isActive = true end
                         end
@@ -4437,8 +4419,8 @@ local function UpdateAllCDMBars(dt)
                                     -- widget with GetTexture(), while BuffBar's Icon
                                     -- is a Frame wrapper.  Since BuffIcon is processed
                                     -- first, BuffBar only stores when no entry exists.
-                                    if isBuffIconViewer or not _tickBlizzBuffChildCache[resolvedSid] then
-                                        _tickBlizzBuffChildCache[resolvedSid] = ch
+                                    if isBuffIconViewer or not ECache.GetTickBlizzardBuffChild(resolvedSid) then
+                                        ECache.CacheTickBlizzardBuffChild(resolvedSid, ch)
                                     end
                                     -- Linked-spell cache: for spells like Eclipse that
                                     -- have multiple variant auras (Lunar/Solar) under a
@@ -4450,16 +4432,16 @@ local function UpdateAllCDMBars(dt)
                                     if linked then
                                         local base = baseSpellID
                                         if base and base > 0 and base ~= resolvedSid then
-                                            if isBuffIconViewer or not _tickBlizzBuffChildCache[base] then
-                                                _tickBlizzBuffChildCache[base] = ch
+                                            if isBuffIconViewer or not ECache.GetTickBlizzardBuffChild(base) then
+                                                ECache.CacheTickBlizzardBuffChild(base, ch)
                                             end
                                             ECache.CacheTickBlizzardAllChild(base, ch)
                                         end
                                         for li = 1, #linked do
                                             local lsid = linked[li]
                                             if lsid and lsid > 0 and lsid ~= resolvedSid then
-                                                if isBuffIconViewer or not _tickBlizzBuffChildCache[lsid] then
-                                                    _tickBlizzBuffChildCache[lsid] = ch
+                                                if isBuffIconViewer or not ECache.GetTickBlizzardBuffChild(lsid) then
+                                                    ECache.CacheTickBlizzardBuffChild(lsid, ch)
                                                 end
                                                 ECache.CacheTickBlizzardAllChild(lsid, ch)
                                             end
@@ -4480,8 +4462,8 @@ local function UpdateAllCDMBars(dt)
                                 local correctSid = _cdIDToCorrectSID[cdID]
                                 if correctSid and resolvedSid and correctSid ~= resolvedSid then
                                     ECache.CacheTickBlizzardAllChild(correctSid, ch)
-                                    if isBuffIconViewer or not _tickBlizzBuffChildCache[correctSid] then
-                                        _tickBlizzBuffChildCache[correctSid] = ch
+                                    if isBuffIconViewer or not ECache.GetTickBlizzardBuffChild(correctSid) then
+                                        ECache.CacheTickBlizzardBuffChild(correctSid, ch)
                                     end
                                     if ch.wasSetFromAura == true or ch.auraInstanceID ~= nil then
                                         local totemSlot = ch.preferredTotemUpdateSlot
