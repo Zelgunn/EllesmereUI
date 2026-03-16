@@ -1176,7 +1176,7 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
     -- Text overlay frame: renders above focus stripe overlay (level +1)
     plate.healthTextFrame = CreateFrame("Frame", nil, plate)
     plate.healthTextFrame:SetAllPoints(plate.health)
-    plate.healthTextFrame:SetFrameLevel(plate.health:GetFrameLevel() + 2)
+    plate.healthTextFrame:SetFrameLevel(plate.health:GetFrameLevel() + 7)
     plate.hpText = plate.healthTextFrame:CreateFontString(nil, "OVERLAY")
     SetFSFont(plate.hpText, 10, GetNPOutline())
     PP.Point(plate.hpText, "RIGHT", plate.health, "RIGHT", -2, 0)

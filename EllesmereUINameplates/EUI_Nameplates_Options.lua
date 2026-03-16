@@ -418,7 +418,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Text overlay frame: renders above health bar fill and borders (same as real addon)
         local healthTextFrame = CreateFrame("Frame", nil, health)
         healthTextFrame:SetAllPoints(health)
-        healthTextFrame:SetFrameLevel(health:GetFrameLevel() + 2)
+        healthTextFrame:SetFrameLevel(health:GetFrameLevel() + 7)
 
         -- Top text overlay: renders above health bar + borders so top-slot text is never hidden
         local topTextFrame = CreateFrame("Frame", nil, pf)
