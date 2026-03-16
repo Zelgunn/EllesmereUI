@@ -12,6 +12,16 @@ local Known = function(id) return id and (IsPlayerSpell(id) or IsSpellKnown(id))
 local InCombat = function() return InCombatLockdown and InCombatLockdown() end
 local floor, max, min, abs = math.floor, math.max, math.min, math.abs
 
+-------------------------------------------------------------------------------
+--  Hunter's Mark combat reminder state
+--  On combat enter: flag is set to true (reminder needed).
+--  On UNIT_SPELLCAST_SUCCEEDED for Hunter's Mark: flag cleared.
+--  On combat leave: flag cleared.
+--  OOC: falls back to target debuff check instead.
+-------------------------------------------------------------------------------
+local _huntersMarkNeeded = false
+local _huntersMarkCooldown = false  -- brief cooldown after casting OOC
+
 local texCache = {}
 local function Tex(id)
     local c = texCache[id]; if c then return c end
@@ -561,7 +571,7 @@ local RAID_BUFFS = {
       buffIDs={381732,381741,381746,381748,381749,381750,381751,381752,381753,381754,381756,381757,381758},
       check="raid" },
     { key="sky",    class="SHAMAN",  name="Skyfury",                castSpell=462854, buffIDs={462854},  check="raid" },
-    { key="hmark",  class="HUNTER",  name="Hunter's Mark",          castSpell=257284, buffIDs={257284},  check="targetDebuff" },
+    { key="hmark",  class="HUNTER",  name="Hunter's Mark",          castSpell=257284, buffIDs={257284},  check="huntersMark" },
 }
 
 -------------------------------------------------------------------------------
@@ -1441,8 +1451,8 @@ if inInstance or rb.showNonInstanced then
             -- In combat, skip buffs whose IDs are not all whitelisted
             local canCheck = true
             if inCombat then
-                if buff.check == "targetDebuff" then
-                    canCheck = false  -- debuff reads are secret in combat
+                if buff.check == "huntersMark" then
+                    canCheck = true  -- uses state flag, no aura reading needed
                 else
                     for _, id in ipairs(buff.buffIDs) do
                         if not NON_SECRET_SPELL_IDS[id] then canCheck = false; break end
@@ -1451,20 +1461,26 @@ if inInstance or rb.showNonInstanced then
             end
             if canCheck then
                 local isMissing = false
-                if buff.check == "targetDebuff" then
-                    isMissing = not TargetHasDebuffByID(buff.buffIDs)
+                if buff.check == "huntersMark" then
+                    if inCombat then
+                        isMissing = _huntersMarkNeeded
+                    else
+                        -- OOC: show if we have a hostile target without the mark
+                        -- (skip briefly after casting to avoid flicker)
+                        isMissing = not _huntersMarkCooldown and not TargetHasDebuffByID(buff.buffIDs)
+                    end
                 elseif rb.showOthersMissing and buff.check == "raid" and (IsInGroup() or IsInRaid()) then
                     isMissing = AnyGroupMemberMissingBuff(buff.buffIDs)
                 else
                     isMissing = not PlayerHasAuraByID(buff.buffIDs)
                 end
                 if isMissing then
-                    local isTargetDebuff = (buff.check == "targetDebuff")
+                    local isTargetSpell = (buff.check == "huntersMark")
                     missing[#missing+1] = {
                         cat = "raidbuff", data = buff, scale = rb.scale or 1.0,
                         setup = function(btn)
                             SetIconSpell(btn, buff.castSpell, Tex(buff.castSpell), buff.name)
-                            if isTargetDebuff and not InCombat() then
+                            if isTargetSpell and not InCombat() then
                                 btn:SetAttribute("unit", "target")
                             end
                             btn._text:SetText(ShortLabel(buff.name))
@@ -1969,8 +1985,11 @@ local function Refresh()
                 if not (dk and _dismissedUntilLoad[dk]) then
                     -- Only show reminders whose buff IDs are ALL whitelisted non-secret.
                     -- Anything else must never appear during combat.
+                    -- huntersMark uses a state flag (no aura reading), always safe.
                     local safe = false
-                    if m.data and m.data.buffIDs then
+                    if m.data and m.data.check == "huntersMark" then
+                        safe = true
+                    elseif m.data and m.data.buffIDs then
                         safe = true
                         for _, id in ipairs(m.data.buffIDs) do
                             if not NON_SECRET_SPELL_IDS[id] then safe = false; break end
@@ -2382,7 +2401,7 @@ end)
 -------------------------------------------------------------------------------
 local mainFrame = CreateFrame("Frame")
 
-mainFrame:SetScript("OnEvent", function(_, e, arg1, arg2)
+mainFrame:SetScript("OnEvent", function(_, e, arg1, arg2, arg3)
     if e == "PLAYER_LOGIN" then
         db = EllesmereUI.Lite.NewDB("EllesmereUIAuraBuffRemindersDB", defaults, true)
 
@@ -2529,11 +2548,17 @@ mainFrame:SetScript("OnEvent", function(_, e, arg1, arg2)
         _G._EABR_UpdateGroupAuraRegistration = UpdateGroupAuraRegistration
         UpdateGroupAuraRegistration()
 
+        -- Register spellcast tracking for Hunters (combat reminder for Hunter's Mark)
+        if GetPlayerClass() == "HUNTER" then
+            mainFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+        end
+
         return
     end
 
     if e == "PLAYER_REGEN_DISABLED" then
         -- Entering combat: immediately hide OOC secure icons, snapshot, then refresh
+        _huntersMarkNeeded = true
         FadeOutSecureIcons()
         SnapshotPlayerAuras()
         SnapshotOwnOnRaidBuffs()
@@ -2543,10 +2568,28 @@ mainFrame:SetScript("OnEvent", function(_, e, arg1, arg2)
 
     if e == "PLAYER_REGEN_ENABLED" then
         -- Leaving combat: clean up combat icons, do full OOC refresh with secure buttons
+        _huntersMarkNeeded = false
+        _huntersMarkCooldown = false
         HideCombatIcons()
         HideCursorIcons()
         pendingOOCRefresh = false
         RequestRefresh()
+        return
+    end
+
+    if e == "UNIT_SPELLCAST_SUCCEEDED" then
+        -- arg1 = unit ("player"), arg2 = castGUID, arg3 = spellID
+        if arg3 == 257284 then
+            _huntersMarkNeeded = false
+            if not InCombat() then
+                _huntersMarkCooldown = true
+                C_Timer.After(5, function()
+                    _huntersMarkCooldown = false
+                    RequestRefresh()
+                end)
+            end
+            RequestRefresh()
+        end
         return
     end
 
