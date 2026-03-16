@@ -1134,8 +1134,57 @@ initFrame:SetScript("OnEvent", function(self)
     local _tbbPvFrame
     local _tbbPvIcon
 
+    -- Pool of unlock placeholders, one per bar (module-scope for cross-page access)
+    local _tbbPlaceholders = {}
+    local function UpdateTBBPlaceholder()
+        ns._tbbPlaceholderMode = true
+        local tbb = ns.GetTrackedBuffBars()
+        local bars = tbb and tbb.bars
+        if not bars then return end
+        for i, _ in ipairs(bars) do
+            local liveBar = ns.GetTBBFrame and ns.GetTBBFrame(i)
+            if liveBar then
+                if not _tbbPlaceholders[i] then
+                    _tbbPlaceholders[i] = EllesmereUI.BuildUnlockPlaceholder({
+                        parent = liveBar,
+                        onClick = function()
+                            if EllesmereUI._openUnlockMode then
+                                EllesmereUI._unlockReturnModule = EllesmereUI:GetActiveModule()
+                                EllesmereUI._unlockReturnPage   = EllesmereUI:GetActivePage()
+                                C_Timer.After(0, EllesmereUI._openUnlockMode)
+                            end
+                        end,
+                    })
+                else
+                    local ph = _tbbPlaceholders[i]
+                    ph:SetParent(liveBar)
+                    ph:SetAllPoints(liveBar)
+                    ph:SetFrameLevel(liveBar:GetFrameLevel() + 10)
+                end
+                _tbbPlaceholders[i]:Show()
+                liveBar:Show()
+            end
+        end
+        -- Hide any leftover placeholders from deleted bars
+        for i = (#bars + 1), #_tbbPlaceholders do
+            if _tbbPlaceholders[i] then _tbbPlaceholders[i]:Hide() end
+        end
+    end
+    local function HideTBBPlaceholder()
+        ns._tbbPlaceholderMode = false
+        for _, ph in ipairs(_tbbPlaceholders) do
+            if ph then ph:Hide() end
+        end
+    end
+    ns.HideTBBPlaceholders = HideTBBPlaceholder
+    EllesmereUI:RegisterOnHide(HideTBBPlaceholder)
+
     -- Buff spell picker for tracked buff bars (reuses CDM buff spell list)
     local _tbbSpellPickerMenu
+
+    EllesmereUI:RegisterOnHide(function()
+        if _tbbSpellPickerMenu then _tbbSpellPickerMenu:Hide() end
+    end)
 
     -- Show the "Custom Buff ID" popup with Spell ID + Duration fields
     local function ShowCustomBuffIDPopup(anchorFrame, barCfg, onChanged)
@@ -1296,6 +1345,7 @@ initFrame:SetScript("OnEvent", function(self)
             barCfg.spellID        = sid
             barCfg.spellIDs       = nil
             barCfg.popularKey     = nil
+            barCfg.glowBased      = nil
             barCfg.customDuration = dur
             barCfg.name           = C_Spell.GetSpellName(sid)
             Refresh()
@@ -1426,8 +1476,9 @@ initFrame:SetScript("OnEvent", function(self)
                 menu:Hide()
                 barCfg.popularKey     = entry.key
                 barCfg.spellIDs       = entry.spellIDs
+                barCfg.glowBased      = entry.glowBased or nil
                 barCfg.customDuration = entry.customDuration
-                barCfg.spellID        = entry.spellIDs[1] or 0
+                barCfg.spellID        = entry.spellIDs and entry.spellIDs[1] or 0
                 barCfg.name           = entry.name
                 Refresh()
                 ns.BuildTrackedBuffBars()
@@ -1506,6 +1557,7 @@ initFrame:SetScript("OnEvent", function(self)
                 barCfg.spellID        = sp.spellID
                 barCfg.spellIDs       = nil
                 barCfg.popularKey     = nil
+                barCfg.glowBased      = nil
                 barCfg.customDuration = nil
                 barCfg.name           = sp.name
                 Refresh()
@@ -1575,6 +1627,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         local _tbbRefreshTimer
+
         local function RefreshTBB()
             if _tbbRefreshTimer then _tbbRefreshTimer:Cancel() end
             _tbbRefreshTimer = C_Timer.NewTimer(0.05, function()
@@ -1582,6 +1635,7 @@ initFrame:SetScript("OnEvent", function(self)
                 Refresh()
                 ns.BuildTrackedBuffBars()
                 EllesmereUI:SetContentHeader(_tbbHeaderBuilder)
+                UpdateTBBPlaceholder()
             end)
         end
 
@@ -1638,7 +1692,7 @@ initFrame:SetScript("OnEvent", function(self)
                 local bd = SelectedTBB()
                 if bd then
                     local label = bd.name or "Bar"
-                    if bd.spellID and bd.spellID > 0 then
+                    if not bd.popularKey and bd.spellID and bd.spellID > 0 then
                         local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(bd.spellID)
                         if info and info.name then label = info.name end
                     end
@@ -1681,7 +1735,7 @@ initFrame:SetScript("OnEvent", function(self)
                     iLbl:SetWordWrap(false); iLbl:SetMaxLines(1)
                     iLbl:SetPoint("LEFT", item, "LEFT", 10, 0)
                     local displayName = b.name or ("Bar " .. idx)
-                    if b.spellID and b.spellID > 0 then
+                    if not b.popularKey and b.spellID and b.spellID > 0 then
                         local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(b.spellID)
                         if info and info.name then displayName = info.name end
                     end
@@ -1831,50 +1885,61 @@ initFrame:SetScript("OnEvent", function(self)
                 pvTextOverlay:SetAllPoints(pvBar)
                 pvTextOverlay:SetFrameLevel(pvBar:GetFrameLevel() + 3)
 
-                if bd.showTimer then
+                -- Helper: position a preview FontString based on a position key
+                local function PositionPVText(fs, pos, xOff, yOff)
+                    fs:ClearAllPoints()
+                    if pos == "center" then
+                        fs:SetPoint("CENTER", pvBar, "CENTER", xOff, yOff)
+                        fs:SetJustifyH("CENTER")
+                    elseif pos == "top" then
+                        fs:SetPoint("BOTTOM", pvBar, "TOP", xOff, 5 + yOff)
+                        fs:SetJustifyH("CENTER")
+                    elseif pos == "bottom" then
+                        fs:SetPoint("TOP", pvBar, "BOTTOM", xOff, -5 + yOff)
+                        fs:SetJustifyH("CENTER")
+                    elseif pos == "left" then
+                        fs:SetPoint("LEFT", pvBar, "LEFT", 5 + xOff, yOff)
+                        fs:SetJustifyH("LEFT")
+                    elseif pos == "right" then
+                        fs:SetPoint("RIGHT", pvBar, "RIGHT", -5 + xOff, yOff)
+                        fs:SetJustifyH("RIGHT")
+                    end
+                end
+
+                -- Timer preview
+                local timerPos = bd.timerPosition or (bd.showTimer and "right" or "none")
+                if timerPos ~= "none" then
                     local timer = pvTextOverlay:CreateFontString(nil, "OVERLAY")
                     SetPVFont(timer, FONT_PATH, bd.timerSize or 11)
                     timer:SetTextColor(1, 1, 1, 0.9)
-                    timer:SetPoint("RIGHT", pvBar, "RIGHT", -8 + (bd.timerX or 0), bd.timerY or 0)
+                    PositionPVText(timer, timerPos, bd.timerX or 0, bd.timerY or 0)
                     timer:SetText("3.2")
                 end
 
                 -- Stacks preview
-                do
-                    local sPos = bd.stacksPosition or "center"
-                    local sSize = bd.stacksSize or 11
-                    local sX = bd.stacksX or 0
-                    local sY = bd.stacksY or 0
-                    local pvStacks = pvTextOverlay:CreateFontString(nil, "OVERLAY")
-                    SetPVFont(pvStacks, FONT_PATH, sSize)
-                    pvStacks:SetTextColor(1, 1, 1, 0.9)
-                    pvStacks:SetText("3")
-                    if sPos == "top" then
-                        pvStacks:SetPoint("BOTTOM", pvBar, "TOP", sX, 5 + sY)
-                    elseif sPos == "bottom" then
-                        pvStacks:SetPoint("TOP", pvBar, "BOTTOM", sX, -5 + sY)
-                    elseif sPos == "left" then
-                        pvStacks:SetPoint("RIGHT", pvBar, "LEFT", -5 + sX, sY)
-                    elseif sPos == "right" then
-                        pvStacks:SetPoint("LEFT", pvBar, "RIGHT", 5 + sX, sY)
-                    else
-                        pvStacks:SetPoint("CENTER", pvBar, "CENTER", sX, sY)
-                    end
+                local stacksPos = bd.stacksPosition or "center"
+                if stacksPos ~= "none" then
+                    local stacksFs = pvTextOverlay:CreateFontString(nil, "OVERLAY")
+                    SetPVFont(stacksFs, FONT_PATH, bd.stacksSize or 11)
+                    stacksFs:SetTextColor(1, 1, 1, 0.9)
+                    PositionPVText(stacksFs, stacksPos, bd.stacksX or 0, bd.stacksY or 0)
+                    stacksFs:SetText("3")
                 end
 
-                -- Spell name (hidden in vertical orientation)
-                if bd.showName ~= false and not bd.verticalOrientation then
+                -- Name preview (hidden in vertical orientation)
+                local namePos = bd.namePosition or ((bd.showName ~= false) and "left" or "none")
+                if namePos ~= "none" and not bd.verticalOrientation then
                     local nameFs = pvTextOverlay:CreateFontString(nil, "OVERLAY")
                     SetPVFont(nameFs, FONT_PATH, bd.nameSize or 11)
                     nameFs:SetTextColor(1, 1, 1, 0.9)
-                    nameFs:SetPoint("LEFT", pvBar, "LEFT", 8 + (bd.nameX or 0), bd.nameY or 0)
+                    PositionPVText(nameFs, namePos, bd.nameX or 0, bd.nameY or 0)
                     -- Prefer bd.name (custom name) over spell lookup so custom items show correctly
                     local displayName = bd.name
                     if (not displayName or displayName == "" or displayName == "New Bar") and bd.spellID and bd.spellID > 0 then
                         local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(bd.spellID)
                         displayName = info and info.name
                     end
-                    if displayName and displayName ~= "" and bd.spellID and bd.spellID > 0 then
+                    if displayName and displayName ~= "" and ((bd.spellID and bd.spellID > 0) or bd.glowBased) then
                         nameFs:SetText(displayName)
                     else
                         nameFs:ClearAllPoints()
@@ -1885,7 +1950,7 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                 else
                     -- No name text, but still show hint if no spell assigned
-                    if not bd.spellID or bd.spellID == 0 then
+                    if (not bd.spellID or bd.spellID == 0) and not bd.glowBased then
                         local nameFs = pvTextOverlay:CreateFontString(nil, "OVERLAY")
                         nameFs:SetFont(FONT_PATH, 11, GetCDMOptOutline())
                         nameFs:SetTextColor(1, 1, 1, 1)
@@ -1895,14 +1960,28 @@ initFrame:SetScript("OnEvent", function(self)
                     end
                 end
 
+                -- Dark overlay for unassigned bars so the hint text is readable
+                if (not bd.spellID or bd.spellID == 0) and not bd.glowBased then
+                    local darkOv = pvBar:CreateTexture(nil, "ARTWORK", nil, 2)
+                    darkOv:SetAllPoints(pvBar)
+                    darkOv:SetColorTexture(0, 0, 0, 0.75)
+                end
+
                 pvBar:SetAlpha(bd.opacity or 1.0)
+
+                -- Threshold tick marks on preview bar
+                if bd.stackThresholdEnabled and bd.stackThresholdMaxEnabled and ns.ApplyTBBTickMarks then
+                    if not pvBar._threshTicks then pvBar._threshTicks = {} end
+                    ns.ApplyTBBTickMarks(pvBar, bd, pvBar._threshTicks, bd.verticalOrientation)
+                end
 
                 -- Icon preview: parented to hdr so it can sit outside pvFrame bounds.
                 -- Size always matches bar height.
                 local pvIconMode = (not bd.verticalOrientation) and (bd.iconDisplay or "none") or "none"
                 _tbbPvIcon = nil
                 local pvIconFrame = nil
-                if pvIconMode ~= "none" and bd.spellID and bd.spellID > 0 then
+                local hasIcon = (bd.spellID and bd.spellID > 0) or bd.glowBased
+                if pvIconMode ~= "none" and hasIcon then
                     pvIconFrame = CreateFrame("Frame", nil, hdr)
                     local iSize = PREVIEW_H
                     pvIconFrame:SetSize(iSize, iSize)
@@ -2006,6 +2085,7 @@ initFrame:SetScript("OnEvent", function(self)
         --  Scrollable settings (below content header)
         -------------------------------------------------------------------
         if not SelectedTBB() then
+            HideTBBPlaceholder()
             return math.abs(y)
         end
 
@@ -2077,7 +2157,7 @@ initFrame:SetScript("OnEvent", function(self)
                       _tbbPvFrame:SetHeight(v)
                       local pvIconMode = bd.iconDisplay or "none"
                       local pvVisH = v
-                      if pvIconMode ~= "none" and bd.spellID and bd.spellID > 0 then
+                      if pvIconMode ~= "none" and ((bd.spellID and bd.spellID > 0) or bd.glowBased) then
                           local iSize = bd.iconSize or v
                           if iSize > pvVisH then pvVisH = iSize end
                       end
@@ -2113,23 +2193,64 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
 
-        -- Buff Name (cog: size + x/y) | Buff Duration (cog: size + x/y)
+        -- Name Text (dropdown + cog) | Duration Text (dropdown + cog)
+        local TBB_POS_VALUES = { none = "None", center = "Center", top = "Top", bottom = "Bottom", left = "Left", right = "Right" }
+        local TBB_POS_ORDER = { "none", "center", "top", "bottom", "left", "right" }
+
+        -- When a text element claims a position, evict any other text
+        -- already sitting in that slot so two labels never overlap.
+        local function EvictTBBTextConflicts(bd, changedKey, newPos)
+            if newPos == "none" then return end
+            local function resolvePos(key)
+                local v = bd[key]
+                if v then return v end
+                if key == "namePosition" then return (bd.showName ~= false) and "left" or "none" end
+                if key == "timerPosition" then return bd.showTimer and "right" or "none" end
+                if key == "stacksPosition" then return "center" end
+                return "none"
+            end
+            local TEXT_KEYS = { "namePosition", "timerPosition", "stacksPosition" }
+            for _, k in ipairs(TEXT_KEYS) do
+                if k ~= changedKey and resolvePos(k) == newPos then
+                    bd[k] = "none"
+                    if k == "namePosition" then bd.showName = false
+                    elseif k == "timerPosition" then bd.showTimer = false end
+                end
+            end
+        end
+
         local nameRow
         nameRow, h = W:DualRow(parent, y,
-            { type = "toggle", text = "Buff Name",
-              getValue = function() local bd = SelectedTBB(); return bd and bd.showName ~= false end,
+            { type = "dropdown", text = "Name Text",
+              values = TBB_POS_VALUES, order = TBB_POS_ORDER,
+              getValue = function()
+                  local bd = SelectedTBB(); if not bd then return "left" end
+                  if bd.namePosition then return bd.namePosition end
+                  return (bd.showName ~= false) and "left" or "none"
+              end,
               setValue = function(v)
                   local bd = SelectedTBB(); if not bd then return end
-                  bd.showName = v; RefreshTBB()
+                  EvictTBBTextConflicts(bd, "namePosition", v)
+                  bd.namePosition = v
+                  bd.showName = (v ~= "none")
+                  RefreshTBB(); EllesmereUI:RefreshPage()
               end },
-            { type = "toggle", text = "Buff Duration",
-              getValue = function() local bd = SelectedTBB(); return bd and bd.showTimer end,
+            { type = "dropdown", text = "Duration Text",
+              values = TBB_POS_VALUES, order = TBB_POS_ORDER,
+              getValue = function()
+                  local bd = SelectedTBB(); if not bd then return "right" end
+                  if bd.timerPosition then return bd.timerPosition end
+                  return bd.showTimer and "right" or "none"
+              end,
               setValue = function(v)
                   local bd = SelectedTBB(); if not bd then return end
-                  bd.showTimer = v; RefreshTBB()
+                  EvictTBBTextConflicts(bd, "timerPosition", v)
+                  bd.timerPosition = v
+                  bd.showTimer = (v ~= "none")
+                  RefreshTBB(); EllesmereUI:RefreshPage()
               end }
         );  y = y - h
-        -- Cog on Buff Name: text size + x/y
+        -- Cog on Name Text: text size + x/y
         do
             local rgn = nameRow._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
@@ -2160,22 +2281,52 @@ initFrame:SetScript("OnEvent", function(self)
             cogDis:SetAllPoints(cogBtn); cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
             cogDis:EnableMouse(true)
             cogDis:SetScript("OnEnter", function()
-                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Enable Buff Name"))
+                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Set Name Text above None"))
             end)
             cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
             local function UpdateCogDisName()
                 local bd = SelectedTBB()
-                if bd and bd.showName == false then cogDis:Show() else cogDis:Hide() end
+                local pos = bd and bd.namePosition
+                if not pos then pos = (bd and bd.showName ~= false) and "left" or "none" end
+                if pos == "none" then cogDis:Show() else cogDis:Hide() end
             end
             cogBtn:HookScript("OnShow", UpdateCogDisName)
             EllesmereUI.RegisterWidgetRefresh(UpdateCogDisName)
             UpdateCogDisName()
         end
-        -- Cog on Buff Duration: timer size + x/y
+        -- Sync icon on Name Text
+        do
+            local rgn = nameRow._leftRegion
+            EllesmereUI.BuildSyncIcon({
+                region  = rgn,
+                tooltip = "Apply Name Text to all Bars",
+                isSynced = function()
+                    local bd = SelectedTBB(); if not bd then return false end
+                    local pos = bd.namePosition or ((bd.showName ~= false) and "left" or "none")
+                    local tbb = ns.GetTrackedBuffBars()
+                    for _, b in ipairs(tbb.bars or {}) do
+                        local bp = b.namePosition or ((b.showName ~= false) and "left" or "none")
+                        if bp ~= pos then return false end
+                    end
+                    return true
+                end,
+                onClick = function()
+                    local bd = SelectedTBB(); if not bd then return end
+                    local pos = bd.namePosition or ((bd.showName ~= false) and "left" or "none")
+                    local tbb = ns.GetTrackedBuffBars()
+                    for _, b in ipairs(tbb.bars or {}) do
+                        b.namePosition = pos
+                        b.showName = (pos ~= "none")
+                    end
+                    RefreshTBB(); EllesmereUI:RefreshPage()
+                end,
+            })
+        end
+        -- Cog on Duration Text: timer size + x/y
         do
             local rgn = nameRow._rightRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
-                title = "Duration Settings",
+                title = "Duration Text Settings",
                 rows = {
                     { type = "slider", label = "Timer Size", min = 8, max = 24, step = 1,
                       get = function() local bd = SelectedTBB(); return bd and bd.timerSize or 11 end,
@@ -2202,35 +2353,65 @@ initFrame:SetScript("OnEvent", function(self)
             cogDis:SetAllPoints(cogBtn); cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
             cogDis:EnableMouse(true)
             cogDis:SetScript("OnEnter", function()
-                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Enable Buff Duration"))
+                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Set Duration Text above None"))
             end)
             cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
             local function UpdateCogDisTimer()
                 local bd = SelectedTBB()
-                if bd and not bd.showTimer then cogDis:Show() else cogDis:Hide() end
+                local pos = bd and bd.timerPosition
+                if not pos then pos = (bd and bd.showTimer) and "right" or "none" end
+                if pos == "none" then cogDis:Show() else cogDis:Hide() end
             end
             cogBtn:HookScript("OnShow", UpdateCogDisTimer)
             EllesmereUI.RegisterWidgetRefresh(UpdateCogDisTimer)
             UpdateCogDisTimer()
         end
+        -- Sync icon on Duration Text
+        do
+            local rgn = nameRow._rightRegion
+            EllesmereUI.BuildSyncIcon({
+                region  = rgn,
+                tooltip = "Apply Duration Text to all Bars",
+                isSynced = function()
+                    local bd = SelectedTBB(); if not bd then return false end
+                    local pos = bd.timerPosition or (bd.showTimer and "right" or "none")
+                    local tbb = ns.GetTrackedBuffBars()
+                    for _, b in ipairs(tbb.bars or {}) do
+                        local bp = b.timerPosition or (b.showTimer and "right" or "none")
+                        if bp ~= pos then return false end
+                    end
+                    return true
+                end,
+                onClick = function()
+                    local bd = SelectedTBB(); if not bd then return end
+                    local pos = bd.timerPosition or (bd.showTimer and "right" or "none")
+                    local tbb = ns.GetTrackedBuffBars()
+                    for _, b in ipairs(tbb.bars or {}) do
+                        b.timerPosition = pos
+                        b.showTimer = (pos ~= "none")
+                    end
+                    RefreshTBB(); EllesmereUI:RefreshPage()
+                end,
+            })
+        end
 
-        -- Stacks Position (dropdown + resize cog: size, x, y) | empty
+        -- Stacks Text (dropdown + resize cog: size, x, y) | empty
         local stacksRow
         stacksRow, h = W:DualRow(parent, y,
-            { type = "dropdown", text = "Stacks Position",
-              values = { center = "Center", top = "Top", bottom = "Bottom", left = "Left", right = "Right" },
-              order = { "center", "top", "bottom", "left", "right" },
+            { type = "dropdown", text = "Stacks Text",
+              values = TBB_POS_VALUES, order = TBB_POS_ORDER,
               getValue = function() local bd = SelectedTBB(); return bd and bd.stacksPosition or "center" end,
               setValue = function(v)
                   local bd = SelectedTBB(); if not bd then return end
-                  bd.stacksPosition = v; RefreshTBB()
+                  EvictTBBTextConflicts(bd, "stacksPosition", v)
+                  bd.stacksPosition = v; RefreshTBB(); EllesmereUI:RefreshPage()
               end },
             { type = "label", text = "" }
         );  y = y - h
         do
             local rgn = stacksRow._leftRegion
             local _, cogShow = EllesmereUI.BuildCogPopup({
-                title = "Stacks Settings",
+                title = "Stacks Text Settings",
                 rows = {
                     { type = "slider", label = "Size", min = 6, max = 24, step = 1,
                       get = function() local bd = SelectedTBB(); return bd and bd.stacksSize or 11 end,
@@ -2252,7 +2433,45 @@ initFrame:SetScript("OnEvent", function(self)
                       end },
                 },
             })
-            MakeCogBtn(rgn, cogShow, nil, EllesmereUI.RESIZE_ICON)
+            local cogBtn = MakeCogBtn(rgn, cogShow, nil, EllesmereUI.RESIZE_ICON)
+            local cogDis = CreateFrame("Frame", nil, rgn)
+            cogDis:SetAllPoints(cogBtn); cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
+            cogDis:EnableMouse(true)
+            cogDis:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Set Stacks Text above None"))
+            end)
+            cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdateCogDisStacks()
+                local bd = SelectedTBB()
+                if bd and (bd.stacksPosition or "center") == "none" then cogDis:Show() else cogDis:Hide() end
+            end
+            cogBtn:HookScript("OnShow", UpdateCogDisStacks)
+            EllesmereUI.RegisterWidgetRefresh(UpdateCogDisStacks)
+            UpdateCogDisStacks()
+        end
+        -- Sync icon on Stacks Text
+        do
+            local rgn = stacksRow._leftRegion
+            EllesmereUI.BuildSyncIcon({
+                region  = rgn,
+                tooltip = "Apply Stacks Text to all Bars",
+                isSynced = function()
+                    local bd = SelectedTBB(); if not bd then return false end
+                    local pos = bd.stacksPosition or "center"
+                    local tbb = ns.GetTrackedBuffBars()
+                    for _, b in ipairs(tbb.bars or {}) do
+                        if (b.stacksPosition or "center") ~= pos then return false end
+                    end
+                    return true
+                end,
+                onClick = function()
+                    local bd = SelectedTBB(); if not bd then return end
+                    local pos = bd.stacksPosition or "center"
+                    local tbb = ns.GetTrackedBuffBars()
+                    for _, b in ipairs(tbb.bars or {}) do b.stacksPosition = pos end
+                    RefreshTBB(); EllesmereUI:RefreshPage()
+                end,
+            })
         end
 
         -------------------------------------------------------------------
@@ -2282,36 +2501,27 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
 
-        -- Fill Color (cog: gradient) | Show Spark
+        -- Fill Color (dropdown: gradient mode + 2 inline swatches) | Show Spark
         local fillRow
         fillRow, h = W:DualRow(parent, y,
-            { type = "multiSwatch", text = "Fill Color",
-              swatches = {
-                  { tooltip = "Gradient End Color", hasAlpha = true,
-                    getValue = function()
-                        local bd = SelectedTBB()
-                        if not bd then return 0.20, 0.20, 0.80, 1 end
-                        return bd.gradientR, bd.gradientG, bd.gradientB, bd.gradientA
-                    end,
-                    setValue = function(r, g, b, a)
-                        local bd = SelectedTBB(); if not bd then return end
-                        bd.gradientR, bd.gradientG, bd.gradientB, bd.gradientA = r, g, b, a; RefreshTBB()
-                    end },
-                  { tooltip = "Fill Color", hasAlpha = true,
-                    getValue = function()
-                        local bd = SelectedTBB()
-                        if not bd then
-                            local _, cf = UnitClass("player")
-                            local cc = RAID_CLASS_COLORS[cf]
-                            return cc and cc.r or 1, cc and cc.g or 0.70, cc and cc.b or 0, 1
-                        end
-                        return bd.fillR, bd.fillG, bd.fillB, bd.fillA
-                    end,
-                    setValue = function(r, g, b, a)
-                        local bd = SelectedTBB(); if not bd then return end
-                        bd.fillR, bd.fillG, bd.fillB, bd.fillA = r, g, b, a; RefreshTBB()
-                    end },
-              } },
+            { type = "dropdown", text = "Fill Color",
+              values = { none = "No Gradient", VERTICAL = "Vertical Gradient", HORIZONTAL = "Horizontal Gradient" },
+              order = { "none", "VERTICAL", "HORIZONTAL" },
+              getValue = function()
+                  local bd = SelectedTBB(); if not bd then return "none" end
+                  if not bd.gradientEnabled then return "none" end
+                  return bd.gradientDir or "HORIZONTAL"
+              end,
+              setValue = function(v)
+                  local bd = SelectedTBB(); if not bd then return end
+                  if v == "none" then
+                      bd.gradientEnabled = false
+                  else
+                      bd.gradientEnabled = true
+                      bd.gradientDir = v
+                  end
+                  RefreshTBB(); EllesmereUI:RefreshPage()
+              end },
             { type = "toggle", text = "Show Spark",
               getValue = function() local bd = SelectedTBB(); return bd and bd.showSpark end,
               setValue = function(v)
@@ -2319,45 +2529,165 @@ initFrame:SetScript("OnEvent", function(self)
                   bd.showSpark = v; RefreshTBB()
               end }
         );  y = y - h
-        -- Cog on Fill Color: gradient settings
+        -- Inline swatches on Fill Color dropdown: fill color + gradient end color
         do
             local rgn = fillRow._leftRegion
+            local ctrl = rgn._control
+
+            -- Swatch 1 (rightmost, closer to dropdown): Fill Color
+            local fillSwatch, updateFillSwatch = EllesmereUI.BuildColorSwatch(
+                rgn, fillRow:GetFrameLevel() + 3,
+                function()
+                    local bd = SelectedTBB()
+                    if not bd then
+                        local _, cf = UnitClass("player")
+                        local cc = RAID_CLASS_COLORS[cf]
+                        return cc and cc.r or 1, cc and cc.g or 0.70, cc and cc.b or 0, 1
+                    end
+                    return bd.fillR, bd.fillG, bd.fillB, bd.fillA
+                end,
+                function(r, g, b, a)
+                    local bd = SelectedTBB(); if not bd then return end
+                    bd.fillR, bd.fillG, bd.fillB, bd.fillA = r, g, b, a; RefreshTBB()
+                end,
+                true, 20)
+            PP.Point(fillSwatch, "RIGHT", ctrl, "LEFT", -8, 0)
+
+            -- Swatch 2 (left of swatch 1): Gradient End Color
+            local gradSwatch, updateGradSwatch = EllesmereUI.BuildColorSwatch(
+                rgn, fillRow:GetFrameLevel() + 3,
+                function()
+                    local bd = SelectedTBB()
+                    if not bd then return 0.20, 0.20, 0.80, 1 end
+                    return bd.gradientR, bd.gradientG, bd.gradientB, bd.gradientA
+                end,
+                function(r, g, b, a)
+                    local bd = SelectedTBB(); if not bd then return end
+                    bd.gradientR, bd.gradientG, bd.gradientB, bd.gradientA = r, g, b, a; RefreshTBB()
+                end,
+                true, 20)
+            PP.Point(gradSwatch, "RIGHT", fillSwatch, "LEFT", -4, 0)
+
+            -- Disable block on gradient swatch when gradient is off
+            local gradBlock = CreateFrame("Frame", nil, gradSwatch)
+            gradBlock:SetAllPoints(); gradBlock:SetFrameLevel(gradSwatch:GetFrameLevel() + 10)
+            gradBlock:EnableMouse(true)
+            gradBlock:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(gradSwatch, EllesmereUI.DisabledTooltip("This option requires a gradient to be set"))
+            end)
+            gradBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdateGradSwatchState()
+                local bd = SelectedTBB()
+                local off = not bd or not bd.gradientEnabled
+                if off then gradSwatch:SetAlpha(0.3); gradBlock:Show()
+                else gradSwatch:SetAlpha(1); gradBlock:Hide() end
+            end
+            EllesmereUI.RegisterWidgetRefresh(function() updateFillSwatch(); updateGradSwatch(); UpdateGradSwatchState() end)
+            UpdateGradSwatchState()
+        end
+
+        -- Enable Stack Threshold (toggle + inline swatch) | Stack Threshold (slider)
+        local threshRow
+        threshRow, h = W:DualRow(parent, y,
+            { type = "toggle", text = "Enable Stack Threshold",
+              tooltip = "This will change the color of your bar if you have more than your chosen number of stacks",
+              getValue = function() local bd = SelectedTBB(); return bd and bd.stackThresholdEnabled end,
+              setValue = function(v)
+                  local bd = SelectedTBB(); if not bd then return end
+                  bd.stackThresholdEnabled = v; RefreshTBB(); EllesmereUI:RefreshPage()
+              end },
+            { type = "slider", text = "Stack Threshold",
+              min = 0, max = 50, step = 1,
+              getValue = function() local bd = SelectedTBB(); return bd and bd.stackThreshold or 5 end,
+              setValue = function(v)
+                  local bd = SelectedTBB(); if not bd then return end
+                  bd.stackThreshold = v; RefreshTBB()
+              end }
+        );  y = y - h
+        -- Inline swatch on Enable Stack Threshold toggle
+        do
+            local rgn = threshRow._leftRegion
+            local ctrl = rgn._control
+            local threshSwatch, updateThreshSwatch = EllesmereUI.BuildColorSwatch(
+                rgn, threshRow:GetFrameLevel() + 3,
+                function()
+                    local bd = SelectedTBB()
+                    if not bd then return 0.8, 0.1, 0.1, 1 end
+                    return bd.stackThresholdR or 0.8, bd.stackThresholdG or 0.1, bd.stackThresholdB or 0.1, bd.stackThresholdA or 1
+                end,
+                function(r, g, b, a)
+                    local bd = SelectedTBB(); if not bd then return end
+                    bd.stackThresholdR, bd.stackThresholdG, bd.stackThresholdB, bd.stackThresholdA = r, g, b, a; RefreshTBB()
+                end,
+                true, 20)
+            PP.Point(threshSwatch, "RIGHT", ctrl, "LEFT", -8, 0)
+            -- Disable block when threshold is off
+            local threshBlock = CreateFrame("Frame", nil, threshSwatch)
+            threshBlock:SetAllPoints(); threshBlock:SetFrameLevel(threshSwatch:GetFrameLevel() + 10)
+            threshBlock:EnableMouse(true)
+            threshBlock:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(threshSwatch, EllesmereUI.DisabledTooltip("Enable Stack Threshold"))
+            end)
+            threshBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdateThreshSwatchState()
+                local bd = SelectedTBB()
+                local off = not bd or not bd.stackThresholdEnabled
+                if off then threshSwatch:SetAlpha(0.3); threshBlock:Show()
+                else threshSwatch:SetAlpha(1); threshBlock:Hide() end
+            end
+            EllesmereUI.RegisterWidgetRefresh(function() updateThreshSwatch(); UpdateThreshSwatchState() end)
+            UpdateThreshSwatchState()
+        end
+        -- Cog on Stack Threshold slider: enable max stacks + max stacks slider + tick marks
+        do
+            local rgn = threshRow._rightRegion
+            local function maxStacksOff()
+                local bd = SelectedTBB()
+                return not bd or not bd.stackThresholdEnabled or not bd.stackThresholdMaxEnabled
+            end
             local _, cogShow = EllesmereUI.BuildCogPopup({
-                title = "Gradient Settings",
+                title = "Threshold Settings",
                 rows = {
-                    { type = "toggle", label = "Enable Gradient",
-                      get = function() local bd = SelectedTBB(); return bd and bd.gradientEnabled end,
+                    { type = "toggle", label = "Enable Max Stacks",
+                      get = function() local bd = SelectedTBB(); return bd and bd.stackThresholdMaxEnabled end,
                       set = function(v)
                           local bd = SelectedTBB(); if not bd then return end
-                          bd.gradientEnabled = v; RefreshTBB(); EllesmereUI:RefreshPage()
+                          bd.stackThresholdMaxEnabled = v; RefreshTBB(); EllesmereUI:RefreshPage()
                       end },
-                    { type = "dropdown", label = "Gradient Direction",
-                      values = { HORIZONTAL = "Horizontal", VERTICAL = "Vertical" },
-                      order = { "HORIZONTAL", "VERTICAL" },
-                      get = function() local bd = SelectedTBB(); return bd and bd.gradientDir or "HORIZONTAL" end,
+                    { type = "slider", label = "Max Stacks", min = 1, max = 50, step = 1,
+                      disabled = maxStacksOff,
+                      disabledTooltip = "Enable Max Stacks",
+                      get = function() local bd = SelectedTBB(); return bd and bd.stackThresholdMax or 10 end,
                       set = function(v)
                           local bd = SelectedTBB(); if not bd then return end
-                          bd.gradientDir = v; RefreshTBB()
+                          bd.stackThresholdMax = v; RefreshTBB()
+                      end },
+                    { type = "input", label = "Ticks at Stacks (Ex: 1,5,8)", inputWidth = 80,
+                      disabled = maxStacksOff,
+                      disabledTooltip = "Enable Max Stacks",
+                      get = function() local bd = SelectedTBB(); return bd and bd.stackThresholdTicks or "" end,
+                      set = function(v)
+                          local bd = SelectedTBB(); if not bd then return end
+                          bd.stackThresholdTicks = v; RefreshTBB()
                       end },
                 },
             })
-            MakeCogBtn(rgn, cogShow, nil, EllesmereUI.COGS_ICON)
-        end
-        -- Gradient swatch disabled when gradient off
-        do
-            local swatch = fillRow._leftRegion._control
-            local function UpdateGradientSwatch()
+            local cogBtn = MakeCogBtn(rgn, cogShow, nil, EllesmereUI.RESIZE_ICON)
+            local cogDis = CreateFrame("Frame", nil, rgn)
+            cogDis:SetAllPoints(cogBtn); cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
+            cogDis:EnableMouse(true)
+            cogDis:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Enable Stack Threshold"))
+            end)
+            cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdateThreshCogState()
                 local bd = SelectedTBB()
-                if not bd or not bd.gradientEnabled then
-                    swatch:SetAlpha(0.15); swatch:Disable()
-                    swatch._disabledTooltip = "Enable Gradient"
-                else
-                    swatch:SetAlpha(1); swatch:Enable()
-                    swatch._disabledTooltip = nil
-                end
+                local off = not bd or not bd.stackThresholdEnabled
+                if off then cogBtn:SetAlpha(0.15); cogDis:Show()
+                else cogBtn:SetAlpha(0.4); cogDis:Hide() end
             end
-            UpdateGradientSwatch()
-            EllesmereUI.RegisterWidgetRefresh(UpdateGradientSwatch)
+            EllesmereUI.RegisterWidgetRefresh(UpdateThreshCogState)
+            UpdateThreshCogState()
         end
 
         -- Border Style (slider + inline swatch) | Background Color
@@ -2402,6 +2732,9 @@ initFrame:SetScript("OnEvent", function(self)
             EllesmereUI.RegisterWidgetRefresh(function() updateBorderSwatch() end)
         end
 
+        -- Ensure bar frames exist before showing placeholders
+        ns.BuildTrackedBuffBars()
+        UpdateTBBPlaceholder()
         return math.abs(y)
     end
     ---------------------------------------------------------------------------
@@ -6439,6 +6772,11 @@ initFrame:SetScript("OnEvent", function(self)
         disabledPages = {},
         disabledPageTooltips = {},
         buildPage   = function(pageName, parent, yOffset)
+            -- Clear buff bar placeholders when switching away
+            if pageName ~= PAGE_BUFF_BARS and ns._tbbPlaceholderMode then
+                ns._tbbPlaceholderMode = false
+                for _, ph in ipairs(_tbbPlaceholders) do if ph then ph:Hide() end end
+            end
             if pageName == PAGE_BAR_GLOWS then
                 return BuildBarGlowsPage(pageName, parent, yOffset)
             elseif pageName == PAGE_BUFF_BARS then
@@ -6458,6 +6796,15 @@ initFrame:SetScript("OnEvent", function(self)
             return nil
         end,
         onPageCacheRestore = function(pageName)
+            -- Clear buff bar placeholders when switching away
+            if pageName ~= PAGE_BUFF_BARS and ns._tbbPlaceholderMode then
+                ns._tbbPlaceholderMode = false
+                for _, ph in ipairs(_tbbPlaceholders) do if ph then ph:Hide() end end
+            end
+            -- Re-show placeholders when returning to Buff Bars from cache
+            if pageName == PAGE_BUFF_BARS then
+                UpdateTBBPlaceholder()
+            end
             if pageName == PAGE_CDM_BARS then
                 -- Re-sync _cdmPreview after cache restore and refresh the preview
                 if not _cdmPreview and EllesmereUI._contentHeaderPreview then

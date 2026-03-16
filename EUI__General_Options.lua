@@ -74,7 +74,6 @@ initFrame:SetScript("OnEvent", function(self)
     --  EUI preferred defaults — only applied when CVar == Blizzard default
     --
     --  { cvarName, euiPreferred }
-    --  For the "hide pet/periodic" group we set three CVars to "0" (hidden).
     ---------------------------------------------------------------------------
     local EUI_DEFAULTS = {
         { "cameraDistanceMaxZoomFactor",                    "2.6" },
@@ -82,7 +81,6 @@ initFrame:SetScript("OnEvent", function(self)
         { "SpellQueueWindow",                               "300" },
         { "floatingCombatTextCombatHealing_v2",             "1"   },
         { "WorldTextScale_v2",                              "0.5" },
-        { "floatingCombatTextCombatLogPeriodicSpells_v2",   "0"   },
         { "floatingCombatTextCombatDamage_v2",              "1"   },
     }
 

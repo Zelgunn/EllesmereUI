@@ -251,7 +251,8 @@ initFrame:SetScript("OnEvent", function(self)
             activePreview:Update()
             if headerFixedH > 0 then
                 local hintH = (not IsPreviewHintDismissed()) and 29 or 0
-                local newTotal = headerFixedH + activePreview:GetHeight() * activePreview:GetScale() + hintH
+                local wrapH = activePreview._wrapper and activePreview._wrapper:GetHeight() or (activePreview:GetHeight() * activePreview:GetScale())
+                local newTotal = headerFixedH + wrapH + hintH
                 EllesmereUI:UpdateContentHeaderHeight(newTotal)
             end
         end
@@ -306,10 +307,147 @@ initFrame:SetScript("OnEvent", function(self)
         -- Scale the preview so it matches real action bar size on screen.
         local previewScale = UIParent:GetEffectiveScale() / parent:GetEffectiveScale()
         pf:SetScale(previewScale)
-        pf:SetClipsChildren(true)
         local localParentW = (parent:GetWidth() - PAD * 2) / previewScale
         PP.Size(pf, localParentW, initH)
-        PP.Point(pf, "TOPLEFT", parent, "TOPLEFT", PAD / previewScale, yOff / previewScale)
+
+        -- Max visible height for the preview area (in parent-space pixels)
+        local PREVIEW_MAX_H = 200
+
+        -- Wrapper frame at parent scale; holds the scroll frame and scrollbar
+        local wrapper = CreateFrame("Frame", nil, parent)
+        wrapper:SetPoint("TOPLEFT", parent, "TOPLEFT", PAD, yOff)
+        wrapper:SetSize(parent:GetWidth() - PAD * 2, PREVIEW_MAX_H)
+        wrapper:SetClipsChildren(true)
+
+        local sf = CreateFrame("ScrollFrame", nil, wrapper)
+        sf:SetAllPoints()
+        sf:SetScrollChild(pf)
+        sf:EnableMouseWheel(true)
+
+        -- Thin scrollbar track (4px, right side)
+        local pvTrack = CreateFrame("Frame", nil, wrapper)
+        pvTrack:SetWidth(4)
+        pvTrack:SetPoint("TOPRIGHT", wrapper, "TOPRIGHT", -2, -2)
+        pvTrack:SetPoint("BOTTOMRIGHT", wrapper, "BOTTOMRIGHT", -2, 2)
+        pvTrack:SetFrameLevel(wrapper:GetFrameLevel() + 5)
+        do
+            local bg = pvTrack:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetColorTexture(1, 1, 1, 0.02)
+        end
+        pvTrack:Hide()
+
+        local pvThumb = CreateFrame("Button", nil, pvTrack)
+        pvThumb:SetWidth(4)
+        pvThumb:SetFrameLevel(pvTrack:GetFrameLevel() + 1)
+        pvThumb:EnableMouse(true)
+        pvThumb:RegisterForDrag("LeftButton")
+        pvThumb:SetScript("OnDragStart", function() end)
+        pvThumb:SetScript("OnDragStop", function() end)
+        do
+            local t = pvThumb:CreateTexture(nil, "ARTWORK")
+            t:SetAllPoints()
+            t:SetColorTexture(1, 1, 1, 0.27)
+        end
+
+        -- Smooth scroll state
+        local pvScrollTarget = 0
+        local pvSmoothing = false
+        local PV_SCROLL_STEP = 40
+        local PV_SMOOTH_SPEED = 12
+        local pvSmoothFrame = CreateFrame("Frame")
+        pvSmoothFrame:Hide()
+
+        local function UpdatePVThumb()
+            local ok, raw = pcall(sf.GetVerticalScrollRange, sf)
+            local maxScroll = (ok and tonumber(raw)) or 0
+            if maxScroll <= 0 then pvTrack:Hide(); return end
+            pvTrack:Show()
+            local trackH = pvTrack:GetHeight()
+            local visH = sf:GetHeight()
+            local ratio = visH / (visH + maxScroll)
+            local thumbH = math.max(20, trackH * ratio)
+            pvThumb:SetHeight(thumbH)
+            local okS, rawS = pcall(sf.GetVerticalScroll, sf)
+            local scrollRatio = ((okS and tonumber(rawS)) or 0) / maxScroll
+            local maxTravel = trackH - thumbH
+            pvThumb:ClearAllPoints()
+            pvThumb:SetPoint("TOP", pvTrack, "TOP", 0, -(scrollRatio * maxTravel))
+        end
+
+        pvSmoothFrame:SetScript("OnUpdate", function(_, elapsed)
+            local cur = sf:GetVerticalScroll()
+            local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+            pvScrollTarget = math.max(0, math.min(maxScroll, pvScrollTarget))
+            local diff = pvScrollTarget - cur
+            if math.abs(diff) < 0.3 then
+                sf:SetVerticalScroll(pvScrollTarget)
+                UpdatePVThumb()
+                pvSmoothing = false
+                pvSmoothFrame:Hide()
+                return
+            end
+            local newScroll = cur + diff * math.min(1, PV_SMOOTH_SPEED * elapsed)
+            newScroll = math.max(0, math.min(maxScroll, newScroll))
+            sf:SetVerticalScroll(newScroll)
+            UpdatePVThumb()
+        end)
+
+        local function PVSmoothScrollTo(target)
+            local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+            pvScrollTarget = math.max(0, math.min(maxScroll, target))
+            if not pvSmoothing then
+                pvSmoothing = true
+                pvSmoothFrame:Show()
+            end
+        end
+
+        sf:SetScript("OnMouseWheel", function(self, delta)
+            local maxScroll = tonumber(self:GetVerticalScrollRange()) or 0
+            if maxScroll <= 0 then return end
+            local base = pvSmoothing and pvScrollTarget or self:GetVerticalScroll()
+            PVSmoothScrollTo(base - delta * PV_SCROLL_STEP)
+        end)
+        sf:SetScript("OnScrollRangeChanged", UpdatePVThumb)
+
+        -- Thumb drag
+        pvThumb:SetScript("OnMouseDown", function(self, button)
+            if button ~= "LeftButton" then return end
+            pvSmoothing = false
+            pvSmoothFrame:Hide()
+            local _, cursorY = GetCursorPosition()
+            local dragStartY = cursorY / self:GetEffectiveScale()
+            local dragStartScroll = sf:GetVerticalScroll()
+            self:SetScript("OnUpdate", function(self2)
+                if not IsMouseButtonDown("LeftButton") then
+                    self2:SetScript("OnUpdate", nil)
+                    return
+                end
+                local _, cy = GetCursorPosition()
+                cy = cy / self2:GetEffectiveScale()
+                local deltaY = dragStartY - cy
+                local trackH = pvTrack:GetHeight()
+                local maxTravel = trackH - self2:GetHeight()
+                if maxTravel <= 0 then return end
+                local maxScroll = tonumber(sf:GetVerticalScrollRange()) or 0
+                local newScroll = math.max(0, math.min(maxScroll,
+                    dragStartScroll + (deltaY / maxTravel) * maxScroll))
+                pvScrollTarget = newScroll
+                sf:SetVerticalScroll(newScroll)
+                UpdatePVThumb()
+            end)
+        end)
+        pvThumb:SetScript("OnMouseUp", function(self, button)
+            if button ~= "LeftButton" then return end
+            self:SetScript("OnUpdate", nil)
+        end)
+
+        -- Store refs for height management after Update()
+        pf._wrapper = wrapper
+        pf._scrollFrame = sf
+        pf._previewScale = previewScale
+        pf._PREVIEW_MAX_H = PREVIEW_MAX_H
+        pf._updatePVThumb = UpdatePVThumb
 
         -- Pixel-snap helper for the preview's effective scale
         local function Snap(val)
@@ -412,12 +550,12 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
 
-            -- Multi-row layout: show all rows matching the real bar (capped at 3 in preview)
+            -- Multi-row layout: show all rows matching the real bar
             local numRows = settings.numRows or 1
             local ovRows = settings.overrideNumRows
             if ovRows and ovRows > 0 then numRows = ovRows end
-            if numRows > 3 then numRows = 3 end
             local stride = math.ceil(numVisible / numRows)
+            numRows = math.ceil(numVisible / stride)
             local previewCount = numVisible
             -- Preview always shows all slots regardless of alwaysShowButtons setting
             local showEmpty = true
@@ -475,19 +613,36 @@ initFrame:SetScript("OnEvent", function(self)
 
             local scaledPad  = SnapS(spacing * (self._blizzEditScale or 1) * barScale, barScale)
 
+            -- Orientation
+            local isVertical = (settings.orientation or "horizontal") == "vertical"
+
             -- Scale font sizes proportionally
             local totalScale = (self._blizzEditScale or 1) * barScale
             local scaledKBSize = math.max(6, floor(kbSize * totalScale + 0.5))
             local scaledCTSize = math.max(6, floor(ctSize * totalScale + 0.5))
 
-            -- Multi-row grid layout
-            local gridW = stride * scaledBtnW + (stride - 1) * scaledPad
-            local gridH = numRows * scaledBtnH + (numRows - 1) * scaledPad
+            -- Multi-row grid layout (vertical swaps cols/rows)
+            local gridCols = isVertical and numRows or stride
+            local gridRows = isVertical and stride or numRows
+            local gridW = gridCols * scaledBtnW + (gridCols - 1) * scaledPad
+            local gridH = gridRows * scaledBtnH + (gridRows - 1) * scaledPad
             local gridStartX = Snap(math.max(0, (self:GetWidth() - gridW) / 2))
 
             -- Resize preview frame to fit all rows
             local frameH = Snap(gridH + 20)  -- 10px padding top + bottom
             self:SetHeight(frameH)
+
+            -- Resize wrapper to min(content, max) and toggle scrollbar
+            local parentH = frameH * self._previewScale
+            local maxH = self._PREVIEW_MAX_H
+            if parentH > maxH then
+                self._wrapper:SetHeight(maxH)
+            else
+                self._wrapper:SetHeight(parentH)
+                -- Reset scroll when content fits without scrolling
+                if self._scrollFrame then self._scrollFrame:SetVerticalScroll(0) end
+            end
+            if self._updatePVThumb then self._updatePVThumb() end
 
             -- Store grid bounds for background anchoring
             self._gridStartX = gridStartX
@@ -495,6 +650,7 @@ initFrame:SetScript("OnEvent", function(self)
             self._gridH      = gridH
 
             local startY = -Snap(10)  -- top padding
+            local growUp = (settings.growDirection or "up") == "up"
             for i = 1, maxBtns do
                 local entry = buttons[i]
                 local bf    = entry.frame
@@ -503,17 +659,36 @@ initFrame:SetScript("OnEvent", function(self)
                 if i >= leftmost and i <= previewCount then
                     -- Multi-row: compute row and column for this button
                     local idx = i - leftmost  -- 0-based index
-                    local row = math.floor(idx / stride)
-                    local col = idx % stride
-                    -- Count buttons in this row (last row may be shorter)
-                    local rowStart = row * stride + 1
-                    local rowEnd = math.min(rowStart + stride - 1, previewCount)
-                    local countInRow = rowEnd - rowStart + 1
-                    -- Center each row within the full grid width
-                    local rowW = countInRow * scaledBtnW + (countInRow - 1) * scaledPad
-                    local startX = Snap(gridStartX + (gridW - rowW) / 2)
-                    local xOff = Snap(startX + col * (scaledBtnW + scaledPad))
-                    local yOff = startY - Snap(row * (scaledBtnH + scaledPad))
+                    local col, row
+                    if isVertical then
+                        col = math.floor(idx / stride)
+                        row = idx % stride
+                    else
+                        col = idx % stride
+                        row = math.floor(idx / stride)
+                    end
+
+                    local xOff, yOff
+                    if isVertical then
+                        -- Vertical: center each column vertically when last column is shorter
+                        local colStart = col * stride + 1
+                        local colEnd = math.min(colStart + stride - 1, previewCount)
+                        local countInCol = colEnd - colStart + 1
+                        local colH = countInCol * scaledBtnH + (countInCol - 1) * scaledPad
+                        local colOffY = Snap((gridH - colH) / 2)
+                        xOff = Snap(gridStartX + col * (scaledBtnW + scaledPad))
+                        yOff = startY - colOffY - Snap(row * (scaledBtnH + scaledPad))
+                    else
+                        -- Horizontal: center each row horizontally when last row is shorter
+                        local rowStart = row * stride + 1
+                        local rowEnd = math.min(rowStart + stride - 1, previewCount)
+                        local countInRow = rowEnd - rowStart + 1
+                        local rowW = countInRow * scaledBtnW + (countInRow - 1) * scaledPad
+                        local startX = Snap(gridStartX + (gridW - rowW) / 2)
+                        xOff = Snap(startX + col * (scaledBtnW + scaledPad))
+                        local displayRow = growUp and ((numRows - 1) - row) or row
+                        yOff = startY - Snap(displayRow * (scaledBtnH + scaledPad))
+                    end
                     bf:SetSize(scaledBtnW, scaledBtnH)
                     bf:ClearAllPoints()
                     bf:SetPoint("TOPLEFT", self, "TOPLEFT", xOff, yOff)
@@ -761,7 +936,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Return the actual computed height (converted to parent-space)
         activePreview = pf
         EllesmereUI._contentHeaderPreview = pf
-        return pf:GetHeight() * previewScale
+        return pf._wrapper:GetHeight()
     end
 
     ---------------------------------------------------------------------------
@@ -2276,7 +2451,13 @@ initFrame:SetScript("OnEvent", function(self)
                       SSet("outOfRangeColoring", v, function() EAB:ApplyRangeColoring() end)
                       EllesmereUI:RefreshPage()
                   end },
-                { type="label", text="" });  y = y - h
+                { type="toggle", text="Disable Tooltips",
+                  getValue=function()
+                      return EAB.db and EAB.db.profile.disableTooltips or false
+                  end,
+                  setValue=function(v)
+                      if EAB.db then EAB.db.profile.disableTooltips = v end
+                  end });  y = y - h
             -- Sync icon: Out of Range Coloring (left region)
             do
                 local rgn = rangeRow._leftRegion

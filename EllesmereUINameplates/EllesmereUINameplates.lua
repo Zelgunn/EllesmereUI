@@ -2644,11 +2644,6 @@ local function GetReactionColor(unit)
 end
 local hookedUFs = {}
 local hookedHighlights = {}
--- Per-nameplate cache of important debuff auraInstanceIDs.
--- Updated by hooking Blizzard's AurasFrame processing so the set is always
--- current regardless of UNIT_AURA event ordering between our frame and theirs.
-local importantDebuffCache = {}  -- [nameplate] = { [auraInstanceID] = true }
-local hookedAurasFrames = {}     -- [AurasFrame] = true (prevent double-hooking)
 local npOffscreenParent = CreateFrame("Frame")
 npOffscreenParent:Hide()
 local storedParents = {}
@@ -2703,27 +2698,6 @@ local function HideBlizzardFrame(nameplate, unit)
             MoveToOffscreen(uf.AurasFrame.BuffListFrame, unit)
             MoveToOffscreen(uf.AurasFrame.CrowdControlListFrame, unit)
             MoveToOffscreen(uf.AurasFrame.LossOfControlFrame, unit)
-            -- Hook Blizzard's UnitFrame OnEvent to snapshot debuffList after
-            -- every UNIT_AURA. This eliminates event-ordering issues between
-            -- our handler and Blizzard's.
-            if not hookedAurasFrames[uf.AurasFrame] then
-                hookedAurasFrames[uf.AurasFrame] = true
-                uf:HookScript("OnEvent", function(self, evt)
-                    if evt ~= "UNIT_AURA" then return end
-                    local myAF = self.AurasFrame
-                    if not myAF or not myAF.debuffList then return end
-                    local np = self:GetParent()
-                    if not np then return end
-                    local cache = importantDebuffCache[np]
-                    if not cache then cache = {}; importantDebuffCache[np] = cache
-                    else wipe(cache) end
-                    if myAF.debuffList.Iterate then
-                        myAF.debuffList:Iterate(function(id)
-                            cache[id] = true
-                        end)
-                    end
-                end)
-            end
         end
         -- All visual children are reparented offscreen so layout
         -- recalculations won't shift bounds.
@@ -2816,7 +2790,6 @@ ns.HideBlizzardFrame = HideBlizzardFrame
 local castFallbackFrame = CreateFrame("Frame")
 local fallbackCastCount = 0
 local _fallbackPlates = {}
-local _importantSetBuf = {}
 castFallbackFrame:SetScript("OnUpdate", function()
     for plate in pairs(_fallbackPlates) do
         if plate.isCasting and plate.unit and plate.nameplate then
@@ -3607,6 +3580,7 @@ end
 -- File-level to avoid closure allocation per UpdateAuras call.
 local _fillGetCount = C_UnitAuras.GetAuraApplicationDisplayCount
 local _fillGetDur   = C_UnitAuras.GetAuraDuration
+local _importantBuf = {}  -- reusable buffer for debuff filtering
 local function FillAuraSlot(slot, aura, id, unit, shown)
     slot.icon:SetTexture(aura.icon)
     slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
@@ -3701,23 +3675,17 @@ function NameplateFrame:UpdateAuras(updateInfo)
     local dCount = 0
     if debuffSlotVal ~= "none" then
         local showAll = db and db.showAllDebuffs
-        -- Read the important set from our cache, which is updated by the
-        -- AurasFrame hook every time Blizzard processes auras. This is
-        -- immune to UNIT_AURA event ordering issues.
+        -- Build the important set from Blizzard's debuffList synchronously.
+        -- The debuffList is already current when UNIT_AURA fires.
         local importantSet
-        if not showAll then
-            local np = self.nameplate
-            importantSet = np and importantDebuffCache[np]
-            -- If the cache is empty, try reading debuffList directly as fallback
-            if not importantSet or not next(importantSet) then
-                wipe(_importantSetBuf)
-                importantSet = _importantSetBuf
-                local af = np and np.UnitFrame and np.UnitFrame.AurasFrame
-                if af and af.debuffList and af.debuffList.Iterate then
-                    af.debuffList:Iterate(function(auraInstanceID)
-                        importantSet[auraInstanceID] = true
-                    end)
-                end
+        if not showAll and self.nameplate then
+            wipe(_importantBuf)
+            importantSet = _importantBuf
+            local uf = self.nameplate.UnitFrame
+            if uf and uf.AurasFrame and uf.AurasFrame.debuffList and uf.AurasFrame.debuffList.Iterate then
+                uf.AurasFrame.debuffList:Iterate(function(auraInstanceID)
+                    importantSet[auraInstanceID] = true
+                end)
             end
         end
         local list = GetUnitAuras(unit, "HARMFUL|PLAYER")
@@ -3733,15 +3701,6 @@ function NameplateFrame:UpdateAuras(updateInfo)
                     end
                 end
             end
-        end
-        -- If the important filter excluded ALL player debuffs but we have
-        -- active ones, the cache may not have been populated yet. Retry once.
-        if not showAll and dCount == 0 and list and #list > 0 and not self._auraRetry then
-            self._auraRetry = true
-            C_Timer.After(0, function()
-                self._auraRetry = nil
-                if self.unit then self:UpdateAuras() end
-            end)
         end
         if dCount > 0 then
             local spacing = GetAuraSpacing()
@@ -4326,16 +4285,39 @@ local function UpdateFactionFrameForZone()
     end
 end
 
+local function RefreshThreatContextAndPlateColors()
+    RefreshThreatCache()
+    -- Unit tokens are recycled across zone/instance transitions; clear any
+    -- stale quest-mob decisions that were made under a different context.
+    wipe(questMobCache)
+    for _, plate in pairs(ns.plates) do
+        plate:UpdateHealthColor()
+    end
+end
+
 factionFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+factionFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+factionFrame:RegisterEvent("PLAYER_DIFFICULTY_CHANGED")
 factionFrame:RegisterEvent("ROLE_CHANGED_INFORM")
+factionFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
 factionFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 factionFrame:SetScript("OnEvent", function(_, event, unit)
     if event == "PLAYER_ENTERING_WORLD"
+    or event == "ZONE_CHANGED_NEW_AREA"
+    or event == "PLAYER_DIFFICULTY_CHANGED"
     or event == "ROLE_CHANGED_INFORM"
+    or event == "PLAYER_ROLES_ASSIGNED"
     or event == "GROUP_ROSTER_UPDATE" then
-        RefreshThreatCache()
-        if event == "PLAYER_ENTERING_WORLD" then
+        RefreshThreatContextAndPlateColors()
+        if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
             UpdateFactionFrameForZone()
+        end
+        if event == "PLAYER_ENTERING_WORLD" then
+            -- Initial PEW can fire before difficulty/instance data settles.
+            C_Timer.After(0.6, function()
+                RefreshThreatContextAndPlateColors()
+                UpdateFactionFrameForZone()
+            end)
         end
         return
     end
@@ -4454,7 +4436,6 @@ manager:SetScript("OnEvent", function(self, event, unit)
         local nameplate = C_NamePlate.GetNamePlateForUnit(unit)
         if nameplate then
             RestoreBlizzardFrame(nameplate)
-            importantDebuffCache[nameplate] = nil
         end
         -- Restore NPC name color if we tinted it
         if nameplate and ns.RestoreFriendlyNPCNameColor then

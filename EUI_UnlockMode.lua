@@ -86,6 +86,7 @@ end
 local NO_SCALE_BARS = {
     MicroBar            = true,
     BagBar              = true,
+    QueueStatus         = true,
     ExtraActionButton   = true,
     EncounterBar        = true,
 }

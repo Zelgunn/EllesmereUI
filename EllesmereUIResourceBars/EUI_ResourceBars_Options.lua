@@ -3352,6 +3352,140 @@ initFrame:SetScript("OnEvent", function(self)
             UpdateCogDisTimer()
         end
 
+        -- ── MARKS section ───────────────────────────────────────────
+        _, h = W:SectionHeader(parent, "MARKS", y);  y = y - h
+
+        local marksOff = function()
+            local p = DB()
+            return castOff() or not (p and p.castBar.showChannelTicks)
+        end
+
+        -- Helper: attach an inline color swatch to a region with disabled overlay
+        local function AttachInlineSwatch(rgn, getFunc, setFunc, disabledFunc, disabledTooltip)
+            local swatch, updateSwatch = EllesmereUI.BuildColorSwatch(rgn, rgn:GetFrameLevel() + 5, getFunc, setFunc, true, 20)
+            PP.Point(swatch, "RIGHT", rgn._control, "LEFT", -12, 0)
+
+            local block = CreateFrame("Frame", nil, swatch)
+            block:SetAllPoints()
+            block:SetFrameLevel(swatch:GetFrameLevel() + 10)
+            block:EnableMouse(true)
+            block:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(swatch, EllesmereUI.DisabledTooltip(disabledTooltip))
+            end)
+            block:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
+            EllesmereUI.RegisterWidgetRefresh(function()
+                local off = disabledFunc()
+                swatch:SetAlpha(off and 0.3 or 1)
+                if off then block:Show() else block:Hide() end
+                updateSwatch()
+            end)
+            local initOff = disabledFunc()
+            swatch:SetAlpha(initOff and 0.3 or 1)
+            if initOff then block:Show() else block:Hide() end
+        end
+
+        -- Marks Row 1: Enable Cast Bar Marks (master) | Channel Ticks (+ color)
+        local marksRow1
+        marksRow1, h = W:DualRow(parent, y,
+            { type = "toggle", text = "Enable Cast Bar Marks",
+              disabled = castOff,
+              disabledTooltip = "Enable Player Cast Bar",
+              getValue = function() local p = DB(); return p and p.castBar.showChannelTicks end,
+              setValue = function(v)
+                  local p = DB(); if not p then return end
+                  p.castBar.showChannelTicks = v
+                  if v and not (p.castBar.showTickMarks or p.castBar.showLastTick or p.castBar.showGCDBoundary) then
+                      p.castBar.showTickMarks = true
+                  end
+                  RefreshCast()
+                  EllesmereUI:RefreshPage()
+              end },
+            { type = "toggle", text = "Channel Ticks",
+              tooltip = "Damage tick marks on channeled spells. Only supported spells are shown — request missing spells on Discord.",
+              disabled = marksOff,
+              disabledTooltip = "Enable Cast Bar Marks",
+              getValue = function() local p = DB(); return p and p.castBar.showTickMarks end,
+              setValue = function(v)
+                  local p = DB(); if not p then return end
+                  p.castBar.showTickMarks = v; RefreshCast()
+                  EllesmereUI:RefreshPage()
+              end }
+        );  y = y - h
+
+        AttachInlineSwatch(marksRow1._rightRegion,
+            function()
+                local p = DB(); if not p then return 1, 1, 1, 0.7 end
+                return p.castBar.tickMarksR or 1, p.castBar.tickMarksG or 1,
+                       p.castBar.tickMarksB or 1, p.castBar.tickMarksA or 0.7
+            end,
+            function(r, g, b, a)
+                local p = DB(); if not p then return end
+                p.castBar.tickMarksR = r; p.castBar.tickMarksG = g
+                p.castBar.tickMarksB = b; p.castBar.tickMarksA = a
+                RefreshCast()
+            end,
+            function() return marksOff() or not (DB() and DB().castBar.showTickMarks) end,
+            "Enable Channel Ticks"
+        )
+
+        -- Marks Row 2: GCD Boundary (+ color) | Last Tick (+ color)
+        local marksRow2
+        marksRow2, h = W:DualRow(parent, y,
+            { type = "toggle", text = "GCD Boundary",
+              tooltip = "Shows where your GCD ends during a channel.",
+              disabled = marksOff,
+              disabledTooltip = "Enable Cast Bar Marks",
+              getValue = function() local p = DB(); return p and p.castBar.showGCDBoundary end,
+              setValue = function(v)
+                  local p = DB(); if not p then return end
+                  p.castBar.showGCDBoundary = v; RefreshCast()
+                  EllesmereUI:RefreshPage()
+              end },
+            { type = "toggle", text = "Last Tick",
+              tooltip = "Highlights the final damage tick. Requires a supported channeled spell.",
+              disabled = marksOff,
+              disabledTooltip = "Enable Cast Bar Marks",
+              getValue = function() local p = DB(); return p and p.castBar.showLastTick end,
+              setValue = function(v)
+                  local p = DB(); if not p then return end
+                  p.castBar.showLastTick = v; RefreshCast()
+                  EllesmereUI:RefreshPage()
+              end }
+        );  y = y - h
+
+        AttachInlineSwatch(marksRow2._leftRegion,
+            function()
+                local p = DB(); if not p then return 1, 0.82, 0, 0.95 end
+                return p.castBar.gcdBoundaryR or 1, p.castBar.gcdBoundaryG or 0.82,
+                       p.castBar.gcdBoundaryB or 0, p.castBar.gcdBoundaryA or 0.95
+            end,
+            function(r, g, b, a)
+                local p = DB(); if not p then return end
+                p.castBar.gcdBoundaryR = r; p.castBar.gcdBoundaryG = g
+                p.castBar.gcdBoundaryB = b; p.castBar.gcdBoundaryA = a
+                RefreshCast()
+            end,
+            function() return marksOff() or not (DB() and DB().castBar.showGCDBoundary) end,
+            "Enable GCD Boundary"
+        )
+
+        AttachInlineSwatch(marksRow2._rightRegion,
+            function()
+                local p = DB(); if not p then return 1, 0.82, 0, 0.95 end
+                return p.castBar.lastTickR or 1, p.castBar.lastTickG or 0.82,
+                       p.castBar.lastTickB or 0, p.castBar.lastTickA or 0.95
+            end,
+            function(r, g, b, a)
+                local p = DB(); if not p then return end
+                p.castBar.lastTickR = r; p.castBar.lastTickG = g
+                p.castBar.lastTickB = b; p.castBar.lastTickA = a
+                RefreshCast()
+            end,
+            function() return marksOff() or not (DB() and DB().castBar.showLastTick) end,
+            "Enable Last Tick"
+        )
+
         -- Wire up click mappings for cast bar preview hit overlays
         _clickMappings.castBar       = { section = castSection, target = classSizeRow }
         _clickMappings.castIcon      = { section = castSection, target = castEnableRow, slotSide = "right" }

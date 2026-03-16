@@ -59,6 +59,7 @@ end
 local EXTRA_BARS = {
     { key = "MicroBar", label = "Micro Menu Bar", frameName = "MicroMenuContainer", hoverFrame = "MicroMenu", visibilityOnly = true },
     { key = "BagBar",   label = "Bag Bar",        frameName = "BagsBar", visibilityOnly = true },
+    { key = "QueueStatus", label = "Queue Status", frameName = "QueueStatusButton", visibilityOnly = true },
     { key = "XPBar",    label = "XP Bar",         visibilityOnly = true, isDataBar = true },
     { key = "RepBar",   label = "Reputation Bar",  visibilityOnly = true, isDataBar = true },
     { key = "ExtraActionButton", label = "Extra Action Button", visibilityOnly = true, isBlizzardMovable = true },
@@ -75,7 +76,7 @@ for _, info in ipairs(BAR_CONFIG) do BAR_LOOKUP[info.key] = info end
 local BAR_DROPDOWN_VALUES = {}
 local BAR_DROPDOWN_ORDER = {}
 do
-    local _DROPDOWN_EXCLUDE = { ExtraActionButton = true, EncounterBar = true }
+    local _DROPDOWN_EXCLUDE = { ExtraActionButton = true, EncounterBar = true, QueueStatus = true }
     for _, info in ipairs(ALL_BARS) do
         if not _DROPDOWN_EXCLUDE[info.key] then
             BAR_DROPDOWN_VALUES[info.key] = info.label
@@ -217,6 +218,7 @@ local defaults = {
         procGlowScale = 1.0,
         procGlowEnabled = false,
         hideCastingAnimations = true,
+        disableTooltips = false,
         barPositions = {},
         bars = {},
     },
@@ -756,22 +758,12 @@ local function HideBlizzardBars()
         end
     end
 
-    -- Prevent Blizzard's UpdateShownButtons from being called on our
-    -- reparented buttons. Buttons hold a .bar reference to their
-    -- original parent bar. UpdateAction calls self.bar:UpdateShownButtons()
-    -- which hides buttons beyond numButtonsShowable. Nil the .bar
-    -- reference so that call path is broken. This does not taint
-    -- the bar object itself, avoiding taint spread to OverrideActionBar.
-    for _, info in ipairs(BAR_CONFIG) do
-        if info.blizzBtnPrefix and not info.isStance and not info.isPetBar then
-            for i = 1, info.count do
-                local btn = _G[info.blizzBtnPrefix .. i]
-                if btn then
-                    btn.bar = nil
-                end
-            end
-        end
-    end
+    -- NOTE: btn.Bar = nil (capital B) on reparented buttons breaks the
+    -- UpdateAction -> self.bar:UpdateShownButtons() call path that hides
+    -- buttons beyond numButtonsShowable. This is the v4.7 approach.
+    -- Do NOT nil lowercase btn.bar -- that taints OverrideActionBarButton.
+    -- Do NOT noop bar.UpdateShownButtons on bar objects -- writing to a
+    -- protected frame's method table taints the execution context.
 
     -- Now hide the Blizzard bar frames
     for _, name in ipairs(BLIZZARD_BARS_TO_HIDE) do
@@ -847,6 +839,14 @@ local function HideBlizzardBars()
     C_CVar.SetCVar("SHOW_MULTI_ACTIONBAR_2", "1")
     C_CVar.SetCVar("SHOW_MULTI_ACTIONBAR_3", "1")
     C_CVar.SetCVar("SHOW_MULTI_ACTIONBAR_4", "1")
+
+    -- v4.7 approach: nil the .Bar reference on reparented buttons so
+    -- Blizzard's UpdateAction -> self.bar:UpdateShownButtons() call path
+    -- is broken. Capital-B .Bar is the mixin property that Blizzard reads.
+    -- We do NOT nil lowercase .bar (that taints OverrideActionBarButton).
+    -- We also do NOT noop UpdateShownButtons on the bar objects themselves
+    -- because writing to a protected frame's method table taints the
+    -- execution context and propagates via ActionBarController_UpdateAll.
 end
 
 -------------------------------------------------------------------------------
@@ -858,6 +858,7 @@ end
 -------------------------------------------------------------------------------
 local allButtons = {}   -- [actionSlot] = button
 local barButtons = {}   -- [barKey] = { btn1, btn2, ... }
+local buttonToBar = {}  -- [btn] = { barKey, index } for taint-safe slot resolution
 local barFrames  = {}   -- [barKey] = secure header frame
 local dataBarFrames = {} -- [barKey] = data bar frame (XP/Rep) populated later in SetupDataBars
 local blizzMovableHolders = {} -- [barKey] = holder frame for Blizzard movable frames (ExtraAction, Encounter)
@@ -1701,7 +1702,7 @@ local function GetOrCreateButton(slot, parent, info, index, skipProtected)
             btn:SetParent(parent)
             btn:SetID(0)  -- Reset ID to avoid Blizzard paging interference
             btn.Bar = nil  -- Drop reference to Blizzard bar parent
-            btn.bar = nil  -- Lowercase variant used by UpdateAction path
+            btn.bar = nil  -- Break UpdateAction -> UpdateShownButtons path
             btn:Show()
         end
     else
@@ -1933,6 +1934,7 @@ local function SetupBar(info, skipProtected)
                     EABFlyout:RegisterButton(btn)
                 end
                 buttons[i] = btn
+                buttonToBar[btn] = { barKey = key, index = i }
             end
         end
     end
@@ -2151,6 +2153,7 @@ local function ComputeBarLayout(key)
     local numRows = s.overrideNumRows or s.numRows or 1
     if numRows < 1 then numRows = 1 end
     local stride = ceil(numIcons / numRows)
+    numRows = ceil(numIcons / stride)
     local padding = SnapForScale(s.buttonPadding or 2, barScale)
     local isVertical = (s.orientation == "vertical")
     local growUp = (s.growDirection or "up") == "up"
@@ -2235,6 +2238,8 @@ local function LayoutBar(key)
     if numRows < 1 then numRows = 1 end
 
     local stride = ceil(numIcons / numRows)
+    -- Recalculate actual rows needed (avoids empty trailing rows)
+    numRows = ceil(numIcons / stride)
     local padding = SnapForScale(s.buttonPadding or 2, barScale)
     local isVertical = (s.orientation == "vertical")
     local growUp = (s.growDirection or "up") == "up"
@@ -3294,13 +3299,21 @@ local _rangeSlots = {}          -- [actionSlot] = true  (slots with range checki
 local _rangeOutOfRange = {}     -- [actionSlot] = true  (currently out of range)
 local _rangeEventFrame          -- lazy-created event frame
 local _rangeSlotPending = false -- debounce for per-slot range re-enable
+local _mainBarOffset = 0        -- cached actionOffset for MainBar (updated on page change)
 
--- Resolve the action slot for a button (handles paging for MainBar)
+-- Resolve the action slot for a button without reading btn.action.
+-- btn.action is a protected attribute (secret value in Midnight) and
+-- reading it during combat causes taint. Instead we use a lookup table
+-- populated at setup time plus a cached page offset for MainBar.
 local function GetButtonActionSlot(btn)
-    if not btn then return nil end
-    local action = btn.action
-    if action and type(action) == "number" and action > 0 then return action end
-    return nil
+    local info = buttonToBar[btn]
+    if not info then return nil end
+    local offset = BAR_SLOT_OFFSETS[info.barKey]
+    if not offset then return nil end
+    if info.barKey == "MainBar" then
+        offset = _mainBarOffset
+    end
+    return offset + info.index
 end
 
 -- Apply or remove the range tint on a single button
@@ -3401,6 +3414,12 @@ function EAB:ApplyRangeColoring()
     end
     -- Set up the event listener if not already created
     if not _rangeEventFrame then
+        -- Snapshot the current MainBar page offset so GetButtonActionSlot
+        -- returns correct slots before the first ACTIONBAR_PAGE_CHANGED fires.
+        local mainFrame = barFrames["MainBar"]
+        if mainFrame then
+            _mainBarOffset = mainFrame:GetAttribute("actionOffset") or 0
+        end
         _rangeEventFrame = CreateFrame("Frame")
         _rangeEventFrame:RegisterEvent("ACTION_RANGE_CHECK_UPDATE")
         _rangeEventFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
@@ -3453,6 +3472,15 @@ function EAB:ApplyRangeColoring()
                     end)
                 end
             elseif event == "ACTIONBAR_PAGE_CHANGED" then
+                -- Update cached MainBar offset from the frame attribute.
+                -- Outside combat this is safe; during combat the secure
+                -- snippet already set the attribute so it reflects the
+                -- current page. We read it here (out of the hot path)
+                -- rather than on every GetButtonActionSlot call.
+                local mainFrame = barFrames["MainBar"]
+                if mainFrame then
+                    _mainBarOffset = mainFrame:GetAttribute("actionOffset") or 0
+                end
                 -- Page changed: clear all range state and re-enable for new slots
                 wipe(_rangeOutOfRange)
                 for _, info in ipairs(BAR_CONFIG) do
@@ -3894,9 +3922,9 @@ function EAB:UpdateHousingVisibility()
     -- (e.g. CameraOrSelectOrMoveStop triggering PLAYER_MOUNT_DISPLAY_CHANGED)
     C_Timer.After(0, function()
         if InCombatLockdown() then return end
-        -- Check only housing and instance-only options here. Mounted, target,
-        -- and enemy options are handled by the secure state driver via
-        -- BuildVisibilityString and re-evaluate automatically.
+        -- Check non-macro visibility options here. Secure frames still use the
+        -- state driver for target/enemy conditions, but mounted-like druid
+        -- forms are also handled here to cover cases [mounted] does not match.
         local function ShouldHideNonMacro(s)
             if not s then return false end
             if s.visOnlyInstances then
@@ -3918,6 +3946,14 @@ function EAB:UpdateHousingVisibility()
                     if mapID and mapID > 2600 then return true end
                 end
             end
+            -- Mounted is normally handled by secure [mounted] state conditions.
+            -- Also check the shared runtime mounted-like helper here so druid
+            -- travel/flight/aquatic forms hide correctly on non-macro refreshes.
+            if s.visHideMounted then
+                if EllesmereUI and EllesmereUI.IsPlayerMountedLike and EllesmereUI.IsPlayerMountedLike() then
+                    return true
+                end
+            end
             return false
         end
 
@@ -3927,8 +3963,9 @@ function EAB:UpdateHousingVisibility()
             if s then
                 local frame = barFrames[key] or (info.isDataBar and dataBarFrames[key]) or (info.isBlizzardMovable and blizzMovableHolders[key]) or (extraBarHolders[key]) or (info.visibilityOnly and _G[info.frameName])
                 if frame then
-                    -- Secure action bar frames use the state driver for mounted/
-                    -- target/enemy options, so only check housing/instances here.
+                    -- Secure action bar frames use the state driver for
+                    -- target/enemy options; mounted-like druid forms are
+                    -- additionally handled in ShouldHideNonMacro().
                     -- Non-secure frames (data bars, extra bars, visibility-only)
                     -- need the full check since they have no state driver.
                     local isSecure = not info.visibilityOnly and not info.isDataBar and not info.isBlizzardMovable and barFrames[key]
@@ -5399,15 +5436,21 @@ function EAB:OnFirstLogin()
             if data.alwaysShowButtons ~= nil then
                 s.alwaysShowButtons = data.alwaysShowButtons
             end
-            -- Visibility: 3=Hidden set alwaysHidden
-            -- 1=InCombat combatShowEnabled, 2=OutOfCombat combatHideEnabled
+            -- Visibility: 3=Hidden, 1=InCombat, 2=OutOfCombat, 0=Always
+            -- Keep barVisibility and legacy booleans in sync so the
+            -- options dropdown reflects the actual state.
             if data.visibility then
                 if data.visibility == 3 then
                     s.alwaysHidden = true
+                    s.barVisibility = "never"
                 elseif data.visibility == 1 then
                     s.combatShowEnabled = true
+                    s.barVisibility = "in_combat"
                 elseif data.visibility == 2 then
                     s.combatHideEnabled = true
+                    -- No dropdown equivalent for "hide in combat";
+                    -- legacy flag handles the state driver behavior.
+                    s.barVisibility = "always"
                 end
             end
             if data.point then
@@ -5589,6 +5632,22 @@ function EAB:FinishSetup()
     end
 
     DoSetupSecure()
+
+    -- Suppress action bar tooltips when the global setting is enabled.
+    -- Hooks GameTooltip:SetAction/SetPetAction which Blizzard action
+    -- buttons call on hover. Zero per-frame cost.
+    if GameTooltip then
+        local function ShouldHideTooltip()
+            return EAB.db and EAB.db.profile.disableTooltips
+        end
+        hooksecurefunc(GameTooltip, "SetAction", function(self)
+            if ShouldHideTooltip() then self:Hide() end
+        end)
+        hooksecurefunc(GameTooltip, "SetPetAction", function(self)
+            if ShouldHideTooltip() then self:Hide() end
+        end)
+    end
+
     -- Attach hover hooks for mouseover
     for _, info in ipairs(BAR_CONFIG) do
         AttachHoverHooks(info.key)
@@ -5847,6 +5906,9 @@ function EAB:FinishSetup()
 
     -- Visibility option events: mounted, target, group changes
     self:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED", function()
+        self:UpdateHousingVisibility()
+    end)
+    self:RegisterEvent("UPDATE_SHAPESHIFT_FORM", function()
         self:UpdateHousingVisibility()
     end)
     self:RegisterEvent("PLAYER_TARGET_CHANGED", function()
@@ -7025,6 +7087,22 @@ local function SetupExtraBarHolder(barKey, frameName)
             end
         end)
     end)
+
+    -- QueueStatusButton has an UpdatePosition method that Blizzard calls
+    -- to reposition it relative to the MicroMenu. Hook it to keep it
+    -- centered in our holder instead.
+    if blizzFrame.UpdatePosition then
+        hooksecurefunc(blizzFrame, "UpdatePosition", function(self)
+            if _recentering or self:GetParent() ~= holder then return end
+            C_Timer_After(0, function()
+                if _recentering or self:GetParent() ~= holder or InCombatLockdown() then return end
+                _recentering = true
+                self:ClearAllPoints()
+                self:SetPoint("CENTER", holder, "CENTER", 0, 0)
+                _recentering = false
+            end)
+        end)
+    end
 
     return holder
 end

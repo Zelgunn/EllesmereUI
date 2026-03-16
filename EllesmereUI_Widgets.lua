@@ -3620,7 +3620,7 @@ local function BuildCogPopup(opts)
         local maxLblW = 0
         local maxDDLblW = 0
         for _, row in ipairs(opts.rows) do
-            if row.type == "slider" then
+            if row.type == "slider" or row.type == "input" then
                 tmpFS:SetText(row.label)
                 local w = tmpFS:GetStringWidth()
                 if w > maxLblW then maxLblW = w end
@@ -3827,6 +3827,56 @@ local function BuildCogPopup(opts)
                 end
 
                 curY = curY - ROW_H
+            elseif row.type == 'input' then
+                local lbl = MakeFont(pf, 11, nil, 1, 1, 1); lbl:SetAlpha(0.6)
+                lbl:SetText(row.label)
+                lbl:SetPoint("LEFT", pf, "TOPLEFT", SIDE_PAD, curY - ROW_H / 2 - 1)
+
+                local inputW = row.inputWidth or 80
+                local box = CreateFrame("EditBox", nil, pf)
+                box:SetSize(inputW, ROW_H - 4)
+                box:SetPoint("RIGHT", pf, "TOPRIGHT", -SIDE_PAD, curY - ROW_H / 2)
+                box:SetAutoFocus(false)
+                box:SetFont(EXPRESSWAY or "Fonts\\FRIZQT__.TTF", 11, "")
+                box:SetTextColor(1, 1, 1, POPUP_INPUT_A)
+                box:SetJustifyH("CENTER")
+                local boxBg = SolidTex(box, "BACKGROUND", 0.12, 0.12, 0.12, 0.8)
+                boxBg:SetAllPoints()
+                box:SetText(row.get and row.get() or "")
+                box:SetScript("OnEnterPressed", function(self)
+                    self:ClearFocus()
+                    if row.set then row.set(self:GetText()) end
+                    if pf._refresh then pf._refresh() end
+                end)
+                box:SetScript("OnEscapePressed", function(self)
+                    self:ClearFocus()
+                    self:SetText(row.get and row.get() or "")
+                end)
+
+                -- Disabled overlay for input
+                local inputDis
+                if row.disabled then
+                    inputDis = CreateFrame("Frame", nil, pf)
+                    inputDis:SetPoint("TOPLEFT", pf, "TOPLEFT", 0, curY)
+                    inputDis:SetPoint("TOPRIGHT", pf, "TOPRIGHT", 0, curY)
+                    inputDis:SetHeight(ROW_H)
+                    inputDis:SetFrameLevel(pf:GetFrameLevel() + 10)
+                    inputDis:EnableMouse(true)
+                    local disTex = SolidTex(inputDis, "OVERLAY", 0.06, 0.08, 0.10, 0.70)
+                    disTex:SetAllPoints()
+                    local disTip = row.disabledTooltip
+                    inputDis:SetScript("OnEnter", function(self)
+                        local tip = type(disTip) == "function" and disTip() or disTip
+                        if tip and EllesmereUI.ShowWidgetTooltip then
+                            EllesmereUI.ShowWidgetTooltip(self, EllesmereUI.DisabledTooltip(tip))
+                        end
+                    end)
+                    inputDis:SetScript("OnLeave", function() if EllesmereUI.HideWidgetTooltip then EllesmereUI.HideWidgetTooltip() end end)
+                end
+
+                rowWidgets[#rowWidgets + 1] = { type = 'input', box = box, get = row.get, disOverlay = inputDis, disCheck = row.disabled }
+                curY = curY - ROW_H
+
             elseif row.type == 'button' then
                 local BTN_ROW_H = ROW_H + 4
                 local btn = CreateFrame("Button", nil, pf)
@@ -3910,6 +3960,14 @@ local function BuildCogPopup(opts)
                     if rw.lbl and rw.get and rw.values then
                         rw.lbl:SetText(DDText(rw.values[rw.get()]) or tostring(rw.get()))
                         if rw.refresh then rw.refresh() end
+                    end
+                elseif rw.type == 'input' then
+                    if rw.disOverlay and rw.disCheck then
+                        local dis = type(rw.disCheck) == "function" and rw.disCheck() or rw.disCheck
+                        if dis then rw.disOverlay:Show() else rw.disOverlay:Hide() end
+                    end
+                    if rw.box and rw.get and not rw.box:HasFocus() then
+                        rw.box:SetText(rw.get())
                     end
                 end
             end
@@ -5222,4 +5280,73 @@ function EllesmereUI.BuildVisOptsCBDropdown(parentFrame, ddW, fLevel, items, get
         end
     end
     return ddBtn, RefreshAll
+end
+
+-------------------------------------------------------------------------------
+--  BuildUnlockPlaceholder
+--  Reusable overlay that mirrors the unlock mode mover style.
+--  Shows accent-colored text (default "Move in Unlock Mode") and opens
+--  unlock mode on click.
+--
+--  opts = {
+--      parent   = frame,          -- parent frame to overlay
+--      text     = "...",          -- optional, defaults to "Move in Unlock Mode"
+--      level    = number,         -- optional frame level override
+--      onClick  = function,       -- optional custom click handler (default: toggle unlock mode)
+--  }
+--  Returns the placeholder frame.
+-------------------------------------------------------------------------------
+function EllesmereUI.BuildUnlockPlaceholder(opts)
+    local parent = opts.parent
+    local eg = EllesmereUI.ELLESMERE_GREEN
+    local ar, ag, ab = eg.r, eg.g, eg.b
+
+    local f = CreateFrame("Button", nil, parent)
+    f:SetAllPoints(parent)
+    if opts.level then
+        f:SetFrameLevel(opts.level)
+    else
+        f:SetFrameLevel(parent:GetFrameLevel() + 10)
+    end
+    f:EnableMouse(true)
+    f:RegisterForClicks("LeftButtonUp")
+
+    -- Dark background matching unlock mode movers
+    local bg = f:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0.075, 0.113, 0.141, 0.95)
+    f._bg = bg
+
+    -- Accent border at 60% alpha
+    f._brd = EllesmereUI.MakeBorder(f, ar, ag, ab, 0.6)
+
+    -- White centered label matching unlock mode mover style
+    local fontPath = (EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("extras"))
+        or "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF"
+    local label = f:CreateFontString(nil, "OVERLAY")
+    label:SetFont(fontPath, 10, "OUTLINE")
+    label:SetText(opts.text or "Move in Unlock Mode")
+    label:SetTextColor(1, 1, 1, 0.9)
+    label:SetPoint("CENTER")
+    f._label = label
+
+    -- Hover: accent text + brighten border
+    local brd = f._brd
+    f:SetScript("OnEnter", function()
+        label:SetTextColor(ar, ag, ab, 1)
+        if brd then brd:SetColor(ar, ag, ab, 0.85) end
+    end)
+    f:SetScript("OnLeave", function()
+        label:SetTextColor(1, 1, 1, 0.9)
+        if brd then brd:SetColor(ar, ag, ab, 0.6) end
+    end)
+
+    -- Click: open unlock mode (or custom handler)
+    f:SetScript("OnClick", opts.onClick or function()
+        if EllesmereUI.ToggleUnlockMode then
+            EllesmereUI:ToggleUnlockMode()
+        end
+    end)
+
+    return f
 end

@@ -5587,7 +5587,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "4.8.4"
+EllesmereUI.VERSION = "4.8.5"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end
@@ -6508,6 +6508,53 @@ EllesmereUI.VIS_OPT_ITEMS = {
 
 -- Runtime check: returns true if the element should be HIDDEN by visibility options.
 -- `opts` is the settings table containing the vis option booleans.
+local DRUID_MOUNT_FORM_IDS = {
+    [3] = true,   -- travel form
+    [4] = true,   -- aquatic form
+    [27] = true,  -- flight form
+    [29] = true,  -- flight form variant
+}
+
+local DRUID_MOUNT_FORM_SPELLS = {
+    [783] = true,    -- Travel Form
+    [1066] = true,   -- Aquatic Form
+    [33943] = true,  -- Flight Form
+    [40120] = true,  -- Swift Flight Form
+    [165962] = true, -- Mount Form
+    [210053] = true, -- Mount Form (variant)
+}
+
+-- Cache player class once at load time (never changes).
+local _, _playerClass = UnitClass("player")
+
+function EllesmereUI.IsPlayerMountedLike()
+    -- Fast path for regular mounts.
+    if IsMounted and IsMounted() then return true end
+
+    -- Only druids have mount-like shapeshift forms.
+    if _playerClass ~= "DRUID" then return false end
+
+    -- Primary check: form ID lookup (covers the common cases).
+    if GetShapeshiftFormID then
+        local formID = GetShapeshiftFormID()
+        if formID and DRUID_MOUNT_FORM_IDS[formID] then
+            return true
+        end
+    end
+
+    -- Spell fallback for mount-form variants whose form IDs may differ.
+    -- GetShapeshiftFormInfo returns: icon, active, castable, spellID
+    local form = GetShapeshiftForm and GetShapeshiftForm()
+    if form and form > 0 and GetShapeshiftFormInfo then
+        local _, active, _, spellID = GetShapeshiftFormInfo(form)
+        if active and spellID and DRUID_MOUNT_FORM_SPELLS[spellID] then
+            return true
+        end
+    end
+
+    return false
+end
+
 function EllesmereUI.CheckVisibilityOptions(opts)
     if not opts then return false end
 
@@ -6536,7 +6583,7 @@ function EllesmereUI.CheckVisibilityOptions(opts)
 
     -- Hide when Mounted
     if opts.visHideMounted then
-        if IsMounted and IsMounted() then return true end
+        if EllesmereUI.IsPlayerMountedLike and EllesmereUI.IsPlayerMountedLike() then return true end
     end
 
     -- Hide without Target
