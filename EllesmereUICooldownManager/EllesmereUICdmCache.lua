@@ -17,6 +17,7 @@ cache._spellToCooldownID = {}
 cache._ecmeChildHasDurObj = {}
 cache._ecmeDurObj = {}                           -- [ch] = durObj captured from SetCooldownFromDurationObject hook
 cache._ecmeRawStart = {}                         -- [ch] = start captured from SetCooldown hook
+cache._placedUnitStartCache = {}                 -- [spellID] = GetTime() when placed unit first detected active
 cache._ecmeRawDur = {}                           -- [ch] = dur captured from SetCooldown hook
 cache._tickTotem = {}                            -- [slot] = haveTotem (cached per tick to avoid inconsistent reads)
 cache._cdmHoverStates = {}                       -- [barKey] = { isHovered=false, fadeDir=nil }
@@ -24,6 +25,8 @@ cache._cdmHoverStates = {}                       -- [barKey] = { isHovered=false
 -- Export to NS
 ns._ecmeDurObjCache = cache._ecmeDurObj
 ns._ecmeRawStartCache = cache._ecmeRawStart
+ns._placedUnitStartCache = cache._placedUnitStartCache
+
 ns._ecmeRawDurCache = cache._ecmeRawDur
 
 -- endregion

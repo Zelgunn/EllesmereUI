@@ -425,9 +425,23 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
                     return true, true
                 else
                     -- Totems: skip auraHandled so summon-type fallback shows totem duration
+                    -- todo: move to a separate function?
                     local bts = blizzChild and blizzChild.preferredTotemUpdateSlot
                     if not (bts and type(bts) == "number" and bts > 0) then
-                        return true, false
+                        local fixedDur = ns.PLACED_UNIT_DURATIONS[resolvedID]
+                                         or ns.PLACED_UNIT_DURATIONS[spellID]
+                        local fixedSid = fixedDur and (ns.PLACED_UNIT_DURATIONS[resolvedID] and resolvedID or spellID)
+                        if fixedDur and isBuffBar then
+                            if not ECache._placedUnitStartCache[fixedSid] then
+                                ECache._placedUnitStartCache[fixedSid] = GetTime()
+                            end
+                            icon._cooldown:Clear()
+                            pcall(icon._cooldown.SetCooldown, icon._cooldown, ECache._placedUnitStartCache[fixedSid], fixedDur)
+                            icon._cooldown:SetReverse(false)
+                            return true, true
+                        else
+                            return true, false
+                        end
                     end
                 end
             else
