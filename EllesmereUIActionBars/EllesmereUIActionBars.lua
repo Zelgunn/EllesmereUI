@@ -740,13 +740,13 @@ end
 local STOCK_BAR_DISPOSAL = {
     { name = "MainActionBar",       retainEvents = true },
     { name = "MainMenuBar" },
-    { name = "MultiBarBottomLeft",  wipeBtns = true },
-    { name = "MultiBarBottomRight", wipeBtns = true },
-    { name = "MultiBarRight",       wipeBtns = true },
-    { name = "MultiBarLeft",        wipeBtns = true },
-    { name = "MultiBar5",           wipeBtns = true },
-    { name = "MultiBar6",           wipeBtns = true },
-    { name = "MultiBar7",           wipeBtns = true },
+    { name = "MultiBarBottomLeft" },
+    { name = "MultiBarBottomRight" },
+    { name = "MultiBarRight" },
+    { name = "MultiBarLeft" },
+    { name = "MultiBar5" },
+    { name = "MultiBar6" },
+    { name = "MultiBar7" },
     { name = "StanceBar" },
     { name = "PetActionBar" },
 }
@@ -1041,11 +1041,6 @@ local function HideBlizzardBars()
                     child:SetAttributeNoHandler("statehidden", true)
                     child:Hide()
                 end
-                -- Clear the table on multi-bars so stock UpdateShownButtons
-                -- has nothing left to iterate over.
-                if entry.wipeBtns then
-                    table.wipe(btns)
-                end
             end
         end
     end
@@ -1277,6 +1272,11 @@ local function GetOrCreateButton(slot, parent, info, index, skipProtected)
         local name = "EABButton" .. slot
         btn = CreateFrame("CheckButton", name, parent, "ActionBarButtonTemplate")
         btn:SetAttribute("action", slot)
+        -- Register with the centralized event dispatcher so the mixin
+        -- receives ACTIONBAR_SLOT_CHANGED and other update events.
+        if ActionBarButtonEventsFrame and ActionBarButtonEventsFrame.RegisterFrame then
+            ActionBarButtonEventsFrame:RegisterFrame(btn)
+        end
     end
 
     -- Register with the central button controller for secure showgrid
@@ -1516,6 +1516,12 @@ local function SetupBar(info, skipProtected)
                         end
                     end
                     allButtons[slot] = btn
+                    -- Register with the centralized event dispatcher so
+                    -- the mixin receives ACTIONBAR_SLOT_CHANGED and other
+                    -- events it needs for icon/count/cooldown updates.
+                    if ActionBarButtonEventsFrame and ActionBarButtonEventsFrame.RegisterFrame then
+                        ActionBarButtonEventsFrame:RegisterFrame(btn)
+                    end
                 end
 
                 RegisterButtonWithController(btn)
@@ -1532,6 +1538,11 @@ local function SetupBar(info, skipProtected)
                     ]])
                     local curOffset = frame:GetAttribute("actionOffset") or 0
                     btn:SetAttribute("action", i + curOffset)
+                    -- Force the mixin to update so HasAction/icon state
+                    -- is correct before ApplyAlwaysShowButtons runs.
+                    if btn.UpdateAction then
+                        btn:UpdateAction()
+                    end
                 end
             else
                 btn = GetOrCreateButton(slot, frame, info, i, skipProtected)
@@ -1569,6 +1580,18 @@ local function SetupBar(info, skipProtected)
     end
 
     barButtons[key] = buttons
+
+    -- Wipe the Blizzard bar's actionButtons table so that
+    -- UpdateShownButtons (called on every OnEnter) has nothing to
+    -- iterate. Without this, Blizzard hides buttons beyond
+    -- numButtonsShowable on hover. Keybinds are handled entirely
+    -- through our own override bindings in UpdateKeybinds.
+    if not skipProtected and not info.isStance and not info.isPetBar then
+        local blizzBar = _G[info.blizzFrame]
+        if blizzBar and blizzBar.actionButtons and type(blizzBar.actionButtons) == "table" then
+            table.wipe(blizzBar.actionButtons)
+        end
+    end
 
     -- Store original button size before any shape/scale modifications.
     -- StanceButtons and PetActionButtons are 30x30; action buttons are 45x45.
@@ -2896,9 +2919,20 @@ function EAB:ApplyAlwaysShowButtons(barKey)
 
             if not visible then
                 btn:SetAlpha(0)
-                -- Invisible empty slots should not catch mouse events
+                -- Invisible empty slots should not catch mouse events.
+                -- Set statehidden so the secure UpdateShown snippet
+                -- keeps the button hidden instead of re-showing it.
                 SafeEnableMouse(btn, false)
+                if not InCombatLockdown() then
+                    btn:SetAttributeNoHandler("statehidden", true)
+                    btn:Hide()
+                end
             else
+                if not InCombatLockdown() then
+                    btn:SetAttributeNoHandler("statehidden", nil)
+                    btn:SetAttribute("showgrid", 1)
+                    btn:Show()
+                end
                 if not s.mouseoverEnabled then
                     btn:SetAlpha(1)
                 end
@@ -2913,7 +2947,9 @@ function EAB:ApplyAlwaysShowButtons(barKey)
         local btn = buttons[i]
         if btn then
             btn:SetAlpha(0)
+            SafeEnableMouse(btn, false)
             if not InCombatLockdown() then
+                btn:SetAttributeNoHandler("statehidden", true)
                 btn:Hide()
             end
         end
@@ -4682,6 +4718,11 @@ local function OnGridChange()
             for i = 1, numIcons do
                 local btn = buttons[i]
                 if btn then
+                    -- Clear statehidden so the secure UpdateShown snippet
+                    -- allows the button to stay visible during drag.
+                    if btn:GetAttribute("statehidden") then
+                        btn:SetAttributeNoHandler("statehidden", nil)
+                    end
                     if btn._eabSlotBG then btn._eabSlotBG:Show() end
                     -- Show borders during drag
                     if btn._eabBorders and not (btn._eabShapeMask and btn._eabShapeMask:IsShown()) then
@@ -5293,6 +5334,28 @@ function EAB:FinishSetup()
             self:HookProcGlow()
             self:ScanExistingProcs()
             EAB.AnchorVehicleButton()
+            -- DEBUG removed
+            -- Fix: Blizzard's UpdateCount sets count text based on
+            -- GetActionCount even when the slot is empty, because
+            -- GetActionCount can return stale values. Hook UpdateCount
+            -- to clear the text when HasAction is false.
+            for _, info in ipairs(BAR_CONFIG) do
+                if not info.isStance and not info.isPetBar then
+                    local btns = barButtons[info.key]
+                    if btns then
+                        for _, b in ipairs(btns) do
+                            if b.UpdateCount and not b._eabCountFixed then
+                                b._eabCountFixed = true
+                                hooksecurefunc(b, "UpdateCount", function(self)
+                                    if not self:HasAction() then
+                                        self.Count:SetText("")
+                                    end
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
         end
 
         if InCombatLockdown() then
