@@ -133,7 +133,7 @@ ECache.InitCastCountSpellsCache()
 --  Avoids redundant C API calls when the same spellID appears on multiple
 --  bars or is queried by both ApplySpellCooldown and ApplyStackCount.
 -------------------------------------------------------------------------------
-local _tickBlizzOverrideCache = ECache._tickBlizzOverride -- [baseSpellID] = overrideSpellID, built each tick from all CDM viewer children
+
 local _tickBlizzChildCache = ECache._tickBlizzChild    -- [overrideSpellID] = blizzChild, for direct charge/cooldown reads on activation overrides
 local _tickBlizzAllChildCache = ECache._tickBlizzAllChild -- [resolvedSid] = blizzChild, for all CDM children (used by custom bars)
 local _tickBlizzBuffChildCache = ECache._tickBlizzBuffChild -- [resolvedSid] = blizzChild, only from BuffIcon/BuffBar viewers
@@ -1939,19 +1939,19 @@ local function OnProcGlowEvent(event, spellID)
         if barData.enabled and barData.customSpells then
             local icons = cdmBarIcons[barData.key]
             if icons then
-                for i, sid in ipairs(barData.customSpells) do
+                for i, customSpellID in ipairs(barData.customSpells) do
                     -- Direct match
-                    local matched = (sid == spellID)
+                    local matched = (customSpellID == spellID)
                     -- Override match: resolve the base spell to its current override
                     if not matched and C_SpellBook and C_SpellBook.FindSpellOverrideByID then
-                        local overrideID = C_SpellBook.FindSpellOverrideByID(sid)
+                        local overrideID = C_SpellBook.FindSpellOverrideByID(customSpellID)
                         if overrideID and overrideID == spellID then
                             matched = true
                         end
                     end
                     -- Blizzard CDM override cache (deeper activation overrides)
                     if not matched then
-                        local blizzOvr = _tickBlizzOverrideCache[sid]
+                        local blizzOvr = ECache.GetSpellOverridenByBlizzard(customSpellID)
                         if blizzOvr and blizzOvr == spellID then
                             matched = true
                         end
@@ -3142,22 +3142,7 @@ local _blizzIconsBuf = {}
 -- Spell icon texture cache (avoids C_Spell.GetSpellInfo per tick per icon)
 local _spellIconCache = {}
 
--------------------------------------------------------------------------------
---- Second-level runtime override: e.g. spell A (base) -> spell B (talent)
---- -> spell C (activation override, e.g. Avenging Crusader transforms Crusader Strike).
---- FindSpellOverrideByID only resolves one level; check the Blizzard CDM
---- children cache for a deeper override on the already-resolved ID.
---- @param baseSpellID number   The base spell ID before resolution
---- @param resolvedID number    The spell ID after the first-level resolution
---- @return number resolvedID   The spell ID after the second-level resolution
--------------------------------------------------------------------------------
-local function SecondLevelSpellIDOverride(baseSpellID, resolvedID)
-    local blizzOverride = _tickBlizzOverrideCache[resolvedID] or _tickBlizzOverrideCache[baseSpellID]
-    if blizzOverride then
-        return blizzOverride
-    end
-    return resolvedID
-end
+
 
 -------------------------------------------------------------------------------
 --- Cache spell icon texture to avoid C_Spell.GetSpellInfo per tick
@@ -3352,7 +3337,7 @@ local function UpdateCustomBarIcons(barKey)
                     -- Skip on buff bars: buff bars show the base spell's state/CD, not the
                     -- temporary replacement that appears while the spell is on cooldown.
                     if not isBuffBarForOverride then
-                        resolvedID = SecondLevelSpellIDOverride(spellID, resolvedID)
+                        resolvedID = ECache.SecondLevelSpellIDOverride(spellID, resolvedID)
                     end
 
                     if resolvedID ~= spellID then
@@ -4212,7 +4197,7 @@ local function UpdateTrackedBarIcons(barKey)
                 -- Skip on buff bars: buff bars show the base spell's state/CD, not the
                 -- temporary replacement that appears while the spell is on cooldown.
                 if not isBuffBarForOverride then
-                    resolvedID = SecondLevelSpellIDOverride(spellID, resolvedID)
+                    resolvedID = ECache.SecondLevelSpellIDOverride(spellID, resolvedID)
                 end
 
                 if resolvedID ~= spellID then
@@ -4428,7 +4413,7 @@ local function UpdateAllCDMBars(dt)
                             if resolvedSid and resolvedSid > 0 then
                                 -- Override cache: base -> override (always, not just when active)
                                 if baseSpellID and cachedOverride and cachedOverride ~= baseSpellID then
-                                    _tickBlizzOverrideCache[baseSpellID] = cachedOverride
+                                    ECache.CacheSpellOverridenByBlizzard(baseSpellID, cachedOverride)
                                     _tickBlizzChildCache[cachedOverride] = ch
                                 end
                                 -- Multi-child cache: track children that share a base spellID

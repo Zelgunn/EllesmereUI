@@ -155,11 +155,63 @@ cache.CacheTickBlizzardActive = CacheTickBlizzardActive
 -------------------------------------------------------------------------------
 --- Checks if spellID is cached in `_tickBlizzActive`
 --- @param spellID number           The spell ID to check
+--- @return boolean spellCachedInTickBlizzardActive
 -------------------------------------------------------------------------------
 local function IsSpellCachedInTickBlizzardActive(spellID)
     return cache._tickBlizzActive[spellID] ~= nil
 end
 cache.IsSpellCachedInTickBlizzardActive = IsSpellCachedInTickBlizzardActive
+
+-------------------------------------------------------------------------------
+--- Get the blizzard override for spellID from the cache `_tickBlizzOverride`
+--- @param spellID number           The spell ID to query
+--- @return number|nil blizzardOverrideSpell
+-------------------------------------------------------------------------------
+local function GetSpellOverridenByBlizzard(spellID)
+    return cache._tickBlizzOverride[spellID]
+end
+cache.GetSpellOverridenByBlizzard = GetSpellOverridenByBlizzard
+
+-------------------------------------------------------------------------------
+--- Get the blizzard override for spellID from the cache `_tickBlizzOverride`
+--- @param spellID number           The spell ID to override
+--- @param overrideSpellID number   The blizzard override spell ID for spellID
+-------------------------------------------------------------------------------
+local function CacheSpellOverridenByBlizzard(spellID, overrideSpellID)
+    cache._tickBlizzOverride[spellID] = overrideSpellID
+end
+cache.CacheSpellOverridenByBlizzard = CacheSpellOverridenByBlizzard
+
+-------------------------------------------------------------------------------
+--- Returns the first override from Blizzard between `resolvedID` and `spellID`
+---   (`resolvedID` has priority over `spellID`.)
+--- Uses `_tickBlizzOverride` as the reference cache.
+--- @param spellID number           The (original) spell ID to query
+--- @param resolvedID number|nil    The resolved spell ID to query
+--- @return number|nil blizzardOverrideSpell
+-------------------------------------------------------------------------------
+local function GetResolvedSpellOverridenByBlizzard(spellID, resolvedID)
+    return cache._tickBlizzOverride[resolvedID] or cache._tickBlizzOverride[spellID]
+end
+cache.IsOverridenByBlizzard = GetResolvedSpellOverridenByBlizzard
+
+-------------------------------------------------------------------------------
+--- Second-level runtime override: e.g. spell A (base) -> spell B (talent)
+--- -> spell C (activation override, e.g. Avenging Crusader transforms Crusader Strike).
+--- FindSpellOverrideByID only resolves one level; check the Blizzard CDM
+--- children cache for a deeper override on the already-resolved ID.
+--- @param baseSpellID number   The base spell ID before resolution
+--- @param resolvedID number    The spell ID after the first-level resolution
+--- @return number resolvedID   The spell ID after the second-level resolution
+-------------------------------------------------------------------------------
+local function SecondLevelSpellIDOverride(baseSpellID, resolvedID)
+    local blizzOverride = GetResolvedSpellOverridenByBlizzard(baseSpellID, resolvedID)
+    if blizzOverride then
+        return blizzOverride
+    end
+    return resolvedID
+end
+cache.SecondLevelSpellIDOverride = SecondLevelSpellIDOverride
 
 -- endregion
 
