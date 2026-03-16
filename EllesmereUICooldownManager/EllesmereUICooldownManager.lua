@@ -173,7 +173,7 @@ local _ecmeRawDurCache = ECache._ecmeRawDur             -- [ch] = dur captured f
 local _cdmHoverStates = ECache._cdmHoverStates          -- [barKey] = { isHovered=false, fadeDir=nil }
 
 
-local IsBufChildCooldownActive = ns.ECdmUtils.IsBuffChildCooldownActive
+local IsBufChildCooldownActive = ECache.IsBuffChildCooldownActive
 ns.IsBufChildCooldownActive = IsBufChildCooldownActive
 
 local _spellToCooldownID = ECache._spellToCooldownID
@@ -3295,7 +3295,7 @@ local function UpdateCustomBarIcons(barKey)
                             local blizzChild = ECache.GetTickBlizzardAllChild(resolvedID)
                             if not blizzChild then
                                 local cdID = _spellToCooldownID[resolvedID] or _spellToCooldownID[spellID]
-                                if cdID then blizzChild = EUtils.FindCDMChildByCooldownID(cdID) end
+                                if cdID then blizzChild = ECache.FindCDMChildByCooldownID(cdID) end
                             end
                             ApplyStackCount(ourIcon, resolvedID,
                                 blizzChild and blizzChild.auraInstanceID,
@@ -4083,7 +4083,7 @@ local function UpdateTrackedBarIcons(barKey)
                     local blizzChild = assignedChild or ECache.GetTickBlizzardAllChild(resolvedID)
                     if not blizzChild then
                         local cdID = _spellToCooldownID[resolvedID] or _spellToCooldownID[spellID]
-                        if cdID then blizzChild = EUtils.FindCDMChildByCooldownID(cdID) end
+                        if cdID then blizzChild = ECache.FindCDMChildByCooldownID(cdID) end
                     end
                     ApplyStackCount(ourIcon, resolvedID,
                         blizzChild and blizzChild.auraInstanceID,
@@ -4156,7 +4156,7 @@ local function UpdateAllCDMBars(dt)
 
     do
         for vi = 1, 4 do
-            local vName = EUtils._cdmViewerNames[vi]
+            local vName = ECache.GetCDMViewerName(vi)
             local vf = _G[vName]
             local isBuffViewer = (vi == 3 or vi == 4)
             local isBuffIconViewer = (vi == 3)
@@ -6631,25 +6631,9 @@ local function ScheduleTalentRebuild()
         -- Clear spell icon cache so custom bars pick up new textures for
         -- talent-swapped spells
         ECache.WipeSpellIconCache()
-        -- Clear cached viewer child info so the next tick re-reads from API
-        -- (overrideSpellID may have changed with the new talent set)
-        for _, vname in ipairs(EUtils._cdmViewerNames) do
-            local vf = _G[vname]
-            if vf and vf:GetNumChildren() > 0 then
-                local children = { vf:GetChildren() }
-                for ci = 1, #children do
-                    local ch = children[ci]
-                    if ch then
-                        ch._ecmeResolvedSid = nil
-                        ch._ecmeBaseSpellID = nil
-                        ch._ecmeOverrideSid = nil
-                        ch._ecmeCachedCdID = nil
-                        ch._ecmeIsChargeSpell = nil
-                        ch._ecmeMaxCharges = nil
-                    end
-                end
-            end
-        end
+
+        ECache.ClearCachedViewerChildInfo()
+
         -- Rebuild keybind cache (talent swap may change action slot contents)
         UpdateCDMKeybinds()
     end)
@@ -6905,7 +6889,7 @@ SlashCmdList.CDMCUSTOM = function()
                 if sid and sid > 0 then
                     local name = C_Spell.GetSpellName and C_Spell.GetSpellName(sid) or "?"
                     local cdID = _spellToCooldownID[sid]
-                    local child = cdID and EUtils.FindCDMChildByCooldownID(cdID)
+                    local child = cdID and ECache.FindCDMChildByCooldownID(cdID)
                     local inAllCache = ECache.IsSpellCachedInTickBlizzardAllChild(sid)
                     local inActiveCache = ECache.IsSpellCachedInTickBlizzardActive(sid)
                     local wasAura = child and child.wasSetFromAura

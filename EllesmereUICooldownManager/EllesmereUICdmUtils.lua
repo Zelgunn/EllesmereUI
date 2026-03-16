@@ -257,17 +257,17 @@ local function SetIconKeybind(icon, spellID, resolvedID, showKeybind)
     icon._spellID = resolvedID
     -- Apply cached keybind for this spell if not already set
     if icon._keybindText and showKeybind then
-        local cachedKey = ECache._cdmKeybind[resolvedID]
+        local cachedKey = ECache.GetCDMKeybind(resolvedID)
         if not cachedKey then
             local n = C_Spell.GetSpellName and C_Spell.GetSpellName(resolvedID)
-            if n then cachedKey = ECache._cdmKeybind[n] end
+            if n then cachedKey = ECache.GetCDMKeybind(n) end
         end
         -- Also try the base spellID in case keybind was cached under it
         if not cachedKey and resolvedID ~= spellID then
-            cachedKey = ECache._cdmKeybind[spellID]
+            cachedKey = ECache.GetCDMKeybind(spellID)
             if not cachedKey then
                 local bn = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
-                if bn then cachedKey = ECache._cdmKeybind[bn] end
+                if bn then cachedKey = ECache.GetCDMKeybind(bn) end
             end
         end
         if cachedKey then
@@ -279,80 +279,6 @@ local function SetIconKeybind(icon, spellID, resolvedID, showKeybind)
     end
 end
 utils.SetIconKeybind = SetIconKeybind
-
--- Table of CDM viewer names
-local _cdmViewerNames = {
-    "EssentialCooldownViewer",
-    "UtilityCooldownViewer",
-    "BuffIconCooldownViewer",
-    "BuffBarCooldownViewer",
-}
-utils._cdmViewerNames = _cdmViewerNames
-
--------------------------------------------------------------------------------
---- Scan all four CDM viewers for a child whose .cooldownID matches the given cooldownID.
---- @param cooldownID number|nil    The ID of the cooldown
---- @return Frame|nil childFrame    The child frame, or nil if not found.
--------------------------------------------------------------------------------
-local function FindCDMChildByCooldownID(cooldownID)
-    if not cooldownID then return nil end
-    -- Fast path: scan the per-tick all-child cache (already built by the
-    -- viewer scan in UpdateAllCDMBars). Avoids GetChildren() allocation.
-    for _, ch in pairs(ECache._tickBlizzAllChild) do
-        local chID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
-        if chID == cooldownID then return ch end
-    end
-    -- Slow fallback: only needed if tick cache is empty (first frame, etc.)
-    for _, vname in ipairs(_cdmViewerNames) do
-        local viewer = _G[vname]
-        if viewer then
-            local nCh = viewer:GetNumChildren()
-            if nCh > 0 then
-                local children = { viewer:GetChildren() }
-                for ci = 1, nCh do
-                    local ch = children[ci]
-                    if ch then
-                        local chID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
-                        if chID == cooldownID then
-                            return ch
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
-utils.FindCDMChildByCooldownID = FindCDMChildByCooldownID
-
--------------------------------------------------------------------------------
---- Check if a Blizzard CDM buff-viewer child represents an actively running effect.
---- Uses only our own tracking tables and safe APIs — never reads tainted fields.
---- For totem-type spells: uses GetCachedTotemInfo(preferredTotemUpdateSlot).
---- For summon/aura-type spells: uses our hook-captured cooldown state tables.
---- @param child table      The child to check
---- @return boolean true    if the buff child cooldown is actively running, false otherwise
--------------------------------------------------------------------------------
-local function IsBuffChildCooldownActive(child)
-    if not child then return false end
-    -- Totem check: preferredTotemUpdateSlot is set by Blizzard on totem CDM children.
-    local totemSlot = child.preferredTotemUpdateSlot
-    if totemSlot and type(totemSlot) == "number" and totemSlot > 0 then
-        local haveTotem = ECache.GetCachedTotemInfo(totemSlot)
-        -- haveTotem can be a secret boolean in combat; secret = active totem
-        if issecretvalue and issecretvalue(haveTotem) then
-            return ECache.IsTotemChildStillValid(child)
-        end
-        if haveTotem then return ECache.IsTotemChildStillValid(child) end
-        return false
-    end
-    -- Non-totem: check our hook-captured cooldown state tables
-    if ECache._ecmeChildHasDurObj[child] then return true end
-    local rawDur = ECache._ecmeRawDur[child]
-    if rawDur and (issecretvalue and issecretvalue(rawDur) or rawDur > 0) then return true end
-    return false
-end
-utils.IsBuffChildCooldownActive = IsBuffChildCooldownActive
 
 
 -------------------------------------------------------------------------------
@@ -377,18 +303,18 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
     -- spellID -> cooldownID map, then find the child frame by cooldownID.
     -- This works for custom bar spells not present in _tickBlizzAllChildCache
     -- because they may not be visible in any viewer at the moment.
-    local blizzChild = assignedChild or ECache._tickBlizzAllChild[resolvedID]
+    local blizzChild = assignedChild or ECache.GetTickBlizzardAllChild(resolvedID)
     if not blizzChild then
-        local cdID = ECache._spellToCooldownID[resolvedID] or ECache._spellToCooldownID[spellID]
+        local cdID = ECache.GetResolvedCooldownIDFromSpell(spellID, resolvedID)
         if cdID then
-            blizzChild = FindCDMChildByCooldownID(cdID)
+            blizzChild = ECache.FindCDMChildByCooldownID(cdID)
         end
     end
     -- For CD/utility bars, prefer the CD-viewer child over the buff-viewer
     -- child so spells that appear in both viewers show their cooldown, not
     -- their buff duration (e.g. Voltaic Blaze).
     if not isBuffBar then
-        local cdChild = ECache._tickBlizzCDChild[resolvedID] or ECache._tickBlizzCDChild[spellID]
+        local cdChild = ECache.GetResolvedTickBlizzardCDChild(spellID, resolvedID)
         if cdChild then blizzChild = cdChild end
     end
     local isAura = blizzChild and (blizzChild.wasSetFromAura == true or blizzChild.auraInstanceID ~= nil)
@@ -403,9 +329,9 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
         -- the active cache may have been set by the buff viewer for a
         -- dual-viewer spell — trust the CD child's state instead.
         local skipActiveCache = not isBuffBar
-            and (ECache._tickBlizzCDChild[resolvedID] or ECache._tickBlizzCDChild[spellID])
+            and (ECache.GetResolvedTickBlizzardCDChild(spellID, resolvedID))
         if not skipActiveCache then
-            if ECache._tickBlizzActive[resolvedID] or ECache._tickBlizzActive[spellID] then
+            if ECache.IsTickBlizzardActive(spellID, resolvedID) then
                 isAura = true
             end
         end
@@ -416,7 +342,7 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
         -- skip aura duration display so the override spell's actual
         -- cooldown is shown (e.g. 2min ability becomes 24s kick).
         if not hasRuntimeOverride then
-            local isChargeSid = ECache._multiChargeSpells[resolvedID] == true
+            local isChargeSid = ECache.IsCachedChargeSpell(resolvedID)
             if auraID and (not isChargeSid or isBuffBar) then
                 local ok, auraDurObj = pcall(C_UnitAuras.GetAuraDuration, auraUnit, auraID)
                 if ok and auraDurObj then
@@ -452,7 +378,7 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
     end
 
     -- Final fallback: _tickBlizzActiveCache covers spells active in CDM viewers
-    if not hasRuntimeOverride and (ECache._tickBlizzActive[resolvedID] or ECache._tickBlizzActive[spellID]) then
+    if not hasRuntimeOverride and ECache.IsTickBlizzardActive(spellID, resolvedID) then
         return true, false
     end
 
@@ -462,13 +388,13 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
     -- spells like Dreadstalkers that have no aura and no wasSetFromAura).
     -- Copy the child's cooldown state to show the effect duration.
     if not hasRuntimeOverride and activeAnim ~= "hideActive" then
-        local blzFbActive = ECache._tickBlizzActive[resolvedID] or ECache._tickBlizzActive[spellID]
+        local blzFbActive = ECache.IsTickBlizzardActive(spellID, resolvedID)
         if not blzFbActive then
-            local blzBufCh = ECache._tickBlizzBuffChild[resolvedID] or ECache._tickBlizzBuffChild[spellID]
-            if IsBuffChildCooldownActive(blzBufCh) then blzFbActive = true end
+            local blzBufCh = ECache.GetResolvedBlizzardBuffChild(spellID, resolvedID)
+            if ECache.IsBuffChildCooldownActive(blzBufCh) then blzFbActive = true end
         end
         if blzFbActive and isBuffBar then
-            local blzCh = ECache._tickBlizzAllChild[resolvedID] or ECache._tickBlizzAllChild[spellID]
+            local blzCh = ECache.GetResolvedBlizzardAllChild(spellID, resolvedID)
             -- Use the cached DurationObject captured by our hook
             -- to avoid secret-value arithmetic from GetCooldownTimes.
             if blzCh then
@@ -507,7 +433,7 @@ local function GetTextureForProcable(spellID, resolvedID, currentTexture)
     local procEntry = ns.BUFF_PROC_ICON_OVERRIDES[spellID] or ns.BUFF_PROC_ICON_OVERRIDES[resolvedID]
     if procEntry then
         local buffChild = ECache.GetTickBlizzardBuffChild(procEntry.buffID)
-        if IsBuffChildCooldownActive(buffChild) then
+        if ECache.IsBuffChildCooldownActive(buffChild) then
             local procTexture = ECache.CacheSpellIconTexture(procEntry.replacementSpellID)
             if procTexture then
                 return procTexture, true

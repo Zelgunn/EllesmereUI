@@ -6,12 +6,6 @@ local cache = ns.ECdmCache
 
 cache._activeMultiScratch = {}      -- reusable scratch table for active multi-child filtering and companion child mapping
 
-cache._cdmKeybind = {} -- [spellID] -> formatted key string
-
--- spellID -> cooldownID map built once from C_CooldownViewer.GetCooldownViewerCategorySet (all categories).
--- Rebuilt on PLAYER_LOGIN and spec change. Used by custom bars to find CDM child frames by spellID.
-cache._spellToCooldownID = {}
-
 -- Separate tables keyed by child frame reference -- avoids reading tainted fields on Blizzard-owned frames.
 -- ch.isActive and ch._ecmeDurObj etc. are tainted secret values; we track state in our own tables instead.
 cache._ecmeChildHasDurObj = {}
@@ -35,7 +29,7 @@ ns._ecmeRawDurCache = cache._ecmeRawDur
 -- ================== --
 -- ================== --
 
--- region Tick
+-- region Per-Tick
 
 -- region Tick GCD
 
@@ -141,6 +135,7 @@ ns._tickBlizzBuffChildCache = cache._tickBlizzBuffChild
 --- Uses `_tickBlizzActive` as the reference cache.
 --- @param spellID number           The (original) spell ID
 --- @param resolvedID number|nil    (Optional) The resolved spell ID
+--- @return boolean isTickBlizzardActive
 -------------------------------------------------------------------------------
 local function IsTickBlizzardActive(spellID, resolvedID)
     return cache._tickBlizzActive[resolvedID] or cache._tickBlizzActive[spellID]
@@ -259,6 +254,86 @@ local function GetTickBlizzardAllChild(spellID)
 end
 cache.GetTickBlizzardAllChild = GetTickBlizzardAllChild
 
+-- Table of CDM viewer names
+local _cdmViewerNames = {
+    "EssentialCooldownViewer",
+    "UtilityCooldownViewer",
+    "BuffIconCooldownViewer",
+    "BuffBarCooldownViewer",
+}
+
+-------------------------------------------------------------------------------
+--- Returns the i-th CDM viewer name
+--- @param index number     The index of the CDM viewer to query
+--- @return string cdmViewerName
+-------------------------------------------------------------------------------
+local function GetCDMViewerName(index)
+    return _cdmViewerNames[index]
+end
+cache.GetCDMViewerName = GetCDMViewerName
+
+-------------------------------------------------------------------------------
+--- Clear cached viewer child info so the next tick re-reads from API
+--- (overrideSpellID may have changed with the new talent set)
+--- 
+-------------------------------------------------------------------------------
+local function ClearCachedViewerChildInfo()
+    for _, vname in ipairs(_cdmViewerNames) do
+        local vf = _G[vname]
+        if vf and vf:GetNumChildren() > 0 then
+            local children = { vf:GetChildren() }
+            for ci = 1, #children do
+                local ch = children[ci]
+                if ch then
+                    ch._ecmeResolvedSid = nil
+                    ch._ecmeBaseSpellID = nil
+                    ch._ecmeOverrideSid = nil
+                    ch._ecmeCachedCdID = nil
+                    ch._ecmeIsChargeSpell = nil
+                    ch._ecmeMaxCharges = nil
+                end
+            end
+        end
+    end
+end
+cache.ClearCachedViewerChildInfo = ClearCachedViewerChildInfo
+
+-------------------------------------------------------------------------------
+--- Scan all four CDM viewers for a child whose .cooldownID matches the given cooldownID.
+--- @param cooldownID number|nil    The ID of the cooldown
+--- @return Frame|nil childFrame    The child frame, or nil if not found.
+-------------------------------------------------------------------------------
+local function FindCDMChildByCooldownID(cooldownID)
+    if not cooldownID then return nil end
+    -- Fast path: scan the per-tick all-child cache (already built by the
+    -- viewer scan in UpdateAllCDMBars). Avoids GetChildren() allocation.
+    for _, ch in pairs(cache._tickBlizzAllChild) do
+        local chID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
+        if chID == cooldownID then return ch end
+    end
+    -- Slow fallback: only needed if tick cache is empty (first frame, etc.)
+    for _, vname in ipairs(_cdmViewerNames) do
+        local viewer = _G[vname]
+        if viewer then
+            local nCh = viewer:GetNumChildren()
+            if nCh > 0 then
+                local children = { viewer:GetChildren() }
+                for ci = 1, nCh do
+                    local ch = children[ci]
+                    if ch then
+                        local chID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
+                        if chID == cooldownID then
+                            return ch
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+cache.FindCDMChildByCooldownID = FindCDMChildByCooldownID
+
 -------------------------------------------------------------------------------
 --- Stores in the `_tickBlizzAllChild` cache the `blizzardChild` for `spellID`
 --- @param spellID number           The spell ID to override
@@ -356,6 +431,19 @@ local function GetTickBlizzardCDChild(spellID)
     return cache._tickBlizzCDChild[spellID]
 end
 cache.GetTickBlizzardCDChild = GetTickBlizzardCDChild
+
+-------------------------------------------------------------------------------
+--- Returns the first blizzard CD child between `resolvedID` and `spellID`
+---   (`resolvedID` has priority over `spellID`.)
+--- Uses `_tickBlizzCDChild` as the reference cache.
+--- @param spellID number           The (original) spell ID to query
+--- @param resolvedID number|nil    The resolved spell ID to query
+--- @return Frame|nil blizzardCDChild
+-------------------------------------------------------------------------------
+local function GetResolvedTickBlizzardCDChild(spellID, resolvedID)
+    return cache._tickBlizzCDChild[resolvedID] or cache._tickBlizzCDChild[spellID]
+end
+cache.GetResolvedTickBlizzardCDChild = GetResolvedTickBlizzardCDChild
 
 -------------------------------------------------------------------------------
 --- Stores in the `_tickBlizzCDChild` cache the `blizzardCDChild` for `spellID`
@@ -795,6 +883,8 @@ cache.CacheCastCountSpell = CacheCastCountSpell
 
 -- endregion
 
+-- region Totem/Summon/Aura-type spells
+
 -- region Totem Cache
 
 -------------------------------------------------------------------------------
@@ -839,6 +929,75 @@ local function IsTotemChildStillValid(child)
     return false
 end
 cache.IsTotemChildStillValid = IsTotemChildStillValid
+
+-- endregion
+
+-------------------------------------------------------------------------------
+--- Check if a Blizzard CDM buff-viewer child represents an actively running effect.
+--- Uses only our own tracking tables and safe APIs — never reads tainted fields.
+--- For totem-type spells: uses GetCachedTotemInfo(preferredTotemUpdateSlot).
+--- For summon/aura-type spells: uses our hook-captured cooldown state tables.
+--- @param child table      The child to check
+--- @return boolean true    if the buff child cooldown is actively running, false otherwise
+-------------------------------------------------------------------------------
+local function IsBuffChildCooldownActive(child)
+    if not child then return false end
+    -- Totem check: preferredTotemUpdateSlot is set by Blizzard on totem CDM children.
+    local totemSlot = child.preferredTotemUpdateSlot
+    if totemSlot and type(totemSlot) == "number" and totemSlot > 0 then
+        local haveTotem = GetCachedTotemInfo(totemSlot)
+        -- haveTotem can be a secret boolean in combat; secret = active totem
+        if issecretvalue and issecretvalue(haveTotem) then
+            return IsTotemChildStillValid(child)
+        end
+        if haveTotem then return IsTotemChildStillValid(child) end
+        return false
+    end
+    -- Non-totem: check our hook-captured cooldown state tables
+    if cache._ecmeChildHasDurObj[child] then return true end
+    local rawDur = cache._ecmeRawDur[child]
+    if rawDur and (issecretvalue and issecretvalue(rawDur) or rawDur > 0) then return true end
+    return false
+end
+cache.IsBuffChildCooldownActive = IsBuffChildCooldownActive
+
+-- endregion
+
+-- region Spell to Cooldown
+
+-- spellID -> cooldownID map built once from C_CooldownViewer.GetCooldownViewerCategorySet (all categories).
+-- Rebuilt on PLAYER_LOGIN and spec change. Used by custom bars to find CDM child frames by spellID.
+--- @type {[number]: number}
+cache._spellToCooldownID = {}
+
+-------------------------------------------------------------------------------
+---
+---
+---
+-------------------------------------------------------------------------------
+
+-------------------------------------------------------------------------------
+--- Get the spell coolodwn ID for spellID (from `_spellToCooldownID`)
+--- @param spellID number           The spell ID to query
+--- @return number|nil cooldownID
+-------------------------------------------------------------------------------
+local function GetCooldownIDFromSpell(spellID)
+    return cache._spellToCooldownID[spellID]
+end
+cache.GetCooldownIDFromSpell = GetCooldownIDFromSpell
+
+-------------------------------------------------------------------------------
+--- Returns the first coolodwn ID between `resolvedID` and `spellID`
+---   (`resolvedID` has priority over `spellID`.)
+--- Uses `_spellToCooldownID` as the reference cache.
+--- @param spellID number           The (original) spell ID to query
+--- @param resolvedID number|nil    The resolved spell ID to query
+--- @return number|nil blizzardBuffChild
+-------------------------------------------------------------------------------
+local function GetResolvedCooldownIDFromSpell(spellID, resolvedID)
+    return cache._spellToCooldownID[resolvedID] or cache._spellToCooldownID[spellID]
+end
+cache.GetResolvedCooldownIDFromSpell = GetResolvedCooldownIDFromSpell
 
 -- endregion
 
@@ -978,5 +1137,32 @@ local function WipeSpellIconCache()
     wipe(cache._spellIcon)
 end
 cache.WipeSpellIconCache = WipeSpellIconCache
+
+-- endregion
+
+-- region CDM Keybind
+
+--- @type {[number]: string}
+cache._cdmKeybind = {} -- [spellID] -> formatted key string
+
+-------------------------------------------------------------------------------
+--- Get the CDM keybind for spellID from the cache `_cdmKeybind`
+--- @param spellID number             The spell ID to query
+--- @return string|nil cdmKeybind
+-------------------------------------------------------------------------------
+local function GetCDMKeybind(spellID)
+    return cache._cdmKeybind[spellID]
+end
+cache.GetCDMKeybind = GetCDMKeybind
+
+-------------------------------------------------------------------------------
+--- Stores in the `_cdmKeybind` cache the `cdmKeybind` for `spellID`
+--- @param spellID number         The spell ID to override
+--- @param cdmKeybind string      The blizzard child for spellID
+-------------------------------------------------------------------------------
+local function CacheCDMKeybind(spellID, cdmKeybind)
+    cache._cdmKeybind[spellID] = cdmKeybind
+end
+cache.CacheCDMKeybind = CacheCDMKeybind
 
 -- endregion
