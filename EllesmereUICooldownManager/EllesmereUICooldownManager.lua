@@ -6673,15 +6673,14 @@ RegisterCDMUnlockElements = function()
                     local f = cdmBarFrames[key]
                     if not f then return 100, 36 end
                     local w, h = f:GetWidth(), f:GetHeight()
-                    local isBuff = (barData.barType == "buffs" or key == "buffs")
-                    local needsCompute = (w <= 1 or h <= 1)
-                        or (EllesmereUI._unlockActive and isBuff)
-                    if not needsCompute then return w, h end
-                    local bd2 = barDataByKey[key]
-                    if not bd2 then return w > 1 and w or 100, h > 1 and h or 36 end
-                    local count = CountBarSpells(bd2)
-                    if count == 0 then return w > 1 and w or 100, h > 1 and h or 36 end
-                    return ComputeBarSize(bd2, count)
+                    if w <= 1 or h <= 1 then
+                        local bd2 = barDataByKey[key]
+                        if not bd2 then return w > 1 and w or 100, h > 1 and h or 36 end
+                        local count = CountBarSpells(bd2)
+                        if count == 0 then return w > 1 and w or 100, h > 1 and h or 36 end
+                        return ComputeBarSize(bd2, count)
+                    end
+                    return w, h
                 end,
                 linkedDimensions = true,
                 setWidth = function(_, newW)

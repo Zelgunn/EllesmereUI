@@ -1703,6 +1703,79 @@ initFrame:SetScript("OnEvent", function(self)
                 MakeCogBtn(rightRgn, growCogShow)
             end
 
+            -- Icon Size | (empty)
+            local iconSizeRow
+            iconSizeRow, h = W:DualRow(parent, y,
+                { type="slider", text="Icon Size", min=16, max=80, step=1,
+                  getValue=function()
+                      local s = SB()
+                      if s.buttonWidth and s.buttonWidth > 0 then return s.buttonWidth end
+                      local info = BAR_LOOKUP[SelectedKey()]
+                      local btn1 = info and _G[info.buttonPrefix .. "1"]
+                      return btn1 and math.floor((btn1:GetWidth() or 36) + 0.5) or 36
+                  end,
+                  setValue=function(v)
+                      SB().buttonWidth  = v
+                      SB().buttonHeight = v
+                      EAB:ApplyButtonSizeForBar(SelectedKey())
+                      SUpdatePreviewAndResize()
+                      EllesmereUI:RefreshPage()
+                  end },
+                { type="label", text="" });  y = y - h
+            -- Sync icon: Icon Size (left)
+            do
+                local rgn = iconSizeRow._leftRegion
+                EllesmereUI.BuildSyncIcon({
+                    region  = rgn,
+                    tooltip = "Apply Icon Size to all Bars",
+                    onClick = function()
+                        local s = SB()
+                        local info = BAR_LOOKUP[SelectedKey()]
+                        local btn1 = info and _G[info.buttonPrefix .. "1"]
+                        local v = (s.buttonWidth and s.buttonWidth > 0) and s.buttonWidth
+                            or (btn1 and math.floor((btn1:GetWidth() or 36) + 0.5)) or 36
+                        for _, key in ipairs(GROUP_BAR_ORDER) do
+                            EAB.db.profile.bars[key].buttonWidth  = v
+                            EAB.db.profile.bars[key].buttonHeight = v
+                            EAB:ApplyButtonSizeForBar(key)
+                        end
+                        EllesmereUI:RefreshPage()
+                    end,
+                    isSynced = function()
+                        local s = SB()
+                        local info = BAR_LOOKUP[SelectedKey()]
+                        local btn1 = info and _G[info.buttonPrefix .. "1"]
+                        local v = (s.buttonWidth and s.buttonWidth > 0) and s.buttonWidth
+                            or (btn1 and math.floor((btn1:GetWidth() or 36) + 0.5)) or 36
+                        for _, key in ipairs(GROUP_BAR_ORDER) do
+                            local ks = EAB.db.profile.bars[key]
+                            local kv = (ks.buttonWidth and ks.buttonWidth > 0) and ks.buttonWidth or v
+                            if kv ~= v then return false end
+                        end
+                        return true
+                    end,
+                    flashTargets = function() return { rgn } end,
+                    multiApply = {
+                        elementKeys   = GROUP_BAR_ORDER,
+                        elementLabels = SHORT_LABELS,
+                        getCurrentKey = function() return SelectedKey() end,
+                        onApply       = function(checkedKeys)
+                            local s = SB()
+                            local info = BAR_LOOKUP[SelectedKey()]
+                            local btn1 = info and _G[info.buttonPrefix .. "1"]
+                            local v = (s.buttonWidth and s.buttonWidth > 0) and s.buttonWidth
+                                or (btn1 and math.floor((btn1:GetWidth() or 36) + 0.5)) or 36
+                            for _, key in ipairs(checkedKeys) do
+                                EAB.db.profile.bars[key].buttonWidth  = v
+                                EAB.db.profile.bars[key].buttonHeight = v
+                                EAB:ApplyButtonSizeForBar(key)
+                            end
+                            EllesmereUI:RefreshPage()
+                        end,
+                    },
+                })
+            end
+
             -- Vertical Orientation | (empty)
             do
                 local orientRow

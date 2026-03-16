@@ -1368,12 +1368,10 @@ function EllesmereUI.SaveCurrentAsProfile(name)
     db.activeProfile = name
 end
 
---- Create a new profile as a copy of the current Default profile.
+--- Create a new profile as a copy of the current live state.
 function EllesmereUI.CreateDefaultProfile(name)
     local db = GetProfilesDB()
-    local source = db.profiles["Default"]
-    if not source then return end
-    db.profiles[name] = DeepCopy(source)
+    db.profiles[name] = EllesmereUI.SnapshotAllAddons()
     local found = false
     for _, n in ipairs(db.profileOrder) do
         if n == name then found = true; break end

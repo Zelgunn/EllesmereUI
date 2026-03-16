@@ -536,10 +536,7 @@ do
                 end
                 -- Keep MainActionBar.actionButtons intact so QuickKeybind
                 -- can find ActionButton1-12 when we temporarily restore the
-                -- bar on demand. All other bars are wiped.
-                if frameName ~= "MainActionBar" then
-                    table.wipe(frame.actionButtons)
-                end
+                -- bar on demand.
             end
         end
     end
@@ -2721,6 +2718,10 @@ function EAB:ApplyPaddingForBar(barKey)
     LayoutBar(barKey)
 end
 
+function EAB:ApplyButtonSizeForBar(barKey)
+    LayoutBar(barKey)
+end
+
 function EAB:ApplyIconRowOverrides(barKey)
     LayoutBar(barKey)
     self:ApplyAlwaysShowButtons(barKey)
@@ -4885,8 +4886,8 @@ local function RegisterWithUnlockMode()
             getFrame = function() return barFrames[info.key] end,
             getSize = function()
                 local frame = barFrames[info.key]
-                if frame then return frame:GetWidth(), frame:GetHeight() end
-                return 1, 1
+                if not frame then return 1, 1 end
+                return frame:GetWidth(), frame:GetHeight()
             end,
             linkedDimensions = true,
             setWidth = function(_, w)

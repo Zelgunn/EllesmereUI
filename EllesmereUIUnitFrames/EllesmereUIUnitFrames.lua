@@ -4586,7 +4586,7 @@ local function ReloadFrames()
                     end
 
                     -- Bottom Text Bar update (target) ? must come before castbar so castbar can anchor to it
-                    local tPpBtbAnchor = (ppIsAtt and (settings.powerHeight or 0) > 0 and frame.Power) or frame.Health
+                    local tPpBtbAnchor = (ppIsAtt and (settings.powerHeight or 0) > 0 and frame.Power and frame.Power:IsShown()) and frame.Power or frame.Health
                     if settings.bottomTextBar then
                         local btbPos2 = settings.btbPosition or "bottom"
                         local btbIsAtt = (btbPos2 == "top" or btbPos2 == "bottom")

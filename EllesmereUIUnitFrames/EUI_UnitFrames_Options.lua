@@ -6318,6 +6318,9 @@ initFrame:SetScript("OnEvent", function(self)
             btbCenterText= { section = sharedBtbHeader,      target = sharedBtbCenterRow, slotSide = "left" },
             btbClassIcon = { section = sharedBtbHeader,      target = sharedBtbCenterRow, slotSide = "right" },
             combatIndicator = { section = sharedAddHeader, target = sharedAddRow1, slotSide = "right" },
+            castBar      = { section = sharedCastHeader,     target = sharedCastRow1 },
+            castIcon     = { section = sharedCastHeader,     target = sharedCastRow1 },
+            castName     = { section = sharedCastHeader,     target = sharedCastRow1 },
         }
 
         return y

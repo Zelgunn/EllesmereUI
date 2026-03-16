@@ -1370,6 +1370,10 @@ local function LayoutIcons()
         btn:ClearAllPoints()
         btn:SetPoint("CENTER", iconAnchor, "CENTER", startX + (i-1)*(sz+spacing), 0)
     end
+    -- Size the anchor to the grid so the unlock mode mover covers it correctly
+    local textH = 0
+    if p.showText then textH = (p.textSize or 11) + abs(p.textYOffset or -2) end
+    iconAnchor:SetSize(totalW, sz + textH)
 end
 
 local function ShowIcon(iconIdx, setupFn, dismissKey)

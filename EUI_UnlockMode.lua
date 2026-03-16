@@ -177,6 +177,7 @@ local hoveredMover  = nil      -- the currently expanded mover (only one at a ti
 local cogHoveredMover = nil    -- the mover whose cog button is currently hovered
 local anchorDropdownFrame = nil -- lazy-created dropdown for anchor direction selection
 local anchorDropdownCatcher = nil -- click-catcher behind anchor dropdown
+local _mouseHeld = false       -- true while left mouse button is held down anywhere
 
 -------------------------------------------------------------------------------
 --  Anchor / Match DB helpers
@@ -389,7 +390,7 @@ end
 -- Apply an anchor relationship: position the child element relative to the target
 -- side: "LEFT", "RIGHT", "TOP", "BOTTOM" -- child is placed on that side of the target
 -- offsetX/offsetY: if present, position child relative to target center by these offsets
-local function ApplyAnchorPosition(childKey, targetKey, side, noMark)
+local function ApplyAnchorPosition(childKey, targetKey, side, noMark, noMove)
     local childBar = GetBarFrame(childKey)
     local targetBar = GetBarFrame(targetKey)
     if not childBar or not targetBar then return end
@@ -450,25 +451,59 @@ local function ApplyAnchorPosition(childKey, targetKey, side, noMark)
     local barX = cx * ratio - barHW
     local barY = (cy - UIParent:GetHeight()) * ratio + barHH
 
-    pcall(function()
-        childBar:ClearAllPoints()
-        childBar:SetPoint("TOPLEFT", UIParent, "TOPLEFT", barX, barY)
-    end)
+    -- Only move the actual bar frame when noMove is not set
+    if not noMove then
+        pcall(function()
+            childBar:ClearAllPoints()
+            childBar:SetPoint("TOPLEFT", UIParent, "TOPLEFT", barX, barY)
+        end)
+    else
+        -- noMove: bar stays put, but resync ai.offsetX/offsetY from the bar's
+        -- actual current screen position so future propagation uses correct offsets
+        local bS = childBar:GetEffectiveScale()
+        local bL = (childBar:GetLeft() or 0) * bS / uiS
+        local bR = (childBar:GetRight() or 0) * bS / uiS
+        local bT = (childBar:GetTop() or 0) * bS / uiS
+        local bB = (childBar:GetBottom() or 0) * bS / uiS
+        local actualCX = (bL + bR) / 2
+        local actualCY = (bT + bB) / 2
+        if ai then
+            ai.offsetX = actualCX - tCX
+            ai.offsetY = actualCY - tCY
+        end
+    end
 
     -- Update mover position to match (CENTER anchor so hover-expand stays symmetric)
     local m = movers[childKey]
     if m then
-        local mCY = cy - UIParent:GetHeight()
+        local mX, mY
+        if noMove then
+            -- Bar is already in its correct position -- read its actual screen coords
+            local bS = childBar:GetEffectiveScale()
+            local bL = (childBar:GetLeft() or 0) * bS / uiS
+            local bR = (childBar:GetRight() or 0) * bS / uiS
+            local bT = (childBar:GetTop() or 0) * bS / uiS
+            local bB = (childBar:GetBottom() or 0) * bS / uiS
+            mX = (bL + bR) / 2
+            mY = ((bT + bB) / 2) - UIParent:GetHeight()
+        else
+            mX = cx
+            mY = cy - UIParent:GetHeight()
+        end
+        local PPp = EllesmereUI and EllesmereUI.PP
+        if PPp then mX = PPp.Scale(mX); mY = PPp.Scale(mY) end
         m:ClearAllPoints()
-        m:SetPoint("CENTER", UIParent, "TOPLEFT", cx, mCY)
-        if m._setCenterXY then m._setCenterXY(cx, mCY) end
+        m:SetPoint("CENTER", UIParent, "TOPLEFT", mX, mY)
+        if m._setCenterXY then m._setCenterXY(mX, mY) end
     end
 
-    -- Store in pending positions
-    pendingPositions[childKey] = {
-        point = "TOPLEFT", relPoint = "TOPLEFT",
-        x = barX, y = barY,
-    }
+    -- Store in pending positions (skip when only syncing movers)
+    if not noMove then
+        pendingPositions[childKey] = {
+            point = "TOPLEFT", relPoint = "TOPLEFT",
+            x = barX, y = barY,
+        }
+    end
     if not noMark then hasChanges = true end
 end
 
@@ -478,7 +513,7 @@ local function ReapplyAllAnchors()
     if not db then return end
     for childKey, info in pairs(db) do
         if movers[childKey] and movers[info.target] then
-            ApplyAnchorPosition(childKey, info.target, info.side, true)
+            ApplyAnchorPosition(childKey, info.target, info.side, true, true)
         end
     end
 end
@@ -494,7 +529,9 @@ local function PropagateAnchorChain(parentKey, visited)
     for childKey, info in pairs(anchorDB) do
         if info.target == parentKey then
             ApplyAnchorPosition(childKey, info.target, info.side)
-            if movers[childKey] then movers[childKey]:Sync() end
+            -- Do NOT call Sync() here -- ApplyAnchorPosition already positions
+            -- the mover correctly, and Sync() reads stale screen coords before
+            -- WoW's layout pass, which corrupts moverCX/moverCY.
             PropagateAnchorChain(childKey, visited)
         end
     end
@@ -1747,6 +1784,10 @@ local function CreateMover(barKey)
     mover:SetMovable(true)
     mover:RegisterForDrag("LeftButton")
     mover:EnableMouse(true)
+    mover:SetScript("OnMouseDown", function(self, button)
+        if button == "LeftButton" then _mouseHeld = true end
+    end)
+    -- OnMouseUp is set later (after link buttons are created) to also handle link drag forwarding
 
     -- Background (matches cogwheel dark color at 75% opacity)
     local bg = mover:CreateTexture(nil, "BACKGROUND")
@@ -1980,6 +2021,12 @@ local function CreateMover(barKey)
         labelShift = labelShift + 2 - s
         nameFS:ClearAllPoints()
         nameFS:SetPoint("CENTER", mover, "CENTER", 0, labelShift)
+        -- Unconstrain text width on hover so it's never truncated
+        if s > 0.01 then
+            nameFS:SetWidth(0)
+        else
+            nameFS:SetWidth(baseW > 0 and baseW or 0)
+        end
 
         -- Action links: show on hover
         if canResize then
@@ -2024,6 +2071,22 @@ local function CreateMover(barKey)
             local hoverH = math.max(baseH, contentH + PAD * 2 + 2)
             local curW = baseW + (hoverW - baseW) * s
             local curH = baseH + (hoverH - baseH) * s
+            -- Stay on TOPLEFT anchor always. Simulate center-growth by offsetting
+            -- position by half the size delta so expansion appears symmetric.
+            local bk2 = mover._barKey
+            local b2 = GetBarFrame(bk2)
+            if b2 then
+                local s2 = b2:GetEffectiveScale()
+                local uiS2 = UIParent:GetEffectiveScale()
+                local bL2 = b2:GetLeft()
+                local bT2 = b2:GetTop()
+                if bL2 and bT2 then
+                    local tx = bL2 * s2 / uiS2 - (curW - baseW) * 0.5
+                    local ty = bT2 * s2 / uiS2 - UIParent:GetHeight() + (curH - baseH) * 0.5
+                    mover:ClearAllPoints()
+                    mover:SetPoint("TOPLEFT", UIParent, "TOPLEFT", tx, ty)
+                end
+            end
             mover:SetSize(curW, curH)
         end
     end
@@ -2193,7 +2256,7 @@ local function CreateMover(barKey)
             local sc2 = UIParent:GetEffectiveScale()
             local mx, my = GetCursorPosition()
             mx = mx / sc2; my = my / sc2
-            if abs(mx - linkDragStartX) > 3 or abs(my - linkDragStartY) > 3 then
+            if abs(mx - linkDragStartX) > 1 or abs(my - linkDragStartY) > 1 then
                 linkDragPending = false
                 -- Now fire the real drag start
                 local script = mover:GetScript("OnDragStart")
@@ -2223,8 +2286,11 @@ local function CreateMover(barKey)
     -- When the user drags far from the link button, the release happens over the
     -- mover (or nowhere), so the link button's OnMouseUp never fires.
     mover:SetScript("OnMouseUp", function(self, button)
-        if button == "LeftButton" and (linkDragPending or self._dragging) then
-            LinkMouseUp(self, button)
+        if button == "LeftButton" then
+            _mouseHeld = false
+            if linkDragPending or self._dragging then
+                LinkMouseUp(self, button)
+            end
         end
     end)
 
@@ -2245,7 +2311,7 @@ local function CreateMover(barKey)
                 preMatchSizes[barKey] = nil
                 C_Timer.After(0.1, function()
                     local m = movers[barKey]
-                    if m then m:Sync() end
+                    if m then m:SyncSize() end
                 end)
             end
             hasChanges = true
@@ -2276,7 +2342,7 @@ local function CreateMover(barKey)
                 preMatchSizes[barKey] = nil
                 C_Timer.After(0.1, function()
                     local m = movers[barKey]
-                    if m then m:Sync() end
+                    if m then m:SyncSize() end
                 end)
             end
             hasChanges = true
@@ -2374,23 +2440,17 @@ local function CreateMover(barKey)
         local s = b:GetEffectiveScale()
         local uiS = UIParent:GetEffectiveScale()
         local w, h
-        -- For registered elements, prefer getSize (authoritative DB values)
-        -- over frame dimensions which may be mid-animation or stale.
-        -- Multiply by the frame's effective scale ratio to account for SetScale.
-        if elem and elem.getSize then
-            local gw, gh = elem.getSize(bk)
-            local elemScale = s / uiS
-            w = (gw or 50) * elemScale
-            h = (gh or 50) * elemScale
-        else
-            w = (b:GetWidth() or 50) * s / uiS
-            h = (b:GetHeight() or 50) * s / uiS
-        end
+        local elemScale = s / uiS
+        w = (b:GetWidth() or 50) * elemScale
+        h = (b:GetHeight() or 50) * elemScale
         -- For action bars, compute visual size from button grid (accounts for
         -- shape overrides, padding, and per-button scale)
-        local abW, abH = GetActionBarVisualSize(bk)
-        if abW and abH then
-            w, h = abW, abH
+        -- Only use this as a fallback when the frame has no size yet (first load).
+        if w < 10 or h < 10 then
+            local abW, abH = GetActionBarVisualSize(bk)
+            if abW and abH then
+                w, h = abW, abH
+            end
         end
         local isTinyAnchor = (w < 10)
         local centerYOff = 0
@@ -2402,38 +2462,47 @@ local function CreateMover(barKey)
                 centerYOff = gyOff or 0
             end
         end
-        -- Pixel-perfect: mover matches the actual element size exactly.
-        -- Label text overflows for small elements — no width constraint.
         baseW, baseH = w, h
         self:SetSize(w, h)
-        if self._label then
-            self._label:SetWidth(0)
-            self._label:SetWordWrap(false)
-        end
+        if self._label then self._label:SetWidth(w * 0.95) end
 
         -- Position: convert bar's screen position to UIParent-relative
         -- Center the mover on the bar's visual center for pixel-perfect alignment.
         local bL = b:GetLeft()
         local bT = b:GetTop()
         if bL and bT then
+            local PP = EllesmereUI and EllesmereUI.PP
             if isTinyAnchor and elem then
-                -- Tiny anchor (1×1): center the mover on the anchor's center
-                local bR = b:GetRight() or bL
-                local bB = b:GetBottom() or bT
-                local cx = (bL + bR) * 0.5 * s / uiS
-                local cy = (bT + bB) * 0.5 * s / uiS - UIParent:GetHeight() + centerYOff
+                -- Dynamic bar (1x1 when empty): bar is correctly positioned,
+                -- just read its TOPLEFT directly like any other frame.
+                local cx, cy
+                if bL and bT then
+                    cx = bL * s / uiS
+                    cy = bT * s / uiS - UIParent:GetHeight()
+                else
+                    -- No screen position yet -- fall back to saved pos
+                    local pos = elem.loadPosition and elem.loadPosition(bk)
+                    if pos and pos.point == "CENTER" then
+                        local uiW = UIParent:GetWidth()
+                        local uiH = UIParent:GetHeight()
+                        cx = uiW * 0.5 + (pos.x or 0) - w * 0.5
+                        cy = -(uiH * 0.5) + (pos.y or 0) + h * 0.5
+                    else
+                        cx = 0; cy = -UIParent:GetHeight() * 0.5
+                    end
+                end
+                if PP then cx = PP.Scale(cx); cy = PP.Scale(cy) end
                 self:ClearAllPoints()
-                self:SetPoint("CENTER", UIParent, "TOPLEFT", cx, cy)
-                moverCX, moverCY = cx, cy
+                self:SetPoint("TOPLEFT", UIParent, "TOPLEFT", cx, cy)
+                moverCX, moverCY = cx + w * 0.5, cy - h * 0.5
             else
-                -- Center mover on the bar's visual center
-                local bR = b:GetRight() or bL
-                local bB = b:GetBottom() or bT
-                local cx = (bL + bR) * 0.5 * s / uiS
-                local cy = (bT + bB) * 0.5 * s / uiS - UIParent:GetHeight()
+                -- Align mover TOPLEFT to bar TOPLEFT -- same anchor, no averaging drift.
+                local cx = bL * s / uiS
+                local cy = bT * s / uiS - UIParent:GetHeight()
+                if PP then cx = PP.Scale(cx); cy = PP.Scale(cy) end
                 self:ClearAllPoints()
-                self:SetPoint("CENTER", UIParent, "TOPLEFT", cx, cy)
-                moverCX, moverCY = cx, cy
+                self:SetPoint("TOPLEFT", UIParent, "TOPLEFT", cx, cy)
+                moverCX, moverCY = cx + w * 0.5, cy - h * 0.5
             end
         else
             -- Bar has no position yet (not shown), place at center
@@ -2591,6 +2660,7 @@ local function CreateMover(barKey)
     mover:SetScript("OnDragStop", function(self)
         self:SetScript("OnUpdate", nil)
         self._dragging = false
+        _mouseHeld = false
         self:SetAlpha(darkOverlaysEnabled and 1 or MOVER_HOVER)
         -- Convert back to CENTER anchor so hover-expand stays symmetric
         local mL, mR = self:GetLeft(), self:GetRight()
@@ -2633,20 +2703,9 @@ local function CreateMover(barKey)
         if not InCombatLockdown() then
             local uiS = UIParent:GetEffectiveScale()
 
-            -- If this bar is anchored, update the stored offset from its parent
-            local ai = GetAnchorInfo(self._barKey)
-            if ai then
-                local targetBar = GetBarFrame(ai.target)
-                if targetBar then
-                    local tS = targetBar:GetEffectiveScale()
-                    local tL = (targetBar:GetLeft() or 0) * tS / uiS
-                    local tR = (targetBar:GetRight() or 0) * tS / uiS
-                    local tT = (targetBar:GetTop() or 0) * tS / uiS
-                    local tB = (targetBar:GetBottom() or 0) * tS / uiS
-                    ai.offsetX = cx - (tL + tR) / 2
-                    ai.offsetY = cy - (tT + tB) / 2
-                end
-            end
+            -- If this bar is anchored, the offset was already updated live during drag.
+            -- No need to recompute here -- using mover screen coords would introduce
+            -- sub-pixel drift vs the cursor-based offset set in OnUpdate.
 
             if bar then
                 local bS = bar:GetEffectiveScale()
@@ -2678,11 +2737,18 @@ local function CreateMover(barKey)
         if elem and elem.onLiveMove then
             pcall(elem.onLiveMove, self._barKey)
         end
+
+        -- Always deselect after drag so the mover drops back to base frame level
+        -- and stops blocking clicks on elements beneath it.
+        if selectedMover == self then
+            DeselectMover()
+        end
     end)
 
     -- Hover effects
     mover:SetScript("OnEnter", function(self)
         if not self._dragging then
+            if _mouseHeld and not self._dragging then return end
             -- If another mover's cog is currently hovered, block all hover effects here
             if cogHoveredMover and cogHoveredMover ~= self then return end
             -- Collapse any other expanded mover before expanding this one
@@ -2784,11 +2850,11 @@ local function CreateMover(barKey)
                         end
                     end
                     CancelPickMode()
-                    -- Sync mover position and size after resize
+                    -- Sync mover size after resize (no reposition)
                     C_Timer.After(0.15, function()
                         local m = movers[sourceKey]
                         if not m then return end
-                        m:Sync()
+                        m:SyncSize()
                         if m.RefreshAnchoredText then m:RefreshAnchoredText() end
                         -- Re-apply anchor position if anchored
                         local ai = GetAnchorInfo(sourceKey)
@@ -2820,11 +2886,11 @@ local function CreateMover(barKey)
                         end
                     end
                     CancelPickMode()
-                    -- Sync mover position and size after resize
+                    -- Sync mover size after resize (no reposition)
                     C_Timer.After(0.15, function()
                         local m = movers[sourceKey]
                         if not m then return end
-                        m:Sync()
+                        m:SyncSize()
                         if m.RefreshAnchoredText then m:RefreshAnchoredText() end
                         -- Re-apply anchor position if anchored
                         local ai = GetAnchorInfo(sourceKey)
@@ -5172,6 +5238,11 @@ local function CreateUnlockFrame()
         if db and isUnlocked then
             local ar, ag, ab = GetAccent()
             for childKey, info in pairs(db) do
+                -- Only draw lines for direct children of a root (non-anchored) parent.
+                -- Skip grandchildren (where the target is itself anchored to something).
+                if db[info.target] then
+                    -- info.target is itself a child -- this is a grandchild, skip line
+                else
                 local cm = movers[childKey]
                 local tm = movers[info.target]
                 if cm and tm and cm:IsShown() and tm:IsShown() then
@@ -5181,9 +5252,6 @@ local function CreateUnlockFrame()
                     if cmActive or tmActive then
                         idx = idx + 1
                         local line = GetAnchorLine(idx)
-                        -- Centers in UIParent pixel space.
-                        -- GetLeft/Right/Top/Bottom return screen-space coords.
-                        -- GetTop/Bottom are both measured from the bottom of the screen.
                         local x1 = ((cm:GetLeft() or 0) + (cm:GetRight()  or 0)) * 0.5
                         local y1 = ((cm:GetBottom() or 0) + (cm:GetTop()  or 0)) * 0.5
                         local x2 = ((tm:GetLeft() or 0) + (tm:GetRight()  or 0)) * 0.5
@@ -5194,7 +5262,6 @@ local function CreateUnlockFrame()
                         if len > 1 then
                             local mx = (x1 + x2) * 0.5
                             local my = (y1 + y2) * 0.5
-                            -- atan2: angle from positive X axis. SetRotation is CCW positive.
                             local angle = math.atan2(dy, dx)
                             line:SetWidth(len)
                             line:SetHeight(3)
@@ -5208,6 +5275,7 @@ local function CreateUnlockFrame()
                         end
                     end
                 end
+                end -- grandchild skip
             end
         end
         -- Hide unused lines
@@ -5588,6 +5656,7 @@ function ns.OpenUnlockMode()
     local panelHidden = false
     local panelRealScale = panel and panel:GetScale() or 1
     local elapsed = 0
+    local fadeInSynced = false
 
     -- Grid glitch starts immediately and lasts 0.75s
     local GLITCH_DUR = 0.75
@@ -5663,6 +5732,12 @@ function ns.OpenUnlockMode()
                 if m:IsShown() then
                     local moverT = glitchT - MOVER_DELAY
                     if moverT > 0 then
+                        -- Re-sync once right as movers begin fading in so any
+                        -- frames that were nil at initial sync are now ready.
+                        if not fadeInSynced then
+                            fadeInSynced = true
+                            for _, rm in pairs(movers) do rm:Sync() end
+                        end
                         m:SetAlpha((darkOverlaysEnabled and 1 or MOVER_ALPHA) * min(1, moverT / GLITCH_DUR))
                     else
                         m:SetAlpha(0)
