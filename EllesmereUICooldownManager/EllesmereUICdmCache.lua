@@ -988,6 +988,31 @@ local function CachePlacedUnitStart(spellID, time)
 end
 cache.CachePlacedUnitStart = CachePlacedUnitStart
 
+-------------------------------------------------------------------------------
+--- Sets the start time for spellID to nil.
+--- If spellID was not present, does nothing.
+--- @param spellID number       The spell ID to remove
+-------------------------------------------------------------------------------
+local function RemovePlacedUnitStart(spellID)
+    if cache._placedUnitStart[spellID] ~= nil then
+        cache._placedUnitStart[spellID] = nil
+    end
+end
+cache.RemovePlacedUnitStart = RemovePlacedUnitStart
+
+-------------------------------------------------------------------------------
+--- Clear placed-unit start times for spells no longer active
+--- 
+-------------------------------------------------------------------------------
+local function ClearInactivePlacedUnitStart()
+    for sid in pairs(cache._placedUnitStart) do
+        if not IsTickBlizzardActive(sid) then
+            cache._placedUnitStart[sid] = nil
+        end
+    end
+end
+cache.ClearInactivePlacedUnitStart = ClearInactivePlacedUnitStart
+
 -- endregion
 
 -------------------------------------------------------------------------------

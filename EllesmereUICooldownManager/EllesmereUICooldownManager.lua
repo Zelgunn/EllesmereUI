@@ -167,7 +167,6 @@ local _ecmeChildHasDurObj = ECache._ecmeChildHasDurObj  -- [ch] = true when we h
 local _ecmeDurObjCache = ECache._ecmeDurObj             -- [ch] = durObj captured from SetCooldownFromDurationObject hook
 local _ecmeRawStartCache = ECache._ecmeRawStart         -- [ch] = start captured from SetCooldown hook
 local _cdmVehicleProxy                                  -- SecureHandlerStateTemplate proxy for [vehicleui]/[petbattle] hiding
-local _placedUnitStartCache = ECache._placedUnitStart   -- [spellID] = GetTime() when placed unit first detected active
 local _cdmInVehicle = false                             -- true when [vehicleui] or [petbattle] is active
 local _ecmeRawDurCache = ECache._ecmeRawDur             -- [ch] = dur captured from SetCooldown hook
 local _cdmHoverStates = ECache._cdmHoverStates          -- [barKey] = { isHovered=false, fadeDir=nil }
@@ -3251,16 +3250,14 @@ local function UpdateCustomBarIcons(barKey)
                                 local fixedSid = ns.PLACED_UNIT_DURATIONS[resolvedID] and resolvedID or spellID
                                 local isPlacedActive = ECache.IsTickBlizzardActive(spellID, resolvedID)
                                 if isPlacedActive then
-                                    if not _placedUnitStartCache[fixedSid] then
-                                        _placedUnitStartCache[fixedSid] = GetTime()
-                                    end
+                                    ECache.CachePlacedUnitStart(fixedSid)
                                     ourIcon._cooldown:Clear()
-                                    pcall(ourIcon._cooldown.SetCooldown, ourIcon._cooldown, _placedUnitStartCache[fixedSid], fixedDur)
+                                    pcall(ourIcon._cooldown.SetCooldown, ourIcon._cooldown, ECache.GetPlacedUnitStart(fixedSid), fixedDur)
                                     if ourIcon._tex then ourIcon._tex:SetDesaturation(0) end
                                     ourIcon._lastDesat = false
                                     auraHandled = true
                             else
-                                _placedUnitStartCache[fixedSid] = nil
+                                ECache.RemovePlacedUnitStart(fixedSid)
                             end
                         end
                             ourIcon._cooldown:SetReverse(auraHandled)
@@ -3540,11 +3537,9 @@ UpdateCDMBarIcons = function(barKey)
                                           or (blizzIcon._ecmeBaseSpellID and ns.PLACED_UNIT_DURATIONS[blizzIcon._ecmeBaseSpellID])
                             local fixedSid = fixedDur and (ns.PLACED_UNIT_DURATIONS[resolvedSid] and resolvedSid or blizzIcon._ecmeBaseSpellID)
                             if fixedDur and isBuffBar then
-                                if not _placedUnitStartCache[fixedSid] then
-                                    _placedUnitStartCache[fixedSid] = GetTime()
-                                end
+                                ECache.CachePlacedUnitStart(fixedSid)
                                 ourIcon._cooldown:Clear()
-                                pcall(ourIcon._cooldown.SetCooldown, ourIcon._cooldown, _placedUnitStartCache[fixedSid], fixedDur)
+                                pcall(ourIcon._cooldown.SetCooldown, ourIcon._cooldown, ECache.GetPlacedUnitStart(fixedSid), fixedDur)
                                 ourIcon._cooldown:SetReverse(false)
                                 auraHandled = true
                                 skipCDDisplay = true
@@ -3607,19 +3602,17 @@ UpdateCDMBarIcons = function(barKey)
                 if fixedDur then
                     local fixedSid = ns.PLACED_UNIT_DURATIONS[resolvedSid] and resolvedSid or blizzIcon._ecmeBaseSpellID
                     -- Only apply when the placed unit is active
-                    local isPlacedActive = _tickBlizzActiveCache[resolvedSid]
-                                        or (blizzIcon._ecmeBaseSpellID and _tickBlizzActiveCache[blizzIcon._ecmeBaseSpellID])
+                    local isPlacedActive = ECache.IsTickBlizzardActive(resolvedSid)
+                                        or (blizzIcon._ecmeBaseSpellID and ECache.IsTickBlizzardActive(blizzIcon._ecmeBaseSpellID))
                     if isPlacedActive then
-                        if not _placedUnitStartCache[fixedSid] then
-                            _placedUnitStartCache[fixedSid] = GetTime()
-                        end
+                        ECache.CachePlacedUnitStart(fixedSid)
                         ourIcon._cooldown:Clear()
-                        pcall(ourIcon._cooldown.SetCooldown, ourIcon._cooldown, _placedUnitStartCache[fixedSid], fixedDur)
+                        pcall(ourIcon._cooldown.SetCooldown, ourIcon._cooldown, ECache.GetPlacedUnitStart(fixedSid), fixedDur)
                         if ourIcon._tex then ourIcon._tex:SetDesaturation(0) end
                         ourIcon._lastDesat = false
                         auraHandled = true
                     else
-                        _placedUnitStartCache[fixedSid] = nil
+                        ECache.RemovePlacedUnitStart(fixedSid)
                     end
                 end
             end
@@ -4411,12 +4404,7 @@ local function UpdateAllCDMBars(dt)
     local p = ECME.db.profile
     if not p.cdmBars.enabled then return end
 
-    -- Clear placed-unit start times for spells no longer active
-    for sid in pairs(_placedUnitStartCache) do
-        if not _tickBlizzActiveCache[sid] then
-            _placedUnitStartCache[sid] = nil
-        end
-    end
+    ECache.ClearInactivePlacedUnitStart()
 
     for _, barData in ipairs(p.cdmBars.bars) do
         if barData.enabled then
