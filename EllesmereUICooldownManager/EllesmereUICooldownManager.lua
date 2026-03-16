@@ -170,7 +170,6 @@ local _cdmVehicleProxy                                  -- SecureHandlerStateTem
 local _placedUnitStartCache = ECache._placedUnitStartCache -- [spellID] = GetTime() when placed unit first detected active
 local _cdmInVehicle = false                             -- true when [vehicleui] or [petbattle] is active
 local _ecmeRawDurCache = ECache._ecmeRawDur             -- [ch] = dur captured from SetCooldown hook
-local _tickTotemCache = ECache._tickTotem               -- [slot] = haveTotem (cached per tick to avoid inconsistent reads)
 local _cdmHoverStates = ECache._cdmHoverStates          -- [barKey] = { isHovered=false, fadeDir=nil }
 
 
@@ -1363,49 +1362,7 @@ ns.CDM_BAR_ROOTS = {
     CDM_UTILITY  = "UtilityCooldownViewer",
 }
 
--------------------------------------------------------------------------------
---  Action Button Lookup (supports Blizzard and popular bar addons)
--------------------------------------------------------------------------------
-local blizzBarNames = {
-    [2] = "MultiBarBottomLeftButton",
-    [3] = "MultiBarBottomRightButton",
-    [4] = "MultiBarRightButton",
-    [5] = "MultiBarLeftButton",
-    [6] = "MultiBar5Button",
-    [7] = "MultiBar6Button",
-    [8] = "MultiBar7Button",
-}
 
-local actionButtonCache = {}
-
-local function FirstExisting(...)
-    for i = 1, select("#", ...) do
-        local f = _G[select(i, ...)]
-        if f then return f end
-    end
-end
-
-local function GetActionButton(bar, i)
-    bar = bar or 1
-    local cacheKey = bar * 100 + i
-    if actionButtonCache[cacheKey] then return actionButtonCache[cacheKey] end
-    local btn
-    if bar == 1 then
-        btn = FirstExisting(
-            "BT4Button" .. i, "ElvUI_Bar1Button" .. i,
-            "DominosActionButton" .. i, "ActionButton" .. i)
-    else
-        local offset = (bar - 1) * 12
-        local blizz = blizzBarNames[bar]
-        btn = FirstExisting(
-            "BT4Button" .. (offset + i),
-            "ElvUI_Bar" .. bar .. "Button" .. i,
-            "DominosActionButton" .. (offset + i),
-            blizz and (blizz .. i) or nil)
-    end
-    if btn then actionButtonCache[cacheKey] = btn end
-    return btn
-end
 
 -------------------------------------------------------------------------------
 --  CDM Slot Helpers
@@ -1486,7 +1443,7 @@ local function GetTargetButton(actionBar, actionButtonIndex)
     if type(actionBar) == "string" and ns.CDM_BAR_ROOTS[actionBar] then
         return GetCDMBarButton(actionBar, actionButtonIndex)
     end
-    return GetActionButton(tonumber(actionBar) or 1, actionButtonIndex)
+    return ECache.GetActionButton(tonumber(actionBar) or 1, actionButtonIndex)
 end
 
 -------------------------------------------------------------------------------
@@ -6205,7 +6162,7 @@ function ECME:OnEnable()
 
     -- Initialize extracted modules
     if ns.InitBarGlows then
-        ns.InitBarGlows(self, GetTargetButton, GetActionButton, GetSortedSlots, StartNativeGlow, StopNativeGlow)
+        ns.InitBarGlows(self, GetTargetButton, ECache.GetActionButton, GetSortedSlots, StartNativeGlow, StopNativeGlow)
     end
     if ns.InitBuffBars then ns.InitBuffBars(self) end
 

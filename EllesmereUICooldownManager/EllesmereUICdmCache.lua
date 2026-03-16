@@ -554,6 +554,8 @@ cache.WipePerTickCaches = WipePerTickCaches
 
 -- endregion
 
+-- endregion
+
 -- region Multi-charge spells
 
 -- Multi-charge spell cache: populated out of combat when values are not secret.
@@ -837,5 +839,72 @@ local function IsTotemChildStillValid(child)
     return false
 end
 cache.IsTotemChildStillValid = IsTotemChildStillValid
+
+-- endregion
+
+-- region Action Button
+
+-------------------------------------------------------------------------------
+--  Action Button Lookup (supports Blizzard and popular bar addons)
+-------------------------------------------------------------------------------
+local blizzBarNames = {
+    [2] = "MultiBarBottomLeftButton",
+    [3] = "MultiBarBottomRightButton",
+    [4] = "MultiBarRightButton",
+    [5] = "MultiBarLeftButton",
+    [6] = "MultiBar5Button",
+    [7] = "MultiBar6Button",
+    [8] = "MultiBar7Button",
+}
+
+-- todo: move to Utils
+-------------------------------------------------------------------------------
+--- Returns the first element that appears in the global variable _G
+--- @param ... any              The elements to check
+--- @return any firstExisting
+-------------------------------------------------------------------------------
+local function FirstExisting(...)
+    for i = 1, select("#", ...) do
+        local f = _G[select(i, ...)]
+        if f then return f end
+    end
+end
+
+---@type {[number]: string}
+local actionButtonCache = {}
+-------------------------------------------------------------------------------
+--- Returns the buttonID for the given bar and button index. First searches in
+---   the cache then the global variable _G.
+--- @param bar number       The index of the bar
+--- @param i number         The index of the button
+--- @return string buttonID
+-------------------------------------------------------------------------------
+local function GetActionButton(bar, i)
+    bar = bar or 1
+    local cacheKey = bar * 100 + i
+    if actionButtonCache[cacheKey] then 
+        print(actionButtonCache[cacheKey]) 
+    else
+        print(bar, i)
+    end
+    if actionButtonCache[cacheKey] then return actionButtonCache[cacheKey] end
+    local btn
+    if bar == 1 then
+        btn = FirstExisting(
+            "BT4Button" .. i, "ElvUI_Bar1Button" .. i,
+            "DominosActionButton" .. i, "ActionButton" .. i)
+    else
+        local offset = (bar - 1) * 12
+        local blizz = blizzBarNames[bar]
+        btn = FirstExisting(
+            "BT4Button" .. (offset + i),
+            "ElvUI_Bar" .. bar .. "Button" .. i,
+            "DominosActionButton" .. (offset + i),
+            blizz and (blizz .. i) or nil)
+    end
+    if btn then actionButtonCache[cacheKey] = btn end
+    return btn
+end
+cache.GetActionButton = GetActionButton
 
 -- endregion
