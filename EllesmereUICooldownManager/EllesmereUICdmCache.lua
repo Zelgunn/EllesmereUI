@@ -201,7 +201,7 @@ cache.CacheSpellOverridenByBlizzard = CacheSpellOverridenByBlizzard
 local function GetResolvedSpellOverridenByBlizzard(spellID, resolvedID)
     return cache._tickBlizzOverride[resolvedID] or cache._tickBlizzOverride[spellID]
 end
-cache.IsOverridenByBlizzard = GetResolvedSpellOverridenByBlizzard
+cache.GetResolvedSpellOverridenByBlizzard = GetResolvedSpellOverridenByBlizzard
 
 -------------------------------------------------------------------------------
 --- Second-level runtime override: e.g. spell A (base) -> spell B (talent)
@@ -238,12 +238,59 @@ cache.GetTickBlizzardChild = GetTickBlizzardChild
 -------------------------------------------------------------------------------
 --- Stores in the `_tickBlizzChild` cache the `blizzardChild` for `spellID`
 --- @param spellID number           The spell ID to override
---- @param blizzardChild Frame   The blizzard override spell ID for spellID
+--- @param blizzardChild Frame      The blizzard child for spellID
 -------------------------------------------------------------------------------
 local function CacheTickBlizzardChild(spellID, blizzardChild)
     cache._tickBlizzChild[spellID] = blizzardChild
 end
 cache.CacheTickBlizzardChild = CacheTickBlizzardChild
+
+-- endregion
+
+-- region _tickBlizzAllChild
+
+-------------------------------------------------------------------------------
+--- Get the blizzard child for spellID from the cache `_tickBlizzAllChild`
+--- @param spellID number           The spell ID to query
+--- @return Frame|nil blizzardChild
+-------------------------------------------------------------------------------
+local function GetTickBlizzardAllChild(spellID)
+    return cache._tickBlizzAllChild[spellID]
+end
+cache.GetTickBlizzardAllChild = GetTickBlizzardAllChild
+
+-------------------------------------------------------------------------------
+--- Stores in the `_tickBlizzAllChild` cache the `blizzardChild` for `spellID`
+--- @param spellID number           The spell ID to override
+--- @param blizzardChild Frame      The blizzard child for spellID
+-------------------------------------------------------------------------------
+local function CacheTickBlizzardAllChild(spellID, blizzardChild)
+    cache._tickBlizzAllChild[spellID] = blizzardChild
+end
+cache.CacheTickBlizzardAllChild = CacheTickBlizzardAllChild
+
+-------------------------------------------------------------------------------
+--- Returns the first blizzard child between `resolvedID` and `spellID`
+---   (`resolvedID` has priority over `spellID`.)
+--- Uses `_tickBlizzAllChild` as the reference cache.
+--- @param spellID number           The (original) spell ID to query
+--- @param resolvedID number|nil    The resolved spell ID to query
+--- @return Frame|nil blizzardChild
+-------------------------------------------------------------------------------
+local function GetResolvedBlizzardAllChild(spellID, resolvedID)
+    return cache._tickBlizzAllChild[resolvedID] or cache._tickBlizzAllChild[spellID]
+end
+cache.GetResolvedBlizzardAllChild = GetResolvedBlizzardAllChild
+
+-------------------------------------------------------------------------------
+--- Checks if spellID is cached in `_tickBlizzAllChild`
+--- @param spellID number           The spell ID to check
+--- @return boolean spellCachedInTickBlizzardAllChild
+-------------------------------------------------------------------------------
+local function IsSpellCachedInTickBlizzardAllChild(spellID)
+    return cache._tickBlizzAllChild[spellID] ~= nil
+end
+cache.IsSpellCachedInTickBlizzardAllChild = IsSpellCachedInTickBlizzardAllChild
 
 -- endregion
 
