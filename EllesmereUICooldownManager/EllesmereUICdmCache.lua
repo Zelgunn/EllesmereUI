@@ -4,21 +4,7 @@ local cache = ns.ECdmCache
 
 -- region Tables
 
-
-cache._tickBlizzActive = {}  -- [spellID] = true when Blizzard CDM marks spell as active (wasSetFromAura)
-cache._tickBlizzOverride = {} -- [baseSpellID] = overrideSpellID, built each tick from all CDM viewer children
-cache._tickBlizzChild = {}    -- [overrideSpellID] = blizzChild, for direct charge/cooldown reads on activation overrides
-cache._tickBlizzAllChild = {} -- [resolvedSid] = blizzChild, for all CDM children (used by custom bars)
-cache._tickBlizzBuffChild = {} -- [resolvedSid] = blizzChild, only from BuffIcon/BuffBar viewers
-cache._tickBlizzCDChild   = {} -- [resolvedSid] = blizzChild, only from Essential/Utility viewers
-cache._tickBlizzMultiChild = {} -- [baseSid] = { ch1, ch2, ... } when multiple CDM children share a base spellID
 cache._activeMultiScratch = {}      -- reusable scratch table for active multi-child filtering and companion child mapping
-
--- Export to NS
-ns._tickBlizzActiveCache = cache._tickBlizzActive
-ns._tickBlizzAllChildCache = cache._tickBlizzAllChild
-ns._tickBlizzBuffChildCache = cache._tickBlizzBuffChild
-
 
 cache._cdmKeybind = {} -- [spellID] -> formatted key string
 
@@ -41,6 +27,10 @@ ns._ecmeRawStartCache = cache._ecmeRawStart
 ns._ecmeRawDurCache = cache._ecmeRawDur
 
 -- endregion
+
+-- ================== --
+-- ================== --
+-- ================== --
 
 -- region Tick
 
@@ -122,15 +112,77 @@ cache.GetTickAura = GetTickAura
 
 -- endregion
 
+-- region Tick Blizzard active state
+
+cache._tickBlizzActive = {}  -- [spellID] = true when Blizzard CDM marks spell as active (wasSetFromAura)
+cache._tickBlizzOverride = {} -- [baseSpellID] = overrideSpellID, built each tick from all CDM viewer children
+cache._tickBlizzChild = {}    -- [overrideSpellID] = blizzChild, for direct charge/cooldown reads on activation overrides
+cache._tickBlizzAllChild = {} -- [resolvedSid] = blizzChild, for all CDM children (used by custom bars)
+cache._tickBlizzBuffChild = {} -- [resolvedSid] = blizzChild, only from BuffIcon/BuffBar viewers
+cache._tickBlizzCDChild   = {} -- [resolvedSid] = blizzChild, only from Essential/Utility viewers
+cache._tickBlizzMultiChild = {} -- [baseSid] = { ch1, ch2, ... } when multiple CDM children share a base spellID
+
+-- Export to NS
+ns._tickBlizzActiveCache = cache._tickBlizzActive
+ns._tickBlizzAllChildCache = cache._tickBlizzAllChild
+ns._tickBlizzBuffChildCache = cache._tickBlizzBuffChild
+
+
 -------------------------------------------------------------------------------
---- Wipe per-tick caches (GCD, charges, auras, totem info)
+--- Returns true if the spell is marked as active in the cache.
+---   When provided, `resolvedID` has priority over `spellID`.
+--- Uses `_tickBlizzActiveCache` as the reference cache.
+--- @param spellID number           The (original) spell ID
+--- @param resolvedID number|nil    (Optional) The resolved spell ID
+-------------------------------------------------------------------------------
+local function IsTickBlizzardActive(spellID, resolvedID)
+    return cache._tickBlizzActive[resolvedID] or cache._tickBlizzActive[spellID]
+end
+cache.IsTickBlizzardActive = IsTickBlizzardActive
+
+-------------------------------------------------------------------------------
+--- Caches the spellID in `_tickBlizzActiveCache`.
+--- @param spellID number           The spell ID to cache
+-------------------------------------------------------------------------------
+local function CacheTickBlizzardActive(spellID)
+    cache._tickBlizzActive[spellID] = true
+end
+cache.CacheTickBlizzardActive = CacheTickBlizzardActive
+
+-------------------------------------------------------------------------------
+--- Checks if spellID is cached in `_tickBlizzActive`
+--- @param spellID number           The spell ID to check
+-------------------------------------------------------------------------------
+local function IsSpellCachedInTickBlizzardActive(spellID)
+    return cache._tickBlizzActive[spellID] ~= nil
+end
+cache.IsSpellCachedInTickBlizzardActive = IsSpellCachedInTickBlizzardActive
+
+-- endregion
+
+-------------------------------------------------------------------------------
+--- Wipe per-tick caches (GCD, charges, auras, totem info, blizzard active states)
 ---
 -------------------------------------------------------------------------------
 local function WipePerTickCaches()
+    -- Wipe per-tick caches (GCD, charges, auras, totem info)
     wipe(cache._tickGCD)
     wipe(cache._tickCharge)
     wipe(cache._tickAura)
     wipe(cache._tickTotem)
+
+    -- Build per-tick Blizzard active state cache: scan all CDM viewers for
+    -- children marked wasSetFromAura, map their resolved spellID -> true.
+    -- Also build override cache: maps base spellID -> current overrideSpellID
+    -- so custom bars can resolve runtime activation overrides (e.g. Crusader
+    -- Strike -> Hammer of Wrath during Avenging Crusader).
+    wipe(cache._tickBlizzActive)
+    wipe(cache._tickBlizzOverride)
+    wipe(cache._tickBlizzChild)
+    wipe(cache._tickBlizzAllChild)
+    wipe(cache._tickBlizzBuffChild)
+    wipe(cache._tickBlizzCDChild)
+    wipe(cache._tickBlizzMultiChild)
 end
 cache.WipePerTickCaches = WipePerTickCaches
 
@@ -421,6 +473,3 @@ end
 cache.IsTotemChildStillValid = IsTotemChildStillValid
 
 -- endregion
-
-
-

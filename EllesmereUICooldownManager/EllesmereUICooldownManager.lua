@@ -125,7 +125,6 @@ ECache.InitCastCountSpellsCache()
 --  Avoids redundant C API calls when the same spellID appears on multiple
 --  bars or is queried by both ApplySpellCooldown and ApplyStackCount.
 -------------------------------------------------------------------------------
-local _tickBlizzActiveCache = ECache._tickBlizzActive  -- [spellID] = true when Blizzard CDM marks spell as active (wasSetFromAura)
 local _tickBlizzOverrideCache = ECache._tickBlizzOverride -- [baseSpellID] = overrideSpellID, built each tick from all CDM viewer children
 local _tickBlizzChildCache = ECache._tickBlizzChild    -- [overrideSpellID] = blizzChild, for direct charge/cooldown reads on activation overrides
 local _tickBlizzAllChildCache = ECache._tickBlizzAllChild -- [resolvedSid] = blizzChild, for all CDM children (used by custom bars)
@@ -3446,7 +3445,7 @@ local function UpdateCustomBarIcons(barKey)
                         if barData.hideBuffsWhenInactive and isBuffBarForOverride and not EllesmereUI._unlockActive
                         and not (EllesmereUI._mainFrame and EllesmereUI._mainFrame:IsShown()) then
                             -- Use the per-tick active cache built from all CDM viewers
-                            local isActive = _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID]
+                            local isActive = ECache.IsTickBlizzardActive(spellID, resolvedID)
                             -- Fallback: check buff-viewer child, then all-child cache (covers totems in
                             -- Essential/Utility viewers and summons like Dreadstalkers with no aura)
                             if not isActive then
@@ -3676,7 +3675,7 @@ UpdateCDMBarIcons = function(barKey)
             -- hook-cached cooldown data when aura duration is unavailable.
             if not auraHandled and activeAnim ~= "hideActive" and (barKey == "buffs") then
                 local baseSpellFb = blizzIcon and blizzIcon._ecmeBaseSpellID
-                local blzFbActive = _tickBlizzActiveCache[resolvedSid] or (baseSpellFb and _tickBlizzActiveCache[baseSpellFb])
+                local blzFbActive = ECache.IsTickBlizzardActive(resolvedSid) or (baseSpellFb and ECache.IsTickBlizzardActive(baseSpellFb))
                 if not blzFbActive then
                     local blzBufCh = _tickBlizzBuffChildCache[resolvedSid] or (baseSpellFb and _tickBlizzBuffChildCache[baseSpellFb])
                     if IsBufChildCooldownActive and blzBufCh then
@@ -3736,7 +3735,7 @@ UpdateCDMBarIcons = function(barKey)
             local isBuffBar = (barKey == "buffs" or barData.barType == "buffs")
             if barData.hideBuffsWhenInactive and isBuffBar and not EllesmereUI._unlockActive
                and not (EllesmereUI._mainFrame and EllesmereUI._mainFrame:IsShown()) then
-                local isActive = _tickBlizzActiveCache[resolvedSid]
+                local isActive = ECache.IsTickBlizzardActive(resolvedSid)
                 -- Fallback: check buff-viewer child, then all-child cache (covers totems)
                 if not isActive then
                     local blzBufCh = _tickBlizzBuffChildCache[resolvedSid]
@@ -4219,7 +4218,7 @@ local function UpdateTrackedBarIcons(barKey)
                     -- Hide buff icons when inactive
                     if barData.hideBuffsWhenInactive and isBuffBarForOverride and not EllesmereUI._unlockActive
                     and not (EllesmereUI._mainFrame and EllesmereUI._mainFrame:IsShown()) then
-                        local isActive = _tickBlizzActiveCache[resolvedID] or _tickBlizzActiveCache[spellID]
+                        local isActive = ECache.IsTickBlizzardActive(spellID, resolvedID)
                         -- Fallback: check if the buff-viewer child's cooldown is running
                         if not isActive then
                             local blzBufCh = assignedChild or _tickBlizzBuffChildCache[resolvedID] or _tickBlizzBuffChildCache[spellID]
@@ -4273,20 +4272,8 @@ local function UpdateAllCDMBars(dt)
     if cdmUpdateThrottle < CDM_UPDATE_INTERVAL then return end
     cdmUpdateThrottle = 0
 
-    -- Wipe per-tick caches (GCD, charges, auras, totem info)
     ECache.WipePerTickCaches()
-    -- Build per-tick Blizzard active state cache: scan all CDM viewers for
-    -- children marked wasSetFromAura, map their resolved spellID -> true.
-    -- Also build override cache: maps base spellID -> current overrideSpellID
-    -- so custom bars can resolve runtime activation overrides (e.g. Crusader
-    -- Strike -> Hammer of Wrath during Avenging Crusader).
-    wipe(_tickBlizzActiveCache)
-    wipe(_tickBlizzOverrideCache)
-    wipe(_tickBlizzChildCache)
-    wipe(_tickBlizzAllChildCache)
-    wipe(_tickBlizzBuffChildCache)
-    wipe(_tickBlizzCDChildCache)
-    wipe(_tickBlizzMultiChildCache)
+
     do
         for vi = 1, 4 do
             local vName = EUtils._cdmViewerNames[vi]
@@ -4460,7 +4447,7 @@ local function UpdateAllCDMBars(dt)
                                             totemOk = ECache.IsTotemChildStillValid(ch)
                                         end
                                         if totemOk then
-                                            _tickBlizzActiveCache[correctSid] = true
+                                            ECache.CacheTickBlizzardActive(correctSid)
                                         end
                                     end
                                 end
@@ -4481,19 +4468,19 @@ local function UpdateAllCDMBars(dt)
                                     totemValid = ECache.IsTotemChildStillValid(ch)
                                 end
                                 if totemValid and resolvedSid and resolvedSid > 0 then
-                                    _tickBlizzActiveCache[resolvedSid] = true
+                                    ECache.CacheTickBlizzardActive(resolvedSid)
                                     -- Also mark linked spell IDs as active so
                                     -- hideBuffsWhenInactive finds them regardless
                                     -- of which variant the tracked spell resolved to.
                                     local linked = ch._ecmeLinkedSpellIDs
                                     if linked then
                                         if baseSpellID and baseSpellID > 0 then
-                                            _tickBlizzActiveCache[baseSpellID] = true
+                                            ECache.CacheTickBlizzardActive(baseSpellID)
                                         end
                                         for li = 1, #linked do
                                             local lsid = linked[li]
                                             if lsid and lsid > 0 then
-                                                _tickBlizzActiveCache[lsid] = true
+                                                ECache.CacheTickBlizzardActive(lsid)
                                             end
                                         end
                                     end
@@ -7040,7 +7027,7 @@ SlashCmdList.CDMCUSTOM = function()
                     local cdID = _spellToCooldownID[sid]
                     local child = cdID and EUtils.FindCDMChildByCooldownID(cdID)
                     local inAllCache = _tickBlizzAllChildCache[sid] ~= nil
-                    local inActiveCache = _tickBlizzActiveCache[sid] ~= nil
+                    local inActiveCache = ECache.IsSpellCachedInTickBlizzardActive(sid)
                     local wasAura = child and child.wasSetFromAura
                     local auraID = child and child.auraInstanceID
                     p("  sid="..sid.." ("..name..")"
