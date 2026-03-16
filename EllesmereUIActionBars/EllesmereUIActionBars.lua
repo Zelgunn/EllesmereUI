@@ -468,6 +468,22 @@ local function ButtonHasAction(btn, prefix)
 end
 ns.ButtonHasAction = ButtonHasAction
 
+-- Stock bar frames to disable. Each entry carries flags for how to handle it:
+--   retainEvents  = true  -> do NOT unregister events (needed for override state)
+local STOCK_BAR_DISPOSAL = {
+    { name = "MainActionBar",       retainEvents = true },
+    { name = "MainMenuBar" },
+    { name = "MultiBarBottomLeft" },
+    { name = "MultiBarBottomRight" },
+    { name = "MultiBarRight" },
+    { name = "MultiBarLeft" },
+    { name = "MultiBar5" },
+    { name = "MultiBar6" },
+    { name = "MultiBar7" },
+    { name = "StanceBar" },
+    { name = "PetActionBar" },
+}
+
 -------------------------------------------------------------------------------
 --  Hidden Dump Frame
 --  Off-screen dump frame. Reparenting stock frames here is safer than
@@ -477,6 +493,49 @@ ns.ButtonHasAction = ButtonHasAction
 local hiddenParent = CreateFrame("Frame", "EABHiddenParent", UIParent)
 hiddenParent:SetAllPoints(UIParent)
 hiddenParent:Hide()
+
+-------------------------------------------------------------------------------
+--  Early Blizzard Bar Disposal (file load time)
+--  Runs at addon load before combat state is restored, so protected calls
+--  (Hide, SetParent) execute cleanly without tainting Blizzard's
+--  ActionBarController call chain.
+-------------------------------------------------------------------------------
+do
+    local framesToHide = {
+        "MainActionBar",
+        "MultiBar5",
+        "MultiBar6",
+        "MultiBar7",
+        "MultiBarBottomLeft",
+        "MultiBarBottomRight",
+        "MultiBarLeft",
+        "MultiBarRight",
+    }
+
+    local keepEvents = {
+        MainActionBar = true,
+    }
+
+    for _, frameName in ipairs(framesToHide) do
+        local frame = _G[frameName]
+        if frame then
+            if not keepEvents[frameName] then
+                frame:UnregisterAllEvents()
+            end
+
+            (frame.HideBase or frame.Hide)(frame)
+            frame:SetParent(hiddenParent)
+
+            if frame.actionButtons and type(frame.actionButtons) == "table" then
+                for _, button in pairs(frame.actionButtons) do
+                    button:UnregisterAllEvents()
+                    button:SetAttributeNoHandler("statehidden", true)
+                    button:Hide()
+                end
+            end
+        end
+    end
+end
 
 -------------------------------------------------------------------------------
 --  Central Action Button Controller
@@ -596,6 +655,15 @@ end
 local function RegisterButtonWithController(btn)
     if _controllerButtons[btn] then return end
 
+    -- On /reload, Lua locals reset but frames survive. If the button
+    -- already has our secure snippets from a previous session, skip
+    -- the WrapScript + Execute calls to avoid tainting the restricted
+    -- environment during combat. Just restore the Lua-side registry.
+    if btn:GetAttribute("_eabControllerRegistered") then
+        _controllerButtons[btn] = true
+        return
+    end
+
     ActionButtonController:WrapScript(btn, "OnAttributeChanged", BTN_ON_ATTRIBUTE_CHANGED)
     ActionButtonController:WrapScript(btn, "PostClick", BTN_POST_CLICK)
     ActionButtonController:WrapScript(btn, "OnReceiveDrag", BTN_ON_RECEIVE_DRAG_BEFORE, BTN_ON_RECEIVE_DRAG_AFTER)
@@ -641,6 +709,9 @@ local function RegisterButtonWithController(btn)
         local b = self:GetFrameRef("add")
         _eabBtnMap[b] = b:GetAttribute("action") or 0
     ]])
+
+    -- Mark the button so we can detect it survived a /reload
+    btn:SetAttributeNoHandler("_eabControllerRegistered", true)
 
     _controllerButtons[btn] = true
 end
@@ -734,22 +805,6 @@ local function RegisterBarWithOverrideController(frame)
     frame:SetAttribute("state-petbattleui", tonumber(OverrideController:GetAttribute("petbattleui")) == 1)
     frame:SetAttribute("state-overridepage", OverrideController:GetAttribute("overridepage") or 0)
 end
-
--- Stock bar frames to disable. Each entry carries flags for how to handle it:
---   retainEvents  = true  -> do NOT unregister events (needed for override state)
-local STOCK_BAR_DISPOSAL = {
-    { name = "MainActionBar",       retainEvents = true },
-    { name = "MainMenuBar" },
-    { name = "MultiBarBottomLeft" },
-    { name = "MultiBarBottomRight" },
-    { name = "MultiBarRight" },
-    { name = "MultiBarLeft" },
-    { name = "MultiBar5" },
-    { name = "MultiBar6" },
-    { name = "MultiBar7" },
-    { name = "StanceBar" },
-    { name = "PetActionBar" },
-}
 
 -------------------------------------------------------------------------------
 --  Secure Setup Handler
@@ -989,9 +1044,9 @@ local function SecureSetupHandler_Execute(layoutData, barFrameData)
 end
 
 local function HideBlizzardBars()
-    -- First, extract all Blizzard buttons we want to reuse by reparenting
-    -- them to UIParent temporarily. This must happen BEFORE we hide the
-    -- parent bar frames, otherwise the buttons become invisible.
+    -- Extract all Blizzard buttons we want to reuse by reparenting
+    -- them to UIParent temporarily. The stock bar frames were already
+    -- hidden at file load time; this just claims the buttons.
     for _, info in ipairs(BAR_CONFIG) do
         if info.blizzBtnPrefix then
             for i = 1, info.count do
@@ -1014,29 +1069,19 @@ local function HideBlizzardBars()
         end
     end
 
-    -- Dispose of stock bar frames: reparent to our hidden dump frame,
-    -- silence their events, and neutralize leftover button references.
-    for _, entry in ipairs(STOCK_BAR_DISPOSAL) do
-        local bar = _G[entry.name]
+    -- Hide remaining stock frames not covered by the early file-load disposal.
+    -- MainMenuBar, StanceBar, PetActionBar need EAB.db to be ready, so they
+    -- are handled here rather than at file load time.
+    local remainingBars = { "MainMenuBar", "StanceBar", "PetActionBar" }
+    for _, name in ipairs(remainingBars) do
+        local bar = _G[name]
         if bar then
-            -- Silence events unless the bar is needed for override state tracking
-            if not entry.retainEvents then
-                bar:UnregisterAllEvents()
-            end
-
-            -- Reparent into the dump frame. Use HideBase when available to
-            -- sidestep taint from mixin overrides on :Hide().
+            bar:UnregisterAllEvents()
             local safeHide = bar.HideBase or bar.Hide
             safeHide(bar)
             bar:SetParent(hiddenParent)
-
-            -- Neutralize any child buttons still registered on the bar.
-            -- We mark them statehidden and kill their events so stock code
-            -- never tries to update them. SetupBar re-registers the events
-            -- we actually need when we claim each button.
-            local btns = bar.actionButtons
-            if btns and type(btns) == "table" then
-                for _, child in pairs(btns) do
+            if bar.actionButtons and type(bar.actionButtons) == "table" then
+                for _, child in pairs(bar.actionButtons) do
                     child:UnregisterAllEvents()
                     child:SetAttributeNoHandler("statehidden", true)
                     child:Hide()
@@ -1044,11 +1089,11 @@ local function HideBlizzardBars()
             end
         end
     end
-
-    -- Also hide the MainActionBar container and related frames
     if MainActionBarController then
         MainActionBarController:UnregisterAllEvents()
     end
+    if MainMenuBarPageNumber then MainMenuBarPageNumber:Hide() end
+
     -- Hide status tracking bar manager (unless user wants Blizzard data bars)
     if not (EAB.db and EAB.db.profile.useBlizzardDataBars) then
         if StatusTrackingBarManager then
@@ -1056,8 +1101,6 @@ local function HideBlizzardBars()
             StatusTrackingBarManager:Hide()
         end
     end
-    -- Hide the action bar page number
-    if MainMenuBarPageNumber then MainMenuBarPageNumber:Hide() end
     -- Hide ActionBarParent normally; show it during full vehicle UI so
     -- Blizzard's vehicle bar can render.  Combat-safe via attribute driver.
     if ActionBarParent then
@@ -1110,6 +1153,7 @@ local function HideBlizzardBars()
     C_CVar.SetCVar("SHOW_MULTI_ACTIONBAR_2", "1")
     C_CVar.SetCVar("SHOW_MULTI_ACTIONBAR_3", "1")
     C_CVar.SetCVar("SHOW_MULTI_ACTIONBAR_4", "1")
+
 end
 
 -------------------------------------------------------------------------------
@@ -1268,14 +1312,14 @@ local function GetOrCreateButton(slot, parent, info, index, skipProtected)
         end
     else
         -- Create a new button (for slots 73-132 that don't have Blizzard equivalents)
-        -- These are our own frames, not protected, so CreateFrame is always safe
+        -- These are our own frames, not protected, so CreateFrame is always safe.
+        -- Check _G first: frames persist across /reload even though our Lua
+        -- locals are reset. Reusing avoids re-setting attributes during combat.
         local name = "EABButton" .. slot
-        btn = CreateFrame("CheckButton", name, parent, "ActionBarButtonTemplate")
-        btn:SetAttribute("action", slot)
-        -- Register with the centralized event dispatcher so the mixin
-        -- receives ACTIONBAR_SLOT_CHANGED and other update events.
-        if ActionBarButtonEventsFrame and ActionBarButtonEventsFrame.RegisterFrame then
-            ActionBarButtonEventsFrame:RegisterFrame(btn)
+        btn = _G[name]
+        if not btn then
+            btn = CreateFrame("CheckButton", name, parent, "ActionBarButtonTemplate")
+            btn:SetAttribute("action", slot)
         end
     end
 
@@ -1495,7 +1539,7 @@ local function SetupBar(info, skipProtected)
                 -- infinite OnEnter/OnLeave loop on buttons beyond the
                 -- Edit Mode icon cap.
                 local name = "EABButton" .. slot
-                btn = allButtons[slot]
+                btn = allButtons[slot] or _G[name]
                 if not btn then
                     btn = CreateFrame("CheckButton", name, frame, "ActionBarButtonTemplate")
                     btn:SetAttributeNoHandler("action", 0)
@@ -1516,12 +1560,6 @@ local function SetupBar(info, skipProtected)
                         end
                     end
                     allButtons[slot] = btn
-                    -- Register with the centralized event dispatcher so
-                    -- the mixin receives ACTIONBAR_SLOT_CHANGED and other
-                    -- events it needs for icon/count/cooldown updates.
-                    if ActionBarButtonEventsFrame and ActionBarButtonEventsFrame.RegisterFrame then
-                        ActionBarButtonEventsFrame:RegisterFrame(btn)
-                    end
                 end
 
                 RegisterButtonWithController(btn)
@@ -1801,6 +1839,7 @@ local function ComputeBarLayout(key)
     if numIcons < 1 then numIcons = info.count end
     if numIcons > info.count then numIcons = info.count end
     if info.isStance then numIcons = GetNumShapeshiftForms() or info.count end
+    if numIcons < 1 then numIcons = 1 end
 
     local numRows = s.overrideNumRows or s.numRows or 1
     if numRows < 1 then numRows = 1 end
@@ -1885,11 +1924,13 @@ local function LayoutBar(key)
     if numIcons < 1 then numIcons = info.count end
     if numIcons > info.count then numIcons = info.count end
     if info.isStance then numIcons = GetNumShapeshiftForms() or info.count end
+    if numIcons < 1 then numIcons = 1 end
 
     local numRows = s.overrideNumRows or s.numRows or 1
     if numRows < 1 then numRows = 1 end
 
     local stride = ceil(numIcons / numRows)
+    if stride < 1 then stride = 1 end
     -- Recalculate actual rows needed (avoids empty trailing rows)
     numRows = ceil(numIcons / stride)
     local padding = SnapForScale(s.buttonPadding or 2, barScale)
@@ -2898,6 +2939,7 @@ function EAB:ApplyAlwaysShowButtons(barKey)
     if numIcons < 1 then numIcons = info.count end
     if numIcons > info.count then numIcons = info.count end
     if info.isStance then numIcons = GetNumShapeshiftForms() or info.count end
+    if numIcons < 1 then numIcons = 1 end
 
     local clickable = not s.clickThrough
     local lastVisible = 0
@@ -4715,6 +4757,7 @@ local function OnGridChange()
             if not numIcons or numIcons < 1 then numIcons = info.count end
             if numIcons > info.count then numIcons = info.count end
             if info.isStance then numIcons = GetNumShapeshiftForms() or info.count end
+            if numIcons < 1 then numIcons = 1 end
             for i = 1, numIcons do
                 local btn = buttons[i]
                 if btn then
@@ -5243,21 +5286,8 @@ function EAB:FinishSetup()
             end
         else
             -- Combat reload: non-protected setup only; secure handler does the rest.
-            -- Unregister Blizzard bar events (non-protected).
-            -- MainActionBar keeps its events (needed by ActionBarController).
-            for _, entry in ipairs(STOCK_BAR_DISPOSAL) do
-                local bar = _G[entry.name]
-                if bar and not entry.retainEvents then
-                    bar:UnregisterAllEvents()
-                end
-            end
-            if MainActionBarController then MainActionBarController:UnregisterAllEvents() end
-            if not (EAB.db and EAB.db.profile.useBlizzardDataBars) then
-                if StatusTrackingBarManager then
-                    StatusTrackingBarManager:UnregisterAllEvents()
-                end
-            end
-            if MainMenuBarPageNumber then MainMenuBarPageNumber:Hide() end
+            -- Stock bar disposal already happened at file load time.
+            -- Attribute drivers are combat-safe.
             if ActionBarParent then
                 RegisterAttributeDriver(ActionBarParent, "state-visibility", "[vehicleui][overridebar] show; hide")
             end
@@ -5327,30 +5357,48 @@ function EAB:FinishSetup()
         end
 
         -- Visual styling: defer visuals to out-of-combat if needed.
-        local combatReloaded = InCombatLockdown()
         local function DoVisuals()
             ApplyAll()
             ApplyKeyDownCVar()
             self:HookProcGlow()
             self:ScanExistingProcs()
             EAB.AnchorVehicleButton()
-            -- DEBUG removed
-            -- Fix: Blizzard's UpdateCount sets count text based on
-            -- GetActionCount even when the slot is empty, because
-            -- GetActionCount can return stale values. Hook UpdateCount
-            -- to clear the text when HasAction is false.
+            -- Our fresh EABButton frames are not registered with
+            -- ActionBarButtonEventsFrame (doing so causes taint), so
+            -- the mixin's OnEvent never fires on them. Register our
+            -- own ACTIONBAR_SLOT_CHANGED listener on each fresh button
+            -- to clear stale count text when a slot becomes empty.
             for _, info in ipairs(BAR_CONFIG) do
                 if not info.isStance and not info.isPetBar then
                     local btns = barButtons[info.key]
                     if btns then
                         for _, b in ipairs(btns) do
-                            if b.UpdateCount and not b._eabCountFixed then
+                            if not b._eabCountFixed then
                                 b._eabCountFixed = true
-                                hooksecurefunc(b, "UpdateCount", function(self)
-                                    if not self:HasAction() then
-                                        self.Count:SetText("")
-                                    end
-                                end)
+                                -- Hook UpdateCount for Blizzard buttons
+                                -- that already receive events natively.
+                                if b.UpdateCount then
+                                    hooksecurefunc(b, "UpdateCount", function(self)
+                                        if not self:HasAction() then
+                                            self.Count:SetText("")
+                                        end
+                                    end)
+                                end
+                                -- For our fresh buttons, listen for slot
+                                -- changes directly and clear count text.
+                                if b:GetName() and b:GetName():match("^EABButton") then
+                                    b:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+                                    b:HookScript("OnEvent", function(self, event, slotOrArg)
+                                        if event == "ACTIONBAR_SLOT_CHANGED" then
+                                            local action = self:GetAttribute("action") or 0
+                                            if slotOrArg == 0 or slotOrArg == action then
+                                                if not HasAction(action) then
+                                                    self.Count:SetText("")
+                                                end
+                                            end
+                                        end
+                                    end)
+                                end
                             end
                         end
                     end
@@ -5371,6 +5419,10 @@ function EAB:FinishSetup()
     end
 
     DoSetupSecure()
+
+    -- Set override keybindings immediately at load time, before combat
+    -- state is restored. This ensures keybinds work on /reload in combat.
+    UpdateKeybinds()
 
     -- Initialize the showgrid monitor on ActionButton1 so that when
     -- Blizzard changes its showgrid attribute (e.g. during combat spell
@@ -5820,12 +5872,15 @@ function EAB:FinishSetup()
 
     -- Talent changes can cause Blizzard to re-show hidden bars.
     -- Re-run the hider and re-unregister events on the affected frames.
+    -- The OnShow hooks below also catch this, but this is a safety net.
     self:RegisterEvent("PLAYER_TALENT_UPDATE", function()
         if InCombatLockdown() then return end
         for _, entry in ipairs(STOCK_BAR_DISPOSAL) do
             local bar = _G[entry.name]
             if bar then
-                bar:UnregisterAllEvents()
+                if not entry.retainEvents then
+                    bar:UnregisterAllEvents()
+                end
                 bar:SetParent(hiddenParent)
                 bar:Hide()
             end
