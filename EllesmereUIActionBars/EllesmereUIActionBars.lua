@@ -740,13 +740,13 @@ end
 local STOCK_BAR_DISPOSAL = {
     { name = "MainActionBar",       retainEvents = true },
     { name = "MainMenuBar" },
-    { name = "MultiBarBottomLeft" },
-    { name = "MultiBarBottomRight" },
-    { name = "MultiBarRight" },
-    { name = "MultiBarLeft" },
-    { name = "MultiBar5" },
-    { name = "MultiBar6" },
-    { name = "MultiBar7" },
+    { name = "MultiBarBottomLeft",  wipeBtns = true },
+    { name = "MultiBarBottomRight", wipeBtns = true },
+    { name = "MultiBarRight",       wipeBtns = true },
+    { name = "MultiBarLeft",        wipeBtns = true },
+    { name = "MultiBar5",           wipeBtns = true },
+    { name = "MultiBar6",           wipeBtns = true },
+    { name = "MultiBar7",           wipeBtns = true },
     { name = "StanceBar" },
     { name = "PetActionBar" },
 }
@@ -1034,15 +1034,17 @@ local function HideBlizzardBars()
             -- We mark them statehidden and kill their events so stock code
             -- never tries to update them. SetupBar re-registers the events
             -- we actually need when we claim each button.
-            -- The actionButtons table is kept intact so Blizzard's keybind
-            -- handlers (MultiActionButtonUp/Down) can still resolve button
-            -- references without erroring.
             local btns = bar.actionButtons
             if btns and type(btns) == "table" then
                 for _, child in pairs(btns) do
                     child:UnregisterAllEvents()
                     child:SetAttributeNoHandler("statehidden", true)
                     child:Hide()
+                end
+                -- Clear the table on multi-bars so stock UpdateShownButtons
+                -- has nothing left to iterate over.
+                if entry.wipeBtns then
+                    table.wipe(btns)
                 end
             end
         end
@@ -1487,36 +1489,49 @@ local function SetupBar(info, skipProtected)
             local btn
 
             if key == "MainBar" then
-                -- Main bar buttons: reuse ActionButton1-12
-                btn = _G["ActionButton" .. i]
-                if btn then
-                    if not skipProtected then
-                        -- Clear statehidden set during HideBlizzardBars
-                        btn:SetAttributeNoHandler("statehidden", nil)
-                        -- Re-register events that HideBlizzardBars unregistered
-                        ReRegisterButtonEvents(btn, "action")
-                        btn:SetParent(frame)
-                        btn:SetID(0)
-                        btn.Bar = nil
+                -- Create fresh buttons for MainBar. The original
+                -- ActionButton1-12 have C-side visibility management
+                -- that conflicts with our button controller, causing an
+                -- infinite OnEnter/OnLeave loop on buttons beyond the
+                -- Edit Mode icon cap.
+                local name = "EABButton" .. slot
+                btn = allButtons[slot]
+                if not btn then
+                    btn = CreateFrame("CheckButton", name, frame, "ActionBarButtonTemplate")
+                    btn:SetAttributeNoHandler("action", 0)
+                    btn:SetAttributeNoHandler("showgrid", 0)
+                    btn:SetAttributeNoHandler("useparent-checkfocuscast", true)
+                    btn:SetAttributeNoHandler("useparent-checkmouseovercast", true)
+                    btn:SetAttributeNoHandler("useparent-checkselfcast", true)
+                    if not btn.GetPopupDirection then
+                        btn.GetPopupDirection = function(self)
+                            return self:GetAttribute("flyoutDirection") or "UP"
+                        end
                     end
-
-                    -- Register with the central button controller
-                    RegisterButtonWithController(btn)
-
-                    -- SetAttribute is allowed in combat on non-protected frames,
-                    -- but ActionButton1 is protected. Defer to secure handler.
-                    if not skipProtected then
-                        btn:SetAttribute("index", i)
-                        btn:SetAttribute("_childupdate-offset", [[
-                            local offset = message or 0
-                            local id = self:GetAttribute("index") + offset
-                            if self:GetAttribute("action") ~= id then
-                                self:SetAttribute("action", id)
-                            end
-                        ]])
-                        local curOffset = frame:GetAttribute("actionOffset") or 0
-                        btn:SetAttribute("action", i + curOffset)
+                    if btn.TextOverlayContainer then
+                        btn.TextOverlayContainer:EnableMouse(false)
+                        if btn.TextOverlayContainer.SetMouseClickEnabled then
+                            btn.TextOverlayContainer:SetMouseClickEnabled(false)
+                            btn.TextOverlayContainer:SetMouseMotionEnabled(false)
+                        end
                     end
+                    allButtons[slot] = btn
+                end
+
+                RegisterButtonWithController(btn)
+
+                if not skipProtected then
+                    btn:SetParent(frame)
+                    btn:SetAttribute("index", i)
+                    btn:SetAttribute("_childupdate-offset", [[
+                        local offset = message or 0
+                        local id = self:GetAttribute("index") + offset
+                        if self:GetAttribute("action") ~= id then
+                            self:SetAttribute("action", id)
+                        end
+                    ]])
+                    local curOffset = frame:GetAttribute("actionOffset") or 0
+                    btn:SetAttribute("action", i + curOffset)
                 end
             else
                 btn = GetOrCreateButton(slot, frame, info, i, skipProtected)
