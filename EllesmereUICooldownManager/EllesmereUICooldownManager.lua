@@ -133,7 +133,6 @@ ECache.InitCastCountSpellsCache()
 --  Avoids redundant C API calls when the same spellID appears on multiple
 --  bars or is queried by both ApplySpellCooldown and ApplyStackCount.
 -------------------------------------------------------------------------------
-local _activeMultiScratch = ECache._activeMultiScratch      -- reusable scratch table for active multi-child filtering and companion child mapping
 
 -- Reusable spell list buffers -- avoids table allocation every tick in update functions
 local _combinedBuf = {}   -- reused by UpdateTrackedBarIcons for tracked+extra spell list
@@ -4055,43 +4054,9 @@ local function UpdateTrackedBarIcons(barKey)
     -- has two children with different auraInstanceIDs for Lunar and Solar),
     -- each child gets its own icon entry. Uses module-level scratch table
     -- (wiped here) to avoid per-tick allocation / GC pressure.
-    wipe(_activeMultiScratch)
     local hasCompanions = false
-    if isBuffBarForOverride then
-        local baseN = combinedN
-        for bi = 1, baseN do
-            local sid = combined[bi]
-            local multiChildren = ECache.GetTickBlizzardMultiChild(sid)
-            if multiChildren then
-                -- Collect only active (shown) children to avoid showing inactive eclipses
-                -- and to avoid tainted Icon textures from inactive CDM children.
-                -- Use :IsShown() instead of .isActive to avoid WoW taint on secure properties.
-                local activeCount = 0
-                local mc1, mc2, mc3, mc4
-                for mi = 1, #multiChildren do
-                    local mc = multiChildren[mi]
-                    if mc:IsShown() then
-                        activeCount = activeCount + 1
-                        if     activeCount == 1 then mc1 = mc
-                        elseif activeCount == 2 then mc2 = mc
-                        elseif activeCount == 3 then mc3 = mc
-                        else                         mc4 = mc end
-                    end
-                end
-                if activeCount > 0 then
-                    hasCompanions = true
-                    _activeMultiScratch[bi] = mc1
-                    local extras2 = { mc2, mc3, mc4 }
-                    for ci = 1, activeCount - 1 do
-                        combinedN = combinedN + 1
-                        combined[combinedN] = sid
-                        _activeMultiScratch[combinedN] = extras2[ci]
-                    end
-                end
-            end
-        end
-    end
-    local companionChild = hasCompanions and _activeMultiScratch or nil
+    hasCompanions, combinedN = ECache.RebuildMultiScratch(isBuffBarForOverride, combined, combinedN)
+    local companionChild = ECache.GetCachedCompanionChild(hasCompanions)
     local extras = barData.extraSpells
     if extras then
         for _, sid in ipairs(extras) do

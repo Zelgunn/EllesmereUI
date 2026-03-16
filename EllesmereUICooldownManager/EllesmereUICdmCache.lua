@@ -367,7 +367,7 @@ local function CacheTickBlizzardCDChild(spellID, blizzardCDChild)
 end
 cache.CacheTickBlizzardCDChild = CacheTickBlizzardCDChild
 
---
+-- endregion
 
 -- region _tickBlizzMultiChild
 
@@ -397,7 +397,7 @@ cache.IsSpellCachedInTickBlizzardMultiChild = IsSpellCachedInTickBlizzardMultiCh
 ---   for `spellID`. 
 --- If the `spellID` is already present, this function does nothing.
 --- @param spellID number           The spell ID to override
---- @param blizzardChildren Frame[] The blizzard CD child for spellID
+--- @param blizzardChildren Frame[] The blizzard CD children list for spellID
 -------------------------------------------------------------------------------
 local function CacheTickBlizzardMultiChild(spellID, blizzardChildren)
     if IsSpellCachedInTickBlizzardMultiChild(spellID) then return end
@@ -437,6 +437,92 @@ local function GetBlizzardBuffChild(spellID, resolvedID, isBuffBar, assignedChil
         or nil
 end
 cache.GetBlizzardBuffChild = GetBlizzardBuffChild
+
+-- endregion
+
+-- region _activeMultiScratch
+
+-------------------------------------------------------------------------------
+--- Get the blizzard child at the given `index` from cache `_activeMultiScratch`.
+--- @param index number               The spell ID to query
+--- @return Frame|nil blizzardChild
+-------------------------------------------------------------------------------
+local function GetTickBlizzardMultiScratch(index)
+    return cache._activeMultiScratch[index]
+end
+cache.GetTickBlizzardMultiScratch = GetTickBlizzardMultiScratch
+
+-------------------------------------------------------------------------------
+--- Stores in the `_activeMultiScratch` cache the `blizzardChild` 
+---   at the given `index`. 
+--- @param index number           The spell ID to override
+--- @param blizzardChild Frame    The blizzard CD child for spellID
+-------------------------------------------------------------------------------
+local function CacheTickBlizzardMultiScratch(index, blizzardChild)
+    cache._activeMultiScratch[index] = blizzardChild
+end
+cache.CacheTickBlizzardMultiScratch = CacheTickBlizzardMultiScratch
+
+-------------------------------------------------------------------------------
+--- Wipes the `_activeMultiScratch`, then rebuilds it if current bar is a buff bar. 
+--- Updates the `combinedCount` and returns if there are multiple active children.
+--- 
+--- @param isBuffBar boolean        true if current bar is a buff bar.
+--- @param combined table           the combined spell list (tracked + extras)
+--- @param combinedCount number     the original tracked spell count
+--- @return boolean hasCompanions, number combinedCount
+-------------------------------------------------------------------------------
+local function RebuildMultiScratch(isBuffBar, combined, combinedCount)
+    wipe(cache._activeMultiScratch)
+    if not isBuffBar then return false, combinedCount end
+
+    local hasCompanions = false
+    local baseCount = combinedCount
+    for bi = 1, baseCount do
+        local sid = combined[bi]
+        local multiChildren = GetTickBlizzardMultiChild(sid)
+        if multiChildren then
+            -- Collect only active (shown) children to avoid showing inactive eclipses
+            -- and to avoid tainted Icon textures from inactive CDM children.
+            -- Use :IsShown() instead of .isActive to avoid WoW taint on secure properties.
+            local activeCount = 0
+            local mc1, mc2, mc3, mc4
+            for mi = 1, #multiChildren do
+                local mc = multiChildren[mi]
+                if mc:IsShown() then
+                    activeCount = activeCount + 1
+                    if     activeCount == 1 then mc1 = mc
+                    elseif activeCount == 2 then mc2 = mc
+                    elseif activeCount == 3 then mc3 = mc
+                    else                         mc4 = mc end
+                end
+            end
+            if activeCount > 0 then
+                hasCompanions = true
+                CacheTickBlizzardMultiScratch(bi, mc1)
+                local extras2 = { mc2, mc3, mc4 }
+                for ci = 1, activeCount - 1 do
+                    combinedCount = combinedCount + 1
+                    combined[combinedCount] = sid
+                    CacheTickBlizzardMultiScratch(combinedCount, extras2[ci])
+                end
+            end
+        end
+    end
+    return hasCompanions, combinedCount
+end
+cache.RebuildMultiScratch = RebuildMultiScratch
+
+-- todo: check if hasCompanions can be replaced by a check on the size of _activeMultiScratch
+-------------------------------------------------------------------------------
+--- Returns the `_activeMultiScratch` cache if `hasCompanions` is true, nil otherwise
+--- @param hasCompanions boolean  true if the icon's child has companions
+--- @return table|nil _activeMultiScratch
+-------------------------------------------------------------------------------
+local function GetCachedCompanionChild(hasCompanions)
+    return hasCompanions and cache._activeMultiScratch or nil
+end
+cache.GetCachedCompanionChild = GetCachedCompanionChild
 
 -- endregion
 
