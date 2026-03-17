@@ -82,6 +82,7 @@ local CHANNEL_TICK_DATA = {
     [198013]  = { tickInterval = 0.2 },                             -- Eye Beam (Havoc DH) — haste extends duration
     [473728]  = { tickInterval = 0.2 },                             -- Void Ray (Devourer DH) — haste extends duration
     [212084]  = { ticks = 10 },                                    -- Fel Devastation (Vengeance DH)
+    [198590]  = { ticks = 5 },                                     -- Drain Soul (Affliction Warlock)
 }
 
 -------------------------------------------------------------------------------

@@ -6257,11 +6257,18 @@ do
             statsFrame:SetSize(160, 60)
             statsFrame:SetFrameStrata("LOW")
             statsText = statsFrame:CreateFontString(nil, "OVERLAY")
-            local font = EllesmereUI.ResolveFontName(EllesmereUI.GetFontsDB().global)
-            statsText:SetFont(font, 12, EllesmereUI.GetFontOutlineFlag())
-            if EllesmereUI.GetFontUseShadow() then statsText:SetShadowOffset(1, -1) else statsText:SetShadowOffset(0, 0) end
             statsText:SetPoint("TOPLEFT")
             statsText:SetJustifyH("LEFT")
+        end
+        -- Always update font, outline and shadow in case global options changed
+        if statsText then
+            local font = EllesmereUI.ResolveFontName(EllesmereUI.GetFontsDB().global)
+            statsText:SetFont(font, 12, EllesmereUI.GetFontOutlineFlag())
+            if EllesmereUI.GetFontUseShadow() then
+                statsText:SetShadowOffset(1, -1)
+            else
+                statsText:SetShadowOffset(0, 0)
+            end
         end
         -- Apply saved position and scale
         local pos = EllesmereUIDB and EllesmereUIDB.secondaryStatsPos
