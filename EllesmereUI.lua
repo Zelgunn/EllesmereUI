@@ -4814,6 +4814,9 @@ local function PlaySearchHighlight(hl, targetFrame)
     end)
 end
 
+EllesmereUI.PlaySearchHighlight = PlaySearchHighlight
+EllesmereUI.GetSearchHighlight = GetSearchHighlight
+
 -- Collect ALL direct children of a wrapper sorted by original Y position (top to bottom).
 -- Groups them into sections: { header=frame, members={frame,...} }
 -- Every child belongs to the most recent section header above it.
@@ -4869,6 +4872,58 @@ local function CollectAllChildren(wrapper)
         end
     end
     return sections, orphans
+end
+
+function EllesmereUI:NavigateToElementSettings(moduleName, pageName, sectionName, preSelectFn, highlightText)
+    self:Show()
+    self:SelectModule(moduleName)
+    self:SelectPage(pageName)
+
+    -- Switch dropdown AFTER the page is loaded, then force a full rebuild.
+    -- This mirrors exactly what the dropdown's own onChange handler does.
+    if preSelectFn then
+        preSelectFn()
+        self:InvalidateContentHeaderCache()
+        local config = modules[moduleName]
+        if config and config.getHeaderBuilder then
+            local hb = config.getHeaderBuilder(pageName)
+            if hb then self:SetContentHeader(hb) end
+        end
+        self:RefreshPage(true)
+    end
+
+    C_Timer.After(0.05, function()
+        local cacheKey = moduleName .. "::" .. pageName
+        local cached = _pageCache[cacheKey]
+        if not cached or not cached.wrapper then return end
+
+        local sections = CollectAllChildren(cached.wrapper)
+        for _, sec in ipairs(sections) do
+            if sec.header._sectionName == sectionName then
+                -- Find the specific row to highlight and scroll to
+                local target = sec.header
+                if highlightText then
+                    for _, m in ipairs(sec.members) do
+                        if m._labelText and m._labelText:find(highlightText, 1, true) then
+                            target = m
+                            break
+                        end
+                    end
+                end
+
+                local a = target._origAnchor
+                if a then
+                    local scrollPos = math.abs(a[5]) - 40
+                    EllesmereUI.SmoothScrollTo(scrollPos)
+                    C_Timer.After(0.15, function()
+                        local hl = GetSearchHighlight()
+                        PlaySearchHighlight(hl, target)
+                    end)
+                end
+                return
+            end
+        end
+    end)
 end
 
 -- Get a searchable label for any child frame (tagged or not)

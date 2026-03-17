@@ -199,6 +199,70 @@ local _overlayFadeFrame         -- tiny OnUpdate driver for select-element dimme
 local SELECT_ELEMENT_ALPHA = 0.50  -- overlay alpha during select-element pick mode
 local SELECT_ELEMENT_FADE  = 0.50  -- seconds for the fade transition
 
+-- Maps barKey → settings location for "Element Options" navigation.
+-- module = folder name used by RegisterModule
+-- page   = page tab name (PAGE_* constant value)
+-- sectionName = exact string passed to SectionHeader()
+-- preSelectFn = optional function to set the dropdown before page build
+-- Stored on EllesmereUI to avoid adding an upvalue to CreateMover (Lua 5.1 limit: 60).
+local function SelectActionBar(key)
+    return function()
+        local EAB = EllesmereUI.Lite.GetAddon("EllesmereUIActionBars", true)
+        if EAB and EAB.db then
+            EAB.db.profile.selectedBar = key
+        end
+    end
+end
+local function SelectUnitFrame(unit)
+    return function()
+        -- Direct setter (if init already ran) + pending flag (consumed at page build)
+        if EllesmereUI._setUnitFrameUnit then EllesmereUI._setUnitFrameUnit(unit) end
+        EllesmereUI._pendingUnitSelect = unit
+    end
+end
+EllesmereUI._ELEMENT_SETTINGS_MAP = {
+    -- Unit Frames (all share "Frame Display" page; dropdown pre-selected to correct unit)
+    ["player"]       = { module = "EllesmereUIUnitFrames",       page = "Frame Display",                sectionName = "HEALTH BAR",       preSelectFn = SelectUnitFrame("player"),       highlightText = "Bar Height" },
+    ["target"]       = { module = "EllesmereUIUnitFrames",       page = "Frame Display",                sectionName = "HEALTH BAR",       preSelectFn = SelectUnitFrame("target"),       highlightText = "Bar Height" },
+    ["focus"]        = { module = "EllesmereUIUnitFrames",       page = "Frame Display",                sectionName = "HEALTH BAR",       preSelectFn = SelectUnitFrame("focus"),        highlightText = "Bar Height" },
+    ["pet"]          = { module = "EllesmereUIUnitFrames",       page = "Frame Display",                sectionName = "HEALTH BAR",       preSelectFn = SelectUnitFrame("pet"),          highlightText = "Bar Height" },
+    ["targettarget"] = { module = "EllesmereUIUnitFrames",       page = "Frame Display",                sectionName = "HEALTH BAR",       preSelectFn = SelectUnitFrame("targettarget"), highlightText = "Bar Height" },
+    ["focustarget"]  = { module = "EllesmereUIUnitFrames",       page = "Frame Display",                sectionName = "HEALTH BAR",       preSelectFn = SelectUnitFrame("focustarget"),  highlightText = "Bar Height" },
+    ["boss"]         = { module = "EllesmereUIUnitFrames",       page = "Frame Display",                sectionName = "HEALTH BAR",       preSelectFn = SelectUnitFrame("boss"),         highlightText = "Bar Height" },
+    ["classPower"]   = { module = "EllesmereUIUnitFrames",       page = "Frame Display",                sectionName = "CLASS RESOURCE",   preSelectFn = SelectUnitFrame("player"),       highlightText = "Enable Class Resource" },
+
+    -- Resource Bars (no dropdown — each bar has its own section)
+    ["ERB_Health"]        = { module = "EllesmereUIResourceBars",       page = "Class, Power and Health Bars", sectionName = "HEALTH BAR",           highlightText = "Bar Height" },
+    ["ERB_Power"]         = { module = "EllesmereUIResourceBars",       page = "Class, Power and Health Bars", sectionName = "POWER BAR",            highlightText = "Bar Height" },
+    ["ERB_ClassResource"] = { module = "EllesmereUIResourceBars",       page = "Class, Power and Health Bars", sectionName = "CLASS RESOURCE BAR",   highlightText = "Bar Height" },
+    ["ERB_CastBar"]       = { module = "EllesmereUIResourceBars",       page = "Cast Bar",                     sectionName = "BAR DISPLAY",          highlightText = "Bar Height" },
+
+    -- Action Bars (all share "Bar Display" page; dropdown pre-selected to correct bar)
+    ["MainBar"]   = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("MainBar"),   highlightText = "Icon Size" },
+    ["Bar2"]      = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("Bar2"),      highlightText = "Icon Size" },
+    ["Bar3"]      = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("Bar3"),      highlightText = "Icon Size" },
+    ["Bar4"]      = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("Bar4"),      highlightText = "Icon Size" },
+    ["Bar5"]      = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("Bar5"),      highlightText = "Icon Size" },
+    ["Bar6"]      = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("Bar6"),      highlightText = "Icon Size" },
+    ["Bar7"]      = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("Bar7"),      highlightText = "Icon Size" },
+    ["Bar8"]      = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("Bar8"),      highlightText = "Icon Size" },
+    ["StanceBar"] = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("StanceBar"), highlightText = "Icon Size" },
+    ["PetBar"]    = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("PetBar"),    highlightText = "Icon Size" },
+    ["XPBar"]     = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("XPBar"),     highlightText = "Icon Size" },
+    ["RepBar"]    = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "LAYOUT",  preSelectFn = SelectActionBar("RepBar"),    highlightText = "Icon Size" },
+
+    -- Action Bars — visibility-only (dropdown pre-selected, scroll to top)
+    ["MicroBar"] = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "GENERAL", preSelectFn = SelectActionBar("MicroBagBars") },
+    ["BagBar"]   = { module = "EllesmereUIActionBars",          page = "Bar Display",                  sectionName = "GENERAL", preSelectFn = SelectActionBar("MicroBagBars") },
+
+    -- Aura Buff Reminders
+    ["EABR_Reminders"] = { module = "EllesmereUIAuraBuffReminders", page = "Auras, Buffs & Consumables", sectionName = "DISPLAY" },
+
+    -- General
+    ["EUI_FPS"]            = { module = "_EUIGlobal", page = "General", sectionName = "EXTRAS", highlightText = "Show FPS Counter" },
+    ["EUI_SecondaryStats"] = { module = "_EUIGlobal", page = "General", sectionName = "EXTRAS", highlightText = "Secondary Stat Display" },
+}
+
 -- Width Match / Height Match / Anchor To pick modes
 -- Only one pick mode can be active at a time. The active picker mover is stored here.
 local pickMode = nil           -- nil, "widthMatch", "heightMatch", "anchorTo"
@@ -3214,9 +3278,22 @@ local function CreateMover(barKey)
                 SelectMover(self)
             end
         elseif button == "RightButton" then
-            -- Right-click: open cog settings menu (same as cogwheel)
-            SelectMover(self)
-            if self._openCogMenu then self._openCogMenu() end
+            if selectElementPicker then return end
+            local settingsMapping = EllesmereUI._ELEMENT_SETTINGS_MAP[barKey]
+            if settingsMapping then
+                ns.RequestClose(true, function()
+                    EllesmereUI:NavigateToElementSettings(
+                        settingsMapping.module,
+                        settingsMapping.page,
+                        settingsMapping.sectionName,
+                        settingsMapping.preSelectFn,
+                        settingsMapping.highlightText
+                    )
+                end)
+            else
+                SelectMover(self)
+                if self._openCogMenu then self._openCogMenu() end
+            end
         end
     end)
     mover:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -3851,6 +3928,57 @@ local function CreateMover(barKey)
             sizeDiv:SetColorTexture(1, 1, 1, 0.10)
             sizeDiv:SetPoint("TOPLEFT", cogMenu, "TOPLEFT", 1, yOff - 4)
             sizeDiv:SetPoint("TOPRIGHT", cogMenu, "TOPRIGHT", -1, yOff - 4)
+            yOff = yOff - 9
+        end
+
+        -- "Element Options" — navigate to this element's settings page
+        local settingsMapping = EllesmereUI._ELEMENT_SETTINGS_MAP[barKey]
+        if settingsMapping then
+            local optItem = CreateFrame("Button", nil, cogMenu)
+            optItem:SetHeight(ITEM_H)
+            optItem:SetPoint("TOPLEFT", cogMenu, "TOPLEFT", 1, yOff)
+            optItem:SetPoint("TOPRIGHT", cogMenu, "TOPRIGHT", -1, yOff)
+            optItem:SetFrameLevel(cogMenu:GetFrameLevel() + 2)
+            optItem:RegisterForClicks("AnyUp")
+            local optHl = optItem:CreateTexture(nil, "ARTWORK")
+            optHl:SetAllPoints()
+            optHl:SetColorTexture(1, 1, 1, 0)
+            local optLbl = optItem:CreateFontString(nil, "OVERLAY")
+            optLbl:SetFont(FONT_PATH, 11, "")
+            optLbl:SetShadowOffset(1, -1)
+            optLbl:SetShadowColor(0, 0, 0, 0.8)
+            optLbl:SetTextColor(0.75, 0.75, 0.75, 0.9)
+            optLbl:SetJustifyH("LEFT")
+            optLbl:SetPoint("LEFT", optItem, "LEFT", 10, 0)
+            optLbl:SetText("Element Options")
+            optItem:SetScript("OnEnter", function()
+                optHl:SetColorTexture(1, 1, 1, 0.08)
+                optLbl:SetTextColor(1, 1, 1, 1)
+            end)
+            optItem:SetScript("OnLeave", function()
+                optHl:SetColorTexture(1, 1, 1, 0)
+                optLbl:SetTextColor(0.75, 0.75, 0.75, 0.9)
+            end)
+            optItem:SetScript("OnClick", function()
+                CloseCogMenu()
+                ns.RequestClose(true, function()
+                    EllesmereUI:NavigateToElementSettings(
+                        settingsMapping.module,
+                        settingsMapping.page,
+                        settingsMapping.sectionName,
+                        settingsMapping.preSelectFn,
+                        settingsMapping.highlightText
+                    )
+                end)
+            end)
+            yOff = yOff - ITEM_H
+
+            -- Divider after Element Options
+            local optDiv = cogMenu:CreateTexture(nil, "ARTWORK")
+            optDiv:SetHeight(1)
+            optDiv:SetColorTexture(1, 1, 1, 0.10)
+            optDiv:SetPoint("TOPLEFT", cogMenu, "TOPLEFT", 1, yOff - 4)
+            optDiv:SetPoint("TOPRIGHT", cogMenu, "TOPRIGHT", -1, yOff - 4)
             yOff = yOff - 9
         end
 
