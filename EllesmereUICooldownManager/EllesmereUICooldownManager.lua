@@ -213,27 +213,24 @@ local function RebuildSpellToCooldownID()
 end
 
 -- Keybind cache: built once out-of-combat, looked up per tick
-local _cdmKeybindCache       = ECache._cdmKeybind   -- [spellID] -> formatted key string
 local _keybindRebuildPending = false
-local _keybindCacheReady     = false  -- true after first successful build
 
 -- Combat state tracked via events (InCombatLockdown() can lag behind PLAYER_REGEN_DISABLED)
 local _inCombat = false
 
 -------------------------------------------------------------------------------
---  Consolidated cooldown/desat/charge-text helper (DurationObject approach)
---  Called from all update functions to avoid duplicating this logic.
---
---  Parameters:
---    icon        our ECME icon frame (has _cooldown, _tex, _chargeText, etc.)
---    spellID     resolved spell ID
---    desatOnCD   boolean, whether to desaturate when on cooldown
---    showCharges  boolean, whether to show charge count text
---    swAlpha     swipe alpha (number)
---    skipCD      if true, skip cooldown application (e.g. aura already handled)
---    blizzChild  optional Blizzard CDM child frame (used for totem charge guard)
---
---  Returns: durObj (DurationObject|nil)
+---  Consolidated cooldown/desat/charge-text helper (DurationObject approach)
+---  Called from all update functions to avoid duplicating this logic.
+---
+---  @param icon table              our ECME icon frame (has _cooldown, _tex, _chargeText, etc.)
+---  @param spellID number          resolved spell ID
+---  @param desatOnCD boolean       whether to desaturate when on cooldown
+---  @param showCharges boolean     whether to show charge count text
+---  @param swAlpha number          swipe alpha
+---  @param skipCD boolean          if true, skip cooldown application (e.g. aura already handled)
+---  @param blizzChild table|nil    optional Blizzard CDM child frame (used for totem charge guard)
+---
+---  @return DurationObject|nil durObj
 -------------------------------------------------------------------------------
 local function ApplySpellCooldown(icon, spellID, desatOnCD, showCharges, swAlpha, skipCD, blizzChild, isBuffBar)
     -- Ensure charge cache is populated (cheap: skips if already cached)
@@ -890,65 +887,7 @@ local MAIN_BAR_KEYS = { cooldowns = true, utility = true, buffs = true }
 -- Trinket/racial/potion and buff bars are excluded.
 local TALENT_AWARE_BAR_TYPES = { cooldowns = true, utility = true }
 
--------------------------------------------------------------------------------
---  Resolve the best spellID from a CooldownViewerCooldownInfo struct.
---  Priority: overrideSpellID > first linkedSpellID > spellID.
---  The base spellID field can be a spec aura (e.g. 137007 "Unholy Death
---  Knight") while the real tracked spell lives in linkedSpellIDs.
--------------------------------------------------------------------------------
-local function ResolveInfoSpellID(info)
-    if not info then return nil end
-    local sid
-    if info.overrideSpellID and info.overrideSpellID > 0 then
-        sid = info.overrideSpellID
-    else
-        local linked = info.linkedSpellIDs
-        if linked then
-            for i = 1, #linked do
-                if linked[i] and linked[i] > 0 then sid = linked[i]; break end
-            end
-        end
-        if not sid and info.spellID and info.spellID > 0 then sid = info.spellID end
-    end
-    return sid and (ns.BUFF_SPELLID_CORRECTIONS[sid] or sid) or nil
-end
 
--------------------------------------------------------------------------------
---  Resolve the best spellID from a Blizzard CDM viewer child frame.
---  For buff bars the cooldownInfo struct often contains the wrong spellID
---  (spec aura instead of the actual tracked buff). The child frame itself
---  knows the correct spell via GetAuraSpellID / GetSpellID at runtime.
---  Falls back to ResolveInfoSpellID when the frame methods aren't available.
---  ONLY used in out-of-combat paths (snapshot, dropdown, reconcile).
--------------------------------------------------------------------------------
-local function ResolveChildSpellID(child)
-    if not child then return nil end
-    -- Prefer the aura spellID (most accurate for buff viewers).
-    -- Wrap comparisons in pcall: these frame methods can return secret
-    -- number values in combat which cannot be compared with > 0.
-    if child.GetAuraSpellID then
-        local ok, auraID = pcall(child.GetAuraSpellID, child)
-        if ok and auraID then
-            local cmpOk, gt = pcall(function() return auraID > 0 end)
-            if cmpOk and gt then return ns.BUFF_SPELLID_CORRECTIONS[auraID] or auraID end
-        end
-    end
-    -- Then try the frame's own spellID
-    if child.GetSpellID then
-        local ok, fid = pcall(child.GetSpellID, child)
-        if ok and fid then
-            local cmpOk, gt = pcall(function() return fid > 0 end)
-            if cmpOk and gt then return ns.BUFF_SPELLID_CORRECTIONS[fid] or fid end
-        end
-    end
-    -- Fall back to cooldownInfo struct
-    local cdID = child.cooldownID or (child.cooldownInfo and child.cooldownInfo.cooldownID)
-    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-        return ResolveInfoSpellID(info)
-    end
-    return nil
-end
 
 -------------------------------------------------------------------------------
 --  Persistent cdID -> correct spellID map, built out of combat by
@@ -972,11 +911,11 @@ RebuildCdIDToCorrectSID = function()
                     local cdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
                     if cdID and not _cdIDToCorrectSID[cdID] then
                         -- Only try if we don't already have a mapping for this cdID
-                        local correctSid = ResolveChildSpellID(ch)
+                        local correctSid = EUtils.ResolveChildSpellID(ch)
                         if correctSid and correctSid > 0 then
                             local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
                             if info then
-                                local infoSid = ResolveInfoSpellID(info)
+                                local infoSid = EUtils.ResolveInfoSpellID(info)
                                 if infoSid and correctSid ~= infoSid then
                                     _cdIDToCorrectSID[cdID] = correctSid
                                 end
@@ -1030,7 +969,7 @@ local function BuildKnownSpellIDSet()
             for _, cdID in ipairs(knownIDs) do
                 local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
                 if info then
-                    local primarySid = ResolveInfoSpellID(info)
+                    local primarySid = EUtils.ResolveInfoSpellID(info)
                     local skip = filterPassives and primarySid and IsTrulyPassive(primarySid)
                     if not skip then
                         -- Store ALL related spell IDs so reconcile can match
@@ -1658,7 +1597,7 @@ ResolveBlizzChildSpellID = function(blizzChild)
     if cdID then
         local info = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo
             and C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-        if info then return ResolveInfoSpellID(info) end
+        if info then return EUtils.ResolveInfoSpellID(info) end
     end
     return nil
 end
@@ -2612,14 +2551,19 @@ LayoutCDMBar = function(barKey)
 end
 
 -------------------------------------------------------------------------------
---  Create a single icon frame for a CDM bar
+--- Create a single icon frame for a CDM bar.
+---   If the frame for `barkey` or its associated bar data is missing, 
+---   this function does nothing (and returns nil).
+--- @param barKey number    Index of the bar
+--- @param index number     Index of the icon on the bar
+--- @return Frame|nil icon
 -------------------------------------------------------------------------------
 local function CreateCDMIcon(barKey, index)
     local frame = cdmBarFrames[barKey]
-    if not frame then return end
+    if not frame then return nil end
 
     local barData = barDataByKey[barKey]
-    if not barData then return end
+    if not barData then return nil end
 
     local iconSize = barData.iconSize or 36
     local borderSize = barData.borderSize or 1
@@ -3031,8 +2975,10 @@ local function UpdateCustomBarIcons(barKey)
     while #icons < #spells do
         local newIcon = CreateCDMIcon(barKey, #icons + 1)
         icons[#icons + 1] = newIcon
-        if barData.showTooltip then
-            newIcon:SetScript("OnUpdate", _cdmTooltipOnUpdate)
+        if newIcon ~= nil then
+            if barData.showTooltip then
+                newIcon:SetScript("OnUpdate", _cdmTooltipOnUpdate)
+            end
         end
     end
 
@@ -3332,6 +3278,7 @@ UpdateCDMBarIcons = function(barKey)
             -- Store mapping so proc glow hooks can find our icon from the Blizzard child
             ourIcon._blizzChild = blizzIcon
 
+            local spellID = blizzIcon._ecmeBaseSpellID
             -- Resolve spell ID from Blizzard CDM child -- use cached value
             -- from the per-tick viewer scan to avoid a redundant API call.
             local resolvedSid = blizzIcon._ecmeResolvedSid
@@ -3344,7 +3291,7 @@ UpdateCDMBarIcons = function(barKey)
                     local cdViewerInfo = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo
                         and C_CooldownViewer.GetCooldownViewerCooldownInfo(blizzCdID)
                     if cdViewerInfo then
-                        resolvedSid = ResolveInfoSpellID(cdViewerInfo)
+                        resolvedSid = EUtils.ResolveInfoSpellID(cdViewerInfo)
                     end
                 end
             end
@@ -3399,7 +3346,7 @@ UpdateCDMBarIcons = function(barKey)
                 -- buff-viewer is actively tracking this spell.
                 local chargeShowsAura = not isChargeSid or isBuffBar
                 if isChargeSid and not isBuffBar then
-                    local bufCh = _tickBlizzBuffChildCache[resolvedSid] or (spellID and _tickBlizzBuffChildCache[spellID])
+                    local bufCh = ECache.GetTickBlizzardBuffChild(resolvedSid) or (spellID and ECache.GetTickBlizzardBuffChild(spellID))
                     if IsBufChildCooldownActive(bufCh) then
                         chargeShowsAura = true
                     end
@@ -3727,7 +3674,7 @@ local function SnapshotBlizzardCDM(barKey, barData)
 
     local tracked = {}
     for _, child in ipairs(blizzIcons) do
-        local sid = ResolveChildSpellID(child)
+        local sid = EUtils.ResolveChildSpellID(child)
         if sid and sid > 0 then
             local skip = filterPassives and IsTrulyPassive(sid)
             if not skip then
@@ -4079,7 +4026,7 @@ local function UpdateAllCDMBars(dt)
                                 if info then
                                     baseSpellID = info.spellID
                                     cachedOverride = info.overrideSpellID
-                                    resolvedSid = ResolveInfoSpellID(info)
+                                    resolvedSid = EUtils.ResolveInfoSpellID(info)
                                     ch._ecmeBaseSpellID = baseSpellID
                                     ch._ecmeOverrideSid = cachedOverride
                                     ch._ecmeResolvedSid = resolvedSid
@@ -4490,88 +4437,17 @@ end
 --  Deferred if called during combat; fires on PLAYER_REGEN_ENABLED instead.
 -------------------------------------------------------------------------------
 
-
 -------------------------------------------------------------------------------
---  Keybind cache for CDM icons
---  Reads HotKey text directly from action button frames -- the same source
---  the action bar itself uses, so it's always correct regardless of bar addon.
---  Deferred if called during combat; fires on PLAYER_REGEN_ENABLED instead.
+--- Apply the current cache to all visible CDM icon keybind texts
+--- 
 -------------------------------------------------------------------------------
-
--- Action bar slot ΓåÆ binding name map. Non-bar-1 entries listed first so that
--- if a spell appears on multiple bars, the more specific bar wins over bar 1.
-local _barBindingDefs = {
-    { prefix = "MULTIACTIONBAR1BUTTON", startSlot = 61  },  -- bar 2 bottom left
-    { prefix = "MULTIACTIONBAR2BUTTON", startSlot = 49  },  -- bar 3 bottom right
-    { prefix = "MULTIACTIONBAR3BUTTON", startSlot = 25  },  -- bar 4 right
-    { prefix = "MULTIACTIONBAR4BUTTON", startSlot = 37  },  -- bar 5 left
-    { prefix = "MULTIACTIONBAR5BUTTON", startSlot = 145 },  -- bar 6
-    { prefix = "MULTIACTIONBAR6BUTTON", startSlot = 157 },  -- bar 7
-    { prefix = "MULTIACTIONBAR7BUTTON", startSlot = 169 },  -- bar 8
-    { prefix = "ACTIONBUTTON",          startSlot = 1   },  -- bar 1 (last = lowest priority)
-}
-
-local function FormatKeybindKey(key)
-    if not key or key == "" then return nil end
-    key = key:gsub("SHIFT%-", "S")
-    key = key:gsub("CTRL%-",  "C")
-    key = key:gsub("ALT%-",   "A")
-    key = key:gsub("Mouse Button ", "M")
-    key = key:gsub("MOUSEWHEELUP",   "MwU")
-    key = key:gsub("MOUSEWHEELDOWN", "MwD")
-    key = key:gsub("NUMPADDECIMAL",  "N.")
-    key = key:gsub("NUMPADPLUS",     "N+")
-    key = key:gsub("NUMPADMINUS",    "N-")
-    key = key:gsub("NUMPADMULTIPLY", "N*")
-    key = key:gsub("NUMPADDIVIDE",   "N/")
-    key = key:gsub("NUMPAD",         "N")
-    key = key:gsub("BUTTON",         "M")
-    return key ~= "" and key or nil
-end
-
-local function RebuildKeybindCache()
-    wipe(_cdmKeybindCache)
-    for _, def in ipairs(_barBindingDefs) do
-        for i = 1, 12 do
-            local bindName = def.prefix .. i
-            local key = GetBindingKey(bindName)
-            if key then
-                local slot = def.startSlot + i - 1
-                local slotType, id = GetActionInfo(slot)
-                local spellID
-                if slotType == "spell" then
-                    spellID = id
-                elseif slotType == "macro" and id then
-                    -- GetMacroSpell works for macro-index based entries.
-                    -- For direct spell macros, GetActionInfo returns the spell ID as id.
-                    local macroSpell = GetMacroSpell(id)
-                    spellID = macroSpell or (id > 0 and id) or nil
-                end
-                if spellID then
-                    local formatted = FormatKeybindKey(key)
-                    if not _cdmKeybindCache[spellID] then
-                        _cdmKeybindCache[spellID] = formatted
-                    end
-                    local name = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
-                    if name and not _cdmKeybindCache[name] then
-                        _cdmKeybindCache[name] = formatted
-                    end
-                end
-            end
-        end
-    end
-end
-
--- Apply the current cache to all visible CDM icon keybind texts
 local function ApplyCachedKeybinds()
     for barKey, icons in pairs(cdmBarIcons) do
         local bd = barDataByKey[barKey]
         for _, icon in ipairs(icons) do
             if icon._keybindText then
                 if bd and bd.showKeybind and icon._spellID then
-                    local key = _cdmKeybindCache[icon._spellID]
-                    local name = C_Spell.GetSpellName and C_Spell.GetSpellName(icon._spellID)
-                    if not key and name then key = _cdmKeybindCache[name] end
+                    local key = ECache.GetCDMKeybindNameFallback(icon._spellID)
                     if key then
                         icon._keybindText:SetText(key)
                         icon._keybindText:Show()
@@ -4593,15 +4469,14 @@ local function UpdateCDMKeybinds()
         return
     end
     _keybindRebuildPending = false
-    RebuildKeybindCache()
-    _keybindCacheReady = true
+    ECache.RebuildKeybindCache()
     -- Defer apply by one frame so the Blizzard tick has populated icon._spellID
     C_Timer.After(0, ApplyCachedKeybinds)
 end
+
 ns.UpdateCDMKeybinds = UpdateCDMKeybinds
 -- Expose apply-only for the tick loop (new spellID assigned to an icon mid-session)
 ns.ApplyCachedKeybinds = ApplyCachedKeybinds
-ns.CDMKeybindCache = _cdmKeybindCache
 
 BuildAllCDMBars = function()
     -- Last-resort spec guard: if we're about to build bars with wrong spec, fix it
@@ -4837,7 +4712,7 @@ function ns.GetCDMSpellsForBar(barKey)
         for i = 1, vf:GetNumChildren() do
             local child = select(i, vf:GetChildren())
             if child then
-                local sid = ResolveChildSpellID(child)
+                local sid = EUtils.ResolveChildSpellID(child)
                 if sid and sid > 0 then
                     -- Always add to blizzTracked regardless of passive status.
                     -- If Blizzard has a viewer child for this spell, it is
@@ -4851,7 +4726,7 @@ function ns.GetCDMSpellsForBar(barKey)
                         if C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
                             local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
                             if info then
-                                local infoSid = ResolveInfoSpellID(info)
+                                local infoSid = EUtils.ResolveInfoSpellID(info)
                                 if infoSid and sid ~= infoSid then
                                     _cdIDToCorrectSID[cdID] = sid
                                 end
@@ -4875,14 +4750,8 @@ function ns.GetCDMSpellsForBar(barKey)
     local seenSpellID = {}  -- dedup by spellID across categories
 
     -- Cache category data to avoid double API calls (pre-scan + main loop).
-    local catCache = {}
-    for _, cat in ipairs(cats) do
-        local allIDs  = C_CooldownViewer.GetCooldownViewerCategorySet(cat, true) or {}
-        local knownIDs = C_CooldownViewer.GetCooldownViewerCategorySet(cat, false) or {}
-        local knownSet = {}
-        for _, id in ipairs(knownIDs) do knownSet[id] = true end
-        catCache[#catCache + 1] = { cat = cat, allIDs = allIDs, knownSet = knownSet }
-    end
+    local catCache = ECache._categories
+    ECache.BuildCategoryDataCache(cats)
 
     -- Pre-scan ALL categories before the main loop. Blizzard can issue two cdIDs
     -- for the same spell (one learned, one not) and they can be in different
@@ -4898,7 +4767,7 @@ function ns.GetCDMSpellsForBar(barKey)
                 if s1 and s1 > 0 then spellIDKnown[s1] = true end
                 local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
                 if info then
-                    local s2 = ResolveInfoSpellID(info)
+                    local s2 = EUtils.ResolveInfoSpellID(info)
                     if s2 and s2 > 0 then spellIDKnown[s2] = true end
                     if info.spellID and info.spellID > 0 then spellIDKnown[info.spellID] = true end
                 end
@@ -4923,7 +4792,7 @@ function ns.GetCDMSpellsForBar(barKey)
                 local sid = cdIDToChildSID[cdID]
                 if not sid then
                     cdInfo = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-                    if cdInfo then sid = ResolveInfoSpellID(cdInfo) end
+                    if cdInfo then sid = EUtils.ResolveInfoSpellID(cdInfo) end
                 end
                 sid = sid or 0
                 if sid > 0 and not seenSpellID[sid] then
@@ -6679,7 +6548,7 @@ SlashCmdList.CDMDEBUG = function()
             if ts then
                 for i, cdID in ipairs(ts) do
                     local info = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo and C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-                    local sid = info and ResolveInfoSpellID(info)
+                    local sid = info and EUtils.ResolveInfoSpellID(info)
                     p(i, "cdID="..tostring(cdID), "sid="..tostring(sid), sid and C_Spell.GetSpellName(sid) or "?")
                 end
             end
@@ -6692,7 +6561,7 @@ SlashCmdList.CDMDEBUG = function()
             local c = select(i, f:GetChildren())
             if c and c.Icon then
                 local info = C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo and c.cooldownID and C_CooldownViewer.GetCooldownViewerCooldownInfo(c.cooldownID)
-                local sid = info and ResolveInfoSpellID(info)
+                local sid = info and EUtils.ResolveInfoSpellID(info)
                 p("child"..i, "cdID="..tostring(c.cooldownID), "sid="..tostring(sid), sid and C_Spell.GetSpellName(sid) or "?")
             end
         end
@@ -6726,7 +6595,7 @@ SlashCmdList.CDMSTACKS = function()
                 local resolvedSid
                 if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
                     local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
-                    if info then resolvedSid = ResolveInfoSpellID(info) end
+                    if info then resolvedSid = EUtils.ResolveInfoSpellID(info) end
                 end
 
                 local spellName = resolvedSid and C_Spell.GetSpellName(resolvedSid) or "?"

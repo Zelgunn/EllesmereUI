@@ -4,6 +4,76 @@ ns.ECdmUtils = {}
 local utils = ns.ECdmUtils
 local ECache = ns.ECdmCache
 
+-- region Spell ID resolution
+
+-------------------------------------------------------------------------------
+--- Resolve the best spellID from a CooldownViewerCooldownInfo struct.
+--- Priority: overrideSpellID > first linkedSpellID > spellID.
+--- The base spellID field can be a spec aura (e.g. 137007 "Unholy Death
+--- Knight") while the real tracked spell lives in linkedSpellIDs.
+--- @param info CooldownViewerCooldown The spell info to perform resolution on
+--- @return number|nil resolvedID
+-------------------------------------------------------------------------------
+local function ResolveInfoSpellID(info)
+    if not info then return nil end
+    local sid
+    if info.overrideSpellID and info.overrideSpellID > 0 then
+        sid = info.overrideSpellID
+    else
+        local linked = info.linkedSpellIDs
+        if linked then
+            for i = 1, #linked do
+                if linked[i] and linked[i] > 0 then sid = linked[i]; break end
+            end
+        end
+        if not sid and info.spellID and info.spellID > 0 then sid = info.spellID end
+    end
+    return sid and (ns.BUFF_SPELLID_CORRECTIONS[sid] or sid) or nil
+end
+utils.ResolveInfoSpellID = ResolveInfoSpellID
+
+-------------------------------------------------------------------------------
+--- Resolve the best spellID from a Blizzard CDM viewer child frame.
+--- For buff bars the cooldownInfo struct often contains the wrong spellID
+--- (spec aura instead of the actual tracked buff). The child frame itself
+--- knows the correct spell via GetAuraSpellID / GetSpellID at runtime.
+--- Falls back to ResolveInfoSpellID when the frame methods aren't available.
+--- ONLY used in out-of-combat paths (snapshot, dropdown, reconcile).
+--- @param child table
+--- @return number|nil resolvedID
+-------------------------------------------------------------------------------
+local function ResolveChildSpellID(child)
+    if not child then return nil end
+    -- Prefer the aura spellID (most accurate for buff viewers).
+    -- Wrap comparisons in pcall: these frame methods can return secret
+    -- number values in combat which cannot be compared with > 0.
+    if child.GetAuraSpellID then
+        local ok, auraID = pcall(child.GetAuraSpellID, child)
+        if ok and auraID then
+            local cmpOk, gt = pcall(function() return auraID > 0 end)
+            if cmpOk and gt then return ns.BUFF_SPELLID_CORRECTIONS[auraID] or auraID end
+        end
+    end
+    -- Then try the frame's own spellID
+    if child.GetSpellID then
+        local ok, fid = pcall(child.GetSpellID, child)
+        if ok and fid then
+            local cmpOk, gt = pcall(function() return fid > 0 end)
+            if cmpOk and gt then return ns.BUFF_SPELLID_CORRECTIONS[fid] or fid end
+        end
+    end
+    -- Fall back to cooldownInfo struct
+    local cdID = child.cooldownID or (child.cooldownInfo and child.cooldownInfo.cooldownID)
+    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+        return ResolveInfoSpellID(info)
+    end
+    return nil
+end
+utils.ResolveChildSpellID = ResolveChildSpellID
+
+-- endregion
+
 -- region Spell override
 
 -------------------------------------------------------------------------------
@@ -242,7 +312,34 @@ local function OverrideTextureForProcable(icon, effectiveTexture, blizzardBuffCh
 end
 utils.OverrideTextureForProcable = OverrideTextureForProcable
 
+-------------------------------------------------------------------------------
+--- Get the texture for a "procable" buff. If a proc is active, returns the proc's
+---     texture if one can be found. Caches the proc texture if needed. Otherwise,
+---     returns the base texture given as currentTexture
+--- @param spellID number           The base spell ID before resolution
+--- @param resolvedID number        The spell ID after resolution
+--- @param currentTexture number    The base/current texture to fallback to without proc
+--- @return number updatedTexture, boolean procActive  The proc texture if relevant and if it exists, otherwise currentTexture
+--- 
+-------------------------------------------------------------------------------
+local function GetTextureForProcable(spellID, resolvedID, currentTexture)
+    local procEntry = ns.BUFF_PROC_ICON_OVERRIDES[spellID] or ns.BUFF_PROC_ICON_OVERRIDES[resolvedID]
+    if procEntry then
+        local buffChild = ECache.GetTickBlizzardBuffChild(procEntry.buffID)
+        if ECache.IsBuffChildCooldownActive(buffChild) then
+            local procTexture = ECache.CacheSpellIconTexture(procEntry.replacementSpellID)
+            if procTexture then
+                return procTexture, true
+            end
+        end
+    end
+    return currentTexture, false
+end
+utils.GetTextureForProcable = GetTextureForProcable
+
 -- endregion
+
+-- region Icon Keybind
 
 -------------------------------------------------------------------------------
 --- Sets the icon's keybind text to the resolved/cached keybind.
@@ -280,6 +377,9 @@ local function SetIconKeybind(icon, spellID, resolvedID, showKeybind)
 end
 utils.SetIconKeybind = SetIconKeybind
 
+-- endregion
+
+-- region Aura Cooldown/Duration
 
 -------------------------------------------------------------------------------
 --- Detect active aura state before applying cooldown.
@@ -426,27 +526,38 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
 end
 utils.ApplyAuraCooldownOrDuration = ApplyAuraCooldownOrDuration
 
+-- endregion
+
+-- region Category data
+
 -------------------------------------------------------------------------------
---- Get the texture for a "procable" buff. If a proc is active, returns the proc's
----     texture if one can be found. Caches the proc texture if needed. Otherwise,
----     returns the base texture given as currentTexture
---- @param spellID number           The base spell ID before resolution
---- @param resolvedID number        The spell ID after resolution
---- @param currentTexture number    The base/current texture to fallback to without proc
---- @return number updatedTexture, boolean procActive  The proc texture if relevant and if it exists, otherwise currentTexture
---- 
+--- Pre-scan ALL categories before the main loop. Blizzard can issue two cdIDs
+--- for the same spell (one learned, one not) and they can be in different
+--- categories. Building spellIDKnown per-category would miss cross-category
+--- matches, causing the spell to appear unlearned if the unlearned cdID is in
+--- an earlier category than the learned one. Register every spellID variant
+--- (frame-resolved, override/linked, base) for learned cdIDs.
+--- @param cdIDToChildSID {[number]: number}
+--- @return {[number]: boolean}
 -------------------------------------------------------------------------------
-local function GetTextureForProcable(spellID, resolvedID, currentTexture)
-    local procEntry = ns.BUFF_PROC_ICON_OVERRIDES[spellID] or ns.BUFF_PROC_ICON_OVERRIDES[resolvedID]
-    if procEntry then
-        local buffChild = ECache.GetTickBlizzardBuffChild(procEntry.buffID)
-        if ECache.IsBuffChildCooldownActive(buffChild) then
-            local procTexture = ECache.CacheSpellIconTexture(procEntry.replacementSpellID)
-            if procTexture then
-                return procTexture, true
+local function ScanAllCategories(cdIDToChildSID)
+    local spellIDKnown = {}
+    for _, cd in ipairs(ECache.GetCategoryDataCache()) do
+        for _, cdID in ipairs(cd.allIDs) do
+            if cd.knownSet[cdID] then
+                local s1 = cdIDToChildSID[cdID]
+                if s1 and s1 > 0 then spellIDKnown[s1] = true end
+                local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                if info then
+                    local s2 = ResolveInfoSpellID(info)
+                    if s2 and s2 > 0 then spellIDKnown[s2] = true end
+                    if info.spellID and info.spellID > 0 then spellIDKnown[info.spellID] = true end
+                end
             end
         end
     end
-    return currentTexture, false
+    return spellIDKnown
 end
-utils.GetTextureForProcable = GetTextureForProcable
+utils.ScanAllCategories = ScanAllCategories
+
+-- endregion

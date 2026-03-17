@@ -1310,12 +1310,21 @@ cache.WipeSpellIconCache = WipeSpellIconCache
 
 -- region CDM Keybind
 
---- @type {[number]: string}
-cache._cdmKeybind = {} -- [spellID] -> formatted key string
+-------------------------------------------------------------------------------
+--  Keybind cache for CDM icons
+--  Reads HotKey text directly from action button frames -- the same source
+--  the action bar itself uses, so it's always correct regardless of bar addon.
+--  Deferred if called during combat; fires on PLAYER_REGEN_ENABLED instead.
+-------------------------------------------------------------------------------
+
+--- @type {[number|string]: string}
+cache._cdmKeybind = {} -- [spellID|spellName] -> formatted key string
+cache._keybindCacheReady = false  -- true after successful build
+ns.CDMKeybindCache = cache._cdmKeybind
 
 -------------------------------------------------------------------------------
---- Get the CDM keybind for spellID from the cache `_cdmKeybind`
---- @param spellID number             The spell ID to query
+--- Get the CDM keybind for spellID/spellName from the cache `_cdmKeybind`
+--- @param spellID number|string  The ID or the name of the spell ID to query
 --- @return string|nil cdmKeybind
 -------------------------------------------------------------------------------
 local function GetCDMKeybind(spellID)
@@ -1324,13 +1333,170 @@ end
 cache.GetCDMKeybind = GetCDMKeybind
 
 -------------------------------------------------------------------------------
---- Stores in the `_cdmKeybind` cache the `cdmKeybind` for `spellID`
---- @param spellID number         The spell ID to override
---- @param cdmKeybind string      The blizzard child for spellID
+--- First attempts to get the CDM keybind for spellID from cache `_cdmKeybind`.
+---   If it fails, fallsback to the spell name for spellID using GetSpellName.
+---   Returns the keybind or nil if the spell could not be found in the cache.
+--- @param spellID number  The ID of the spell ID to query
+--- @return string|nil cdmKeybind
+-------------------------------------------------------------------------------
+local function GetCDMKeybindNameFallback(spellID)
+    local cdmKeybind = GetCDMKeybind(spellID)
+    if not cdmKeybind then
+        local spellName = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
+        if spellName then
+            cdmKeybind = GetCDMKeybind(spellName)
+        end
+    end
+    return cdmKeybind
+end
+cache.GetCDMKeybindNameFallback = GetCDMKeybindNameFallback
+
+-------------------------------------------------------------------------------
+--- Stores in the `_cdmKeybind` cache the `cdmKeybind` for spellID/spellName.
+---   Note: if spellID/spellName is already present in cache, this function 
+---   does nothing.
+--- @param spellID number|string  The ID or the name of the spell ID to cache
+--- @param cdmKeybind string|nil  The associated keybind
 -------------------------------------------------------------------------------
 local function CacheCDMKeybind(spellID, cdmKeybind)
-    cache._cdmKeybind[spellID] = cdmKeybind
+    if not cache._cdmKeybind[spellID] then
+        cache._cdmKeybind[spellID] = cdmKeybind
+    end
 end
 cache.CacheCDMKeybind = CacheCDMKeybind
+
+-- Action bar slot ΓåÆ binding name map. Non-bar-1 entries listed first so that
+-- if a spell appears on multiple bars, the more specific bar wins over bar 1.
+--- @type {prefix: string, startSlot: number}
+local _barBindingDefs = {
+    { prefix = "MULTIACTIONBAR1BUTTON", startSlot = 61  },  -- bar 2 bottom left
+    { prefix = "MULTIACTIONBAR2BUTTON", startSlot = 49  },  -- bar 3 bottom right
+    { prefix = "MULTIACTIONBAR3BUTTON", startSlot = 25  },  -- bar 4 right
+    { prefix = "MULTIACTIONBAR4BUTTON", startSlot = 37  },  -- bar 5 left
+    { prefix = "MULTIACTIONBAR5BUTTON", startSlot = 145 },  -- bar 6
+    { prefix = "MULTIACTIONBAR6BUTTON", startSlot = 157 },  -- bar 7
+    { prefix = "MULTIACTIONBAR7BUTTON", startSlot = 169 },  -- bar 8
+    { prefix = "ACTIONBUTTON",          startSlot = 1   },  -- bar 1 (last = lowest priority)
+}
+
+-------------------------------------------------------------------------------
+--- Formats the given `key` (effectively making it shorter if relevant).
+---   Returns nil if the key was nil or an empty string.
+--- @param key string|nil   The keybind to format
+--- @return string|nil key  The formatted keybind
+-------------------------------------------------------------------------------
+local function FormatKeybindKey(key)
+    if not key or key == "" then return nil end
+    key = key:gsub("SHIFT%-", "S")
+    key = key:gsub("CTRL%-",  "C")
+    key = key:gsub("ALT%-",   "A")
+    key = key:gsub("Mouse Button ", "M")
+    key = key:gsub("MOUSEWHEELUP",   "MwU")
+    key = key:gsub("MOUSEWHEELDOWN", "MwD")
+    key = key:gsub("NUMPADDECIMAL",  "N.")
+    key = key:gsub("NUMPADPLUS",     "N+")
+    key = key:gsub("NUMPADMINUS",    "N-")
+    key = key:gsub("NUMPADMULTIPLY", "N*")
+    key = key:gsub("NUMPADDIVIDE",   "N/")
+    key = key:gsub("NUMPAD",         "N")
+    key = key:gsub("BUTTON",         "M")
+    return key ~= "" and key or nil
+end
+
+-------------------------------------------------------------------------------
+--- Wipe the CDM Keybind cache `_cdmKeybind`
+---
+-------------------------------------------------------------------------------
+local function WipeCDMKeybindCache()
+    wipe(cache._cdmKeybind)
+    cache._keybindCacheReady = false
+end
+
+-------------------------------------------------------------------------------
+--- Rebuilds the Keybind cache `_cdmKeybind`. First wipes this cache,
+---   then iterates through `_barBindingDefs` and through the 12 buttons
+---   of each action bar to get their keybinds.
+--- Works with macros.
+--- Sets the `_keybindCacheReady` flag to true when it finishes.
+---
+-------------------------------------------------------------------------------
+local function RebuildKeybindCache()
+    WipeCDMKeybindCache()
+    for _, def in ipairs(_barBindingDefs) do
+        for i = 1, 12 do
+            local bindName = def.prefix .. i
+            local key = GetBindingKey(bindName)
+            if key then
+                local slot = def.startSlot + i - 1
+                local slotType, id = GetActionInfo(slot)
+                local spellID
+                if slotType == "spell" then
+                    spellID = id
+                elseif slotType == "macro" and id then
+                    -- GetMacroSpell works for macro-index based entries.
+                    -- For direct spell macros, GetActionInfo returns the spell ID as id.
+                    local macroSpell = GetMacroSpell(id)
+                    spellID = macroSpell or (id > 0 and id) or nil
+                end
+                if spellID then
+                    local formatted = FormatKeybindKey(key)
+                    CacheCDMKeybind(spellID, formatted)
+                    local name = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
+                    if name then
+                        CacheCDMKeybind(name, formatted)
+                    end
+                end
+            end
+        end
+    end
+    cache._keybindCacheReady = true
+end
+cache.RebuildKeybindCache = RebuildKeybindCache
+
+-- endregion
+
+-- region Category data
+
+-- Cache category data to avoid double API calls (pre-scan + main loop).
+--- @type {[number]: {cat:number, allIDs:number[], knownSet:{[number]:boolean}}}
+cache._categoryData = {}
+
+-------------------------------------------------------------------------------
+--- Returns the category data cache.
+--- @return {[number]: {cat:number, allIDs:number[], knownSet:{[number]:boolean}}} categoryDataCache
+-------------------------------------------------------------------------------
+local function GetCategoryDataCache()
+    return cache._categoryData
+end
+cache.GetCategoryDataCache = GetCategoryDataCache
+
+-------------------------------------------------------------------------------
+--- Wipes the category data cache.
+---
+-------------------------------------------------------------------------------
+local function WipeCategoryDataCache()
+    wipe(cache._categoryData)
+end
+cache.WipeCategoryDataCache = WipeCategoryDataCache
+
+-------------------------------------------------------------------------------
+--- (Re)builds the category data cache. First wipes the cache.
+--- @param categories {[number]: number}
+-------------------------------------------------------------------------------
+local function BuildCategoryDataCache(categories)
+    WipeCategoryDataCache()
+
+    for _, category in ipairs(categories) do
+        local allIDs  = C_CooldownViewer.GetCooldownViewerCategorySet(category, true) or {}
+        local knownIDs = C_CooldownViewer.GetCooldownViewerCategorySet(category, false) or {}
+        local knownSet = {}
+        for _, id in ipairs(knownIDs) do knownSet[id] = true end
+        cache._categoryData[#cache._categoryData + 1] = {cat = category,
+                                                         allIDs = allIDs,
+                                                         knownSet = knownSet}
+    end
+end
+cache.BuildCategoryDataCache = BuildCategoryDataCache
+cache.RebuildCategoryDataCache = BuildCategoryDataCache
 
 -- endregion
