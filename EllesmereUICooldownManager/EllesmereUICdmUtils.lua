@@ -526,6 +526,36 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
 end
 utils.ApplyAuraCooldownOrDuration = ApplyAuraCooldownOrDuration
 
+-------------------------------------------------------------------------------
+--- Updates the icon cooldown swipe direction (reverse for buffs).
+--- Also updates the displayed timer if it is a placed unit (e.g. Consecration)
+--- @param icon table                   Our ECME icon frame
+--- @param spellID number               The original spell ID
+--- @param resolvedID number            The resolved spell ID
+--- @param auraHandled boolean          true if the aura has already been handled
+--- @return boolean auraHandled         true if the aura was handled previously or by this function
+-------------------------------------------------------------------------------
+local function UpdateBuffSwipeAndTimer(icon, spellID, resolvedID, auraHandled)
+    local fixedDur = ns.PLACED_UNIT_DURATIONS[resolvedID] or ns.PLACED_UNIT_DURATIONS[spellID]
+    if fixedDur then
+        local fixedSid = ns.PLACED_UNIT_DURATIONS[resolvedID] and resolvedID or spellID
+        local isPlacedActive = ECache.IsTickBlizzardActive(spellID, resolvedID)
+        if isPlacedActive then
+            ECache.CachePlacedUnitStart(fixedSid)
+            icon._cooldown:Clear()
+            pcall(icon._cooldown.SetCooldown, icon._cooldown, ECache.GetPlacedUnitStart(fixedSid), fixedDur)
+            if icon._tex then icon._tex:SetDesaturation(0) end
+            icon._lastDesat = false
+            auraHandled = true
+        else
+            ECache.RemovePlacedUnitStart(fixedSid)
+        end
+    end
+    icon._cooldown:SetReverse(auraHandled)
+    return auraHandled
+end
+utils.UpdateBuffSwipeAndTimer = UpdateBuffSwipeAndTimer
+
 -- endregion
 
 -- region Category data

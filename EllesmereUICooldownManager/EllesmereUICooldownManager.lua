@@ -3022,7 +3022,7 @@ local function UpdateCustomBarIcons(barKey)
                 local bagItemID = -spellID
                 local itemCount = C_Item.GetItemCount(bagItemID, false, true) or 0
                 local iconIsVisible = EUtils.UpdateBagItemIcon(ourIcon, bagItemID, itemCount, false, 
-                                                        barData.showCharges, barData.desaturateOnCD)
+                                                               barData.showCharges, barData.desaturateOnCD)
                 if iconIsVisible then
                     visibleCount = visibleCount + 1
                 end
@@ -3085,26 +3085,8 @@ local function UpdateCustomBarIcons(barKey)
                         ApplySpellCooldown(ourIcon, resolvedID, barData.desaturateOnCD, barData.showCharges, swAlpha, skipCDDisplay,
                                            ECache.GetResolvedBlizzardAllChild(spellID, resolvedID), isBuffBarForOverride)
 
-                        -- Buff bars: swipe fills as buff expires (starts empty, ends full).
-                        -- Placed unit override (e.g. Consecration)
                         if isBuffBarForOverride then
-                            local fixedDur = ns.PLACED_UNIT_DURATIONS[resolvedID]
-                                             or ns.PLACED_UNIT_DURATIONS[spellID]
-                            if fixedDur then
-                                local fixedSid = ns.PLACED_UNIT_DURATIONS[resolvedID] and resolvedID or spellID
-                                local isPlacedActive = ECache.IsTickBlizzardActive(spellID, resolvedID)
-                                if isPlacedActive then
-                                    ECache.CachePlacedUnitStart(fixedSid)
-                                    ourIcon._cooldown:Clear()
-                                    pcall(ourIcon._cooldown.SetCooldown, ourIcon._cooldown, ECache.GetPlacedUnitStart(fixedSid), fixedDur)
-                                    if ourIcon._tex then ourIcon._tex:SetDesaturation(0) end
-                                    ourIcon._lastDesat = false
-                                    auraHandled = true
-                            else
-                                ECache.RemovePlacedUnitStart(fixedSid)
-                            end
-                        end
-                            ourIcon._cooldown:SetReverse(auraHandled)
+                            auraHandled = EUtils.UpdateBuffSwipeAndTimer(ourIcon, spellID, resolvedID, auraHandled)
                         end
 
                         -- If this is a live Blizzard activation override, read the charge
@@ -3293,9 +3275,11 @@ UpdateCDMBarIcons = function(barKey)
     -- Ensure we have enough icon frames
     while #icons < #blizzIcons do
         local newIcon = CreateCDMIcon(barKey, #icons + 1)
-        icons[#icons + 1] = newIcon
-        if barData.showTooltip then
-            newIcon:SetScript("OnUpdate", _cdmTooltipOnUpdate)
+        if newIcon ~= nil then
+            icons[#icons + 1] = newIcon
+            if barData.showTooltip then
+                newIcon:SetScript("OnUpdate", _cdmTooltipOnUpdate)
+            end
         end
     end
 
@@ -3852,7 +3836,7 @@ local function UpdateTrackedBarIcons(barKey)
         local ourIcon = icons[i]
         if not ourIcon then break end
 
-        -- Skip blank placeholder slots
+        -- Skip blank placeholder slots (0 entries from grid reordering)
         if spellID == 0 then
             ourIcon:Hide()
         -- Trinket slot entries use small negative IDs (-13, -14)
@@ -3930,10 +3914,9 @@ local function UpdateTrackedBarIcons(barKey)
                     ApplySpellCooldown(ourIcon, resolvedID, desatOnCD, showCharges, swAlpha, skipCDDisplay,
                                        assignedChild or ECache.GetResolvedBlizzardAllChild(spellID, resolvedID), isBuffBarForOverride)
 
-                -- Buff bars: swipe fills as buff expires (starts empty, ends full).
-                if isBuffBarForOverride then
-                    ourIcon._cooldown:SetReverse(auraHandled)
-                end
+                    if isBuffBarForOverride then
+                        auraHandled = EUtils.UpdateBuffSwipeAndTimer(ourIcon, spellID, resolvedID, auraHandled)
+                    end
 
                     -- Active state animation
                     ApplyActiveAnimation(ourIcon, auraHandled, barData, barKey, activeAnim, animR, animG, animB, swAlpha)
@@ -4046,7 +4029,9 @@ local function UpdateAllCDMBars(dt)
                             -- GetCooldownViewerCooldownInfo allocates a new table each
                             -- call; caching the extracted values on the child frame
                             -- avoids ~30 table allocs/tick across all viewers.
+                            ---@type number|nil
                             local resolvedSid = ch._ecmeResolvedSid
+                            ---@type number|nil
                             local baseSpellID = ch._ecmeBaseSpellID
                             local cachedOverride = ch._ecmeOverrideSid
                             -- Invalidate cache when cooldownID changes (child recycled
