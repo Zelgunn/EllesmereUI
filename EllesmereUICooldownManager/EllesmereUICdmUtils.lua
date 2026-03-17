@@ -343,7 +343,16 @@ local function ApplyAuraCooldownOrDuration(icon, spellID, resolvedID, isBuffBar,
         -- cooldown is shown (e.g. 2min ability becomes 24s kick).
         if not hasRuntimeOverride then
             local isChargeSid = ECache.IsCachedChargeSpell(resolvedID)
-            if auraID and (not isChargeSid or isBuffBar) then
+            -- Charge spells: prefer recharge timer unless the
+            -- buff-viewer is actively tracking this spell.
+            local chargeShowsAura = not isChargeSid or isBuffBar
+            if isChargeSid and not isBuffBar then
+                local bufCh = ECache.GetResolvedBlizzardBuffChild(spellID, resolvedID)
+                if ECache.IsBuffChildCooldownActive(bufCh) then
+                    chargeShowsAura = true
+                end
+            end
+            if auraID and chargeShowsAura then
                 local ok, auraDurObj = pcall(C_UnitAuras.GetAuraDuration, auraUnit, auraID)
                 if ok and auraDurObj then
                     icon._cooldown:Clear()
