@@ -4750,7 +4750,7 @@ function ns.GetCDMSpellsForBar(barKey)
     local seenSpellID = {}  -- dedup by spellID across categories
 
     -- Cache category data to avoid double API calls (pre-scan + main loop).
-    local catCache = ECache._categories
+    local catCache = ECache._categoryData
     ECache.BuildCategoryDataCache(cats)
 
     -- Pre-scan ALL categories before the main loop. Blizzard can issue two cdIDs
