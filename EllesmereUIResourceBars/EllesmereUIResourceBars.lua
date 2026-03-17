@@ -131,6 +131,7 @@ local POWER_COLORS = {
     ["FOCUS_BAR"]        = { 0.77, 0.53, 0.24 },
     ["TIP_OF_THE_SPEAR"] = { 0.67, 0.83, 0.45 },
     ["WHIRLWIND_STACKS"] = { 0.78, 0.61, 0.43 },
+    ["ICICLES"] = { 0.45, 0.85, 1.00 },
     ["BREWMASTER_STAGGER"] = { 0.52, 1.00, 0.52 },  -- green (light stagger default)
 }
 
@@ -192,6 +193,41 @@ local function GetPrimaryPowerType()
     return PRIMARY_CLASS_MAP[classFile] or PT.MANA
 end
 
+--Function to get Icicles for Frost
+local ICICLES_SPELL_ID = 205473
+
+local function GetIcicleCount()
+    local _, classFile = UnitClass("player")
+    local spec = GetSpecialization()
+    if classFile ~= "MAGE" or spec ~= 3 then
+        return 0
+    end
+
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local aura = C_UnitAuras.GetPlayerAuraBySpellID(ICICLES_SPELL_ID)
+        if aura then
+            local count = aura.applications or aura.charges or aura.points or 0
+            if count > 5 then count = 5 end
+            return count
+        end
+        return 0
+    end
+
+    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        for i = 1, 255 do
+            local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+            if not aura then break end
+            if aura.spellId == ICICLES_SPELL_ID then
+                local count = aura.applications or aura.charges or aura.points or 0
+                if count > 5 then count = 5 end
+                return count
+            end
+        end
+    end
+
+    return 0
+end
+
 local function GetSecondaryResource()
     local _, classFile = UnitClass("player")
     local spec = GetSpecialization()
@@ -226,6 +262,8 @@ local function GetSecondaryResource()
     elseif classFile == "MAGE" and spec == 1 then
         local mx = UnitPowerMax("player", PT.ARCANE)
         return { power = PT.ARCANE, max = (not issecretvalue or not issecretvalue(mx)) and mx or 4, type = "points" }
+    elseif classFile == "MAGE" and spec == 3 then
+        return { power = "ICICLES", max = 5, type = "custom" }
     elseif classFile == "DEMONHUNTER" then
         -- Resolve specID: 581=Vengeance, 1480=Devourer, 577=Havoc
         local specID = spec and C_SpecializationInfo and C_SpecializationInfo.GetSpecializationInfo(spec)
@@ -1436,6 +1474,8 @@ local function BuildBars()
             elseif powerType == "WHIRLWIND_STACKS" and EllesmereUI.GetWhirlwindStacks then
                 local _, realMax = EllesmereUI.GetWhirlwindStacks()
                 if realMax and realMax > 0 then maxPts = realMax end
+            elseif powerType == "ICICLES" then
+                maxPts = 5
             end
         end
         local pipH = sp.pipHeight or 20
@@ -2149,6 +2189,9 @@ local function UpdateSecondaryResource()
                 for i = 1, #pips do if pips[i] then pips[i]:Hide() end end
                 return
             end
+        elseif powerType == "ICICLES" then
+            cur = GetIcicleCount()
+            maxC = 5
         end
         -- Use custom resource color from EllesmereUI if available
         local _, classFile = UnitClass("player")
