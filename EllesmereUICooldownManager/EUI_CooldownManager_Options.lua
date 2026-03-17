@@ -1,4 +1,4 @@
-﻿-------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 --  EllesmereUICooldownManager_Options.lua
 --  Registers CDM Effects module with EllesmereUI
 --  Tab 1: CDM Bars  |  Tab 2: Bar Glows  |  Tab 3: Buff Bars  |  Tab 4: Unlock Mode
@@ -580,15 +580,14 @@ initFrame:SetScript("OnEvent", function(self)
             if realBtnW < 1 then realBtnW = 36 end
             if realBtnH < 1 then realBtnH = 36 end
 
-            -- Read bar scale
-            local barScale = (barSettings and barSettings.barScale) or 1.0
-            local scaledBtnW = math.floor(realBtnW * barScale + 0.5)
-            local scaledBtnH = math.floor(realBtnH * barScale + 0.5)
+            -- Read bar size (no scale -- width/height based)
+            local scaledBtnW = math.floor(realBtnW + 0.5)
+            local scaledBtnH = math.floor(realBtnH + 0.5)
 
             -- Custom shape expansion
             local btnShape = (barSettings and barSettings.buttonShape) or "none"
             if btnShape ~= "none" and btnShape ~= "cropped" then
-                local shapeExp = math.floor(10 * barScale + 0.5)
+                local shapeExp = 10
                 scaledBtnW = scaledBtnW + shapeExp
                 scaledBtnH = scaledBtnH + shapeExp
             end
@@ -597,7 +596,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
             local spacing = (barSettings and barSettings.buttonPadding) or 2
-            local scaledPad = math.floor(spacing * barScale + 0.5)
+            local scaledPad = spacing
 
             -- How many buttons visible
             local numVisible = NUM_BUTTONS
@@ -4477,14 +4476,14 @@ initFrame:SetScript("OnEvent", function(self)
                     if i ~= fromIdx and math.abs(localX - slotCX) < zone then
                         return "swap", i
                     elseif localX < slotCX then
-                        -- Cursor is in the left half of this slot — insert before it logically
+                        -- Cursor is in the left half of this slot � insert before it logically
                         if growLeft then
                             return "insert", i + 1
                         else
                             return "insert", i
                         end
                     else
-                        -- Cursor is in the right half of this slot — insert after it logically
+                        -- Cursor is in the right half of this slot � insert after it logically
                         if growLeft then
                             return "insert", i
                         else
@@ -4693,7 +4692,7 @@ initFrame:SetScript("OnEvent", function(self)
             local sEdges = {}
             local PP = EllesmereUI and EllesmereUI.PP
             if PP then PP.CreateBorder(slot, 0, 0, 0, 1, 1, "OVERLAY", 7) end
-            slot._edges = sEdges  -- kept empty for compat; borders managed by PP
+            slot._edges = sEdges  -- empty; borders managed by PP
 
             -- Hover highlight (2px accent border, child container avoids conflict with existing PP border)
             local eg = EllesmereUI.ELLESMERE_GREEN
@@ -5591,7 +5590,7 @@ initFrame:SetScript("OnEvent", function(self)
             local function UpdateDDLabel()
                 local bd = bars[selectedCDMBarIndex]
                 local label = bd and (bd.name or bd.key) or ""
-                -- Clean up legacy verbose names for display
+                -- Normalize verbose bar names for display
                 if bd and bd.barType == "misc" then
                     label = label:gsub("Custom ", ""):gsub("Trinkets/Racials/Potions Bar ", "Miscellaneous "):gsub("Trinkets Bar ", "Miscellaneous "):gsub("^Trinkets ", "Miscellaneous ")
                 end
@@ -5636,7 +5635,7 @@ initFrame:SetScript("OnEvent", function(self)
                     iLbl:SetWordWrap(false); iLbl:SetMaxLines(1)
                     iLbl:SetPoint("LEFT", item, "LEFT", 10, 0)
                     local displayName = b.name or b.key
-                    -- Clean up legacy verbose names for display
+                    -- Normalize verbose bar names for display
                     if b.barType == "misc" then
                         displayName = displayName:gsub("Custom ", ""):gsub("Trinkets/Racials/Potions Bar ", "Miscellaneous "):gsub("Trinkets Bar ", "Miscellaneous "):gsub("^Trinkets ", "Miscellaneous ")
                     end
@@ -6033,149 +6032,6 @@ initFrame:SetScript("OnEvent", function(self)
                   BD().growDirection = v and "DOWN" or "RIGHT"
                   ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
               end });  y = y - h
-
-        -- Row 3: Anchored To | Anchor Position (cog: Growth + X + Y)
-        local _erbLoaded = C_AddOns and C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded("EllesmereUIResourceBars")
-        local ERB_ANCHOR_KEYS = { erb_castbar = true, erb_powerbar = true, erb_classresource = true }
-        local function GetAnchorChoices()
-            local vals, order = { none = "None" }, { "none" }
-            local p = DB()
-            if p and p.cdmBars and p.cdmBars.bars then
-                for _, b in ipairs(p.cdmBars.bars) do
-                    if b.key ~= barKey then
-                        local label = b.name or b.key
-                        label = label:gsub("Custom ", ""):gsub("Trinkets/Racials/Potions", "Miscellaneous"):gsub(" Bar ", " ")
-                        vals[b.key] = label
-                        order[#order + 1] = b.key
-                    end
-                end
-            end
-            order[#order + 1] = "---"
-            vals.mouse = "Mouse Cursor"; order[#order + 1] = "mouse"
-            vals.partyframe = "Party Frame"; order[#order + 1] = "partyframe"
-            vals.playerframe = "Player Frame"; order[#order + 1] = "playerframe"
-            vals.erb_castbar = "Cast Bar"; order[#order + 1] = "erb_castbar"
-            vals.erb_powerbar = "Power Bar"; order[#order + 1] = "erb_powerbar"
-            vals.erb_classresource = "Class Resource Bar"; order[#order + 1] = "erb_classresource"
-            return vals, order
-        end
-        local anchorVals, anchorOrder = GetAnchorChoices()
-        local isPartyAnchor = function() return BD().anchorTo == "partyframe" end
-        local isPlayerFrameAnchor = function() return BD().anchorTo == "playerframe" end
-        local isERBAnchor = function() return ERB_ANCHOR_KEYS[BD().anchorTo] end
-        local row3AnchorFrame
-        row3AnchorFrame, h = W:DualRow(parent, y,
-            { type="dropdown", text="Anchored To",
-              values=anchorVals, order=anchorOrder,
-              disabledValues=function(key)
-                  if ERB_ANCHOR_KEYS[key] and not _erbLoaded then
-                      return "This option requires EllesmereUI Resource Bars addon to be enabled"
-                  end
-                  local p = DB()
-                  if p and p.cdmBars and p.cdmBars.bars and key ~= "none" and key ~= "partyframe" and key ~= "playerframe" and key ~= "mouse" and not ERB_ANCHOR_KEYS[key] then
-                      local visited = { [barKey] = true }
-                      local check = key
-                      while check and check ~= "none" and check ~= "partyframe" and check ~= "playerframe" and not ERB_ANCHOR_KEYS[check] do
-                          if visited[check] then return "This would create a circular anchor chain" end
-                          visited[check] = true
-                          local found = false
-                          for _, b in ipairs(p.cdmBars.bars) do
-                              if b.key == check then check = b.anchorTo; found = true; break end
-                          end
-                          if not found then break end
-                      end
-                  end
-              end,
-              getValue=function() return BD().anchorTo or "none" end,
-              setValue=function(v)
-                  BD().anchorTo = v
-                  ns.BuildAllCDMBars(); ns.RegisterCDMUnlockElements(); Refresh()
-              end },
-            { type="dropdown", text="Anchor Position",
-              values={ left="Left", right="Right", top="Top", bottom="Bottom" },
-              order={ "left", "right", "top", "bottom" },
-              disabled=function() local a = BD().anchorTo or "none"; return a == "none" end,
-              disabledTooltip=EllesmereUI.DisabledTooltip("Anchored To"),
-              getValue=function()
-                  if isPartyAnchor() then return (BD().partyFrameSide or "LEFT"):lower() end
-                  if isPlayerFrameAnchor() then return (BD().playerFrameSide or "LEFT"):lower() end
-                  return BD().anchorPosition or "left"
-              end,
-              setValue=function(v)
-                  if isPartyAnchor() then BD().partyFrameSide = v:upper()
-                  elseif isPlayerFrameAnchor() then BD().playerFrameSide = v:upper()
-                  else BD().anchorPosition = v end
-                  ns.BuildAllCDMBars(); Refresh()
-              end });  y = y - h
-
-        -- Inline cog on Anchor Position (DIRECTIONS icon) Growth + X + Y
-        do
-            local posRgn = row3AnchorFrame._rightRegion
-            local _, posCogShow = EllesmereUI.BuildCogPopup({
-                title = "Anchor Settings",
-                rows = {
-                    { type="dropdown", label="Growth Direction",
-                      values=growValues, order=growOrder,
-                      disabled=function() return (BD().anchorTo or "none") == "mouse" end,
-                      disabledTooltip=EllesmereUI.DisabledTooltip("Not available for Mouse Cursor anchor"),
-                      get=function() return BD().growDirection or "RIGHT" end,
-                      set=function(v)
-                          BD().growDirection = v
-                          ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
-                      end },
-                    { type="toggle", label="Grow Centered",
-                      disabled=function() return (BD().anchorTo or "none") == "mouse" end,
-                      disabledTooltip=EllesmereUI.DisabledTooltip("Not available for Mouse Cursor anchor"),
-                      get=function() return BD().growCentered ~= false end,
-                      set=function(v)
-                          BD().growCentered = v
-                          ns.BuildAllCDMBars(); Refresh()
-                      end },
-                    { type="slider", label="X Offset", min=-125, max=125, step=1,
-                      get=function()
-                          if isPartyAnchor() then return BD().partyFrameOffsetX or 0
-                          elseif isPlayerFrameAnchor() then return BD().playerFrameOffsetX or 0
-                          else return BD().anchorOffsetX or 0 end
-                      end,
-                      set=function(v)
-                          if isPartyAnchor() then BD().partyFrameOffsetX = v
-                          elseif isPlayerFrameAnchor() then BD().playerFrameOffsetX = v
-                          else BD().anchorOffsetX = v end
-                          ns.BuildAllCDMBars(); Refresh()
-                      end },
-                    { type="slider", label="Y Offset", min=-125, max=125, step=1,
-                      get=function()
-                          if isPartyAnchor() then return BD().partyFrameOffsetY or 0
-                          elseif isPlayerFrameAnchor() then return BD().playerFrameOffsetY or 0
-                          else return BD().anchorOffsetY or 0 end
-                      end,
-                      set=function(v)
-                          if isPartyAnchor() then BD().partyFrameOffsetY = v
-                          elseif isPlayerFrameAnchor() then BD().playerFrameOffsetY = v
-                          else BD().anchorOffsetY = v end
-                          ns.BuildAllCDMBars(); Refresh()
-                      end },
-                },
-            })
-            local cogBtn = MakeCogBtn(posRgn, posCogShow, nil, EllesmereUI.DIRECTIONS_ICON)
-            local function UpdateAnchorCogState()
-                if (BD().anchorTo or "none") == "none" then
-                    cogBtn:SetAlpha(0.15); cogBtn:Disable()
-                else
-                    cogBtn:SetAlpha(0.4); cogBtn:Enable()
-                end
-            end
-            cogBtn:SetScript("OnEnter", function(self)
-                if (BD().anchorTo or "none") ~= "none" then self:SetAlpha(0.7)
-                else EllesmereUI.ShowWidgetTooltip(self, EllesmereUI.DisabledTooltip("Anchored To")) end
-            end)
-            cogBtn:SetScript("OnLeave", function(self)
-                UpdateAnchorCogState(); EllesmereUI.HideWidgetTooltip()
-            end)
-            cogBtn:SetScript("OnClick", function(self) posCogShow(self) end)
-            UpdateAnchorCogState()
-            EllesmereUI.RegisterWidgetRefresh(UpdateAnchorCogState)
-        end
 
         -- Hide Buffs When Inactive / Out of Range + Show Keybind
         local kbRow

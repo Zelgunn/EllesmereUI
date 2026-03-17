@@ -1,8 +1,6 @@
 --------------------------------------------------------------------------------
 --  EllesmereUICdmBuffBars.lua
---  Buff Bars: Tracked Buff Bars v2 (per-bar buff tracking with individual
---  settings) and legacy Buff Bars (disabled). Currently the legacy system is
---  disabled uncomment blocks to re-enable.
+--  Tracked Buff Bars (per-bar buff tracking with individual settings)
 --------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
@@ -1083,6 +1081,8 @@ function ns.BuildTrackedBuffBars()
             bar._blizzChild = nil
             bar._customStart = nil
             bar._activeDuration = nil
+            bar._lastLiveIcon = nil
+            bar._lastLiveName = nil
             bar:Hide()
         end
     end
@@ -1519,6 +1519,31 @@ function ns.UpdateTrackedBuffBarTimers()
                 if not bar:IsShown() then bar:Show() end
                 UpdateTBBStacks(bar, cfg)
 
+                -- Dynamically update icon from Blizzard CDM child's live texture
+                -- so aura-driven icon changes (e.g. Roll the Bones sub-buffs) are
+                -- reflected each tick instead of staying on the static config icon.
+                if blzChild and bar._icon and bar._icon._tex and blzChild.Icon and blzChild.Icon.GetTexture then
+                    local liveIconTex = blzChild.Icon:GetTexture()
+                    if liveIconTex and liveIconTex ~= bar._lastLiveIcon then
+                        bar._icon._tex:SetTexture(liveIconTex)
+                        bar._lastLiveIcon = liveIconTex
+                    end
+                end
+
+                -- Dynamically update name text from the actual active aura so
+                -- spells like Roll the Bones show the specific roll name instead
+                -- of the generic parent spell name.
+                if bar._nameText and bar._nameText:IsShown() and blzChild and blzChild.auraInstanceID then
+                    local nOk, ad = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, blzChild.auraDataUnit or "player", blzChild.auraInstanceID)
+                    if nOk and ad and ad.name then
+                        local isSecret = issecretvalue and issecretvalue(ad.name)
+                        if not isSecret and ad.name ~= bar._lastLiveName then
+                            bar._nameText:SetText(ad.name)
+                            bar._lastLiveName = ad.name
+                        end
+                    end
+                end
+
                 local activeDur = bar._activeDuration or cfg.customDuration
                 if activeDur and activeDur > 0 and bar._customStart then
                     local elapsed = now - bar._customStart
@@ -1573,13 +1598,24 @@ function ns.UpdateTrackedBuffBarTimers()
 
                     -- Raw start+dur fallback (totems): drive the bar manually
                     -- from the plain numbers the main CDM hooks captured.
-                    local rawRemaining, rawDur
+                    local rawRemaining, rawDur, rawIsSecret
                     if not durObj and blzChild then
                         local rs = ns._ecmeRawStartCache[blzChild]
                         local rd = ns._ecmeRawDurCache[blzChild]
-                        if rs and rd and type(rs) == "number" and type(rd) == "number" and rd > 0 then
-                            rawRemaining = math.max(0, (rs + rd) - now)
-                            rawDur = rd
+                        if rs and rd then
+                            local sRS = issecretvalue and issecretvalue(rs)
+                            local sRD = issecretvalue and issecretvalue(rd)
+                            if sRS or sRD then
+                                rawIsSecret = true
+                                local ok, calcRem = pcall(function() return (rs + rd) - now end)
+                                if ok and calcRem then
+                                    rawRemaining = calcRem
+                                    rawDur = rd
+                                end
+                            elseif type(rs) == "number" and type(rd) == "number" and rd > 0 then
+                                rawRemaining = math.max(0, (rs + rd) - now)
+                                rawDur = rd
+                            end
                         end
                     end
 
@@ -1623,8 +1659,12 @@ function ns.UpdateTrackedBuffBarTimers()
                             end
                         end
                     else
-                        -- No durObj at all: passive unless raw fallback available
-                        if not (rawRemaining and rawRemaining > 0) then
+                        -- No durObj: passive unless raw fallback available
+                        if rawIsSecret then
+                            if rawRemaining then
+                                bar._isPassive = false
+                            end
+                        elseif not (rawRemaining and rawRemaining > 0) then
                             bar._isPassive = true
                         end
                     end
@@ -1659,18 +1699,31 @@ function ns.UpdateTrackedBuffBarTimers()
                                 bar._timerText:Hide()
                             end
                         end
-                    elseif rawRemaining and rawRemaining > 0 then
+                    elseif rawRemaining and (rawIsSecret or rawRemaining > 0) then
                         -- Raw start+dur path (totems/summons): manual bar fill
                         sb:SetMinMaxValues(0, 1)
-                        sb:SetValue(rawRemaining / rawDur)
+                        if rawIsSecret then
+                            pcall(sb.SetValue, sb, rawRemaining / rawDur)
+                        else
+                            sb:SetValue(rawRemaining / rawDur)
+                        end
                         if cfg.showSpark and bar._spark then bar._spark:Show() end
                         if cfg.showTimer and bar._timerText then
-                            local t
-                            if rawRemaining >= 3600 then t = format("%dh", floor(rawRemaining / 3600))
-                            elseif rawRemaining >= 60 then t = format("%dm", floor(rawRemaining / 60))
-                            elseif rawRemaining >= 10 then t = format("%d", floor(rawRemaining))
-                            else t = format("%.1f", rawRemaining) end
-                            bar._timerText:SetText(t)
+                            if rawIsSecret then
+                                local fok, fstr = pcall(format, "%.1f", rawRemaining)
+                                if fok and fstr then
+                                    bar._timerText:SetText(fstr)
+                                else
+                                    bar._timerText:SetText("")
+                                end
+                            else
+                                local t
+                                if rawRemaining >= 3600 then t = format("%dh", floor(rawRemaining / 3600))
+                                elseif rawRemaining >= 60 then t = format("%dm", floor(rawRemaining / 60))
+                                elseif rawRemaining >= 10 then t = format("%d", floor(rawRemaining))
+                                else t = format("%.1f", rawRemaining) end
+                                bar._timerText:SetText(t)
+                            end
                             bar._timerText:Show()
                         end
                     else
@@ -1706,6 +1759,8 @@ function ns.UpdateTrackedBuffBarTimers()
                 bar._customStart = nil
                 bar._activeDuration = nil
                 bar._isPassive = nil
+                bar._lastLiveIcon = nil
+                bar._lastLiveName = nil
                 if bar._cooldown then bar._cooldown:Clear() end
             end
         end
@@ -1745,6 +1800,7 @@ function ns.RegisterTBBUnlockElements()
     if not TBB_ENABLED then return end
     if not EllesmereUI or not EllesmereUI.RegisterUnlockElements then return end
     if not ECME or not ECME.db then return end
+    local MK = EllesmereUI.MakeUnlockElement
     local tbb = ns.GetTrackedBuffBars()
     local bars = tbb.bars
     if not bars or #bars == 0 then return end
@@ -1755,7 +1811,7 @@ function ns.RegisterTBBUnlockElements()
         local posKey = tostring(idx)
         local bar = tbbFrames[idx]
         if bar then
-            elements[#elements + 1] = {
+            elements[#elements + 1] = MK({
                 key = "TBB_" .. posKey,
                 label = "Buff Bar: " .. (cfg.name or ("Bar " .. idx)),
                 group = "Cooldown Manager",
@@ -1766,35 +1822,39 @@ function ns.RegisterTBBUnlockElements()
                     if f then return f:GetWidth(), f:GetHeight() end
                     return 200, 24
                 end,
-                savePosition = function(_, point, relPoint, x, y, scale)
+                setWidth = function(_, w)
+                    local tbb2 = ns.GetTrackedBuffBars()
+                    local c = tbb2.bars and tbb2.bars[idx]
+                    if c then c.width = w; ns.BuildTrackedBuffBars() end
+                end,
+                setHeight = function(_, h)
+                    local tbb2 = ns.GetTrackedBuffBars()
+                    local c = tbb2.bars and tbb2.bars[idx]
+                    if c then c.height = h; ns.BuildTrackedBuffBars() end
+                end,
+                savePos = function(_, point, relPoint, x, y)
                     local p = ECME.db.profile
                     if not p.tbbPositions then p.tbbPositions = {} end
-                    p.tbbPositions[posKey] = { point = point, relPoint = relPoint, x = x, y = y, scale = scale }
+                    p.tbbPositions[posKey] = { point = point, relPoint = relPoint, x = x, y = y }
                     local f = tbbFrames[idx]
                     if f then
-                        if scale then pcall(function() f:SetScale(scale) end) end
                         f:ClearAllPoints()
                         f:SetPoint(point, UIParent, relPoint or point, x, y)
                     end
                     ns.BuildTrackedBuffBars()
                 end,
-                loadPosition = function()
+                loadPos = function()
                     local p = ECME.db.profile
                     return p.tbbPositions and p.tbbPositions[posKey]
                 end,
-                getScale = function()
-                    local p = ECME.db.profile
-                    local pos = p.tbbPositions and p.tbbPositions[posKey]
-                    return pos and pos.scale or 1.0
-                end,
-                clearPosition = function()
+                clearPos = function()
                     local p = ECME.db.profile
                     if p.tbbPositions then p.tbbPositions[posKey] = nil end
                 end,
-                applyPosition = function()
+                applyPos = function()
                     ns.BuildTrackedBuffBars()
                 end,
-            }
+            })
         end
     end
 
@@ -1803,289 +1863,4 @@ function ns.RegisterTBBUnlockElements()
     end
 end
 
---[[ BUFF BARS: DISABLED (untested uncomment to re-enable)
--------------------------------------------------------------------------------
---  Buff Bars: Custom aura tracking display
---  Shows player buffs as horizontal timer bars
--------------------------------------------------------------------------------
-local FormatTime, UpdateBuffBars
-do
-local buffBarFrame       -- container
-local buffBarPool = {}   -- reusable bar frames
-local activeBuffBars = {}
-local CLASS_COLORS_BUFF = {
-    WARRIOR = {0.78,0.61,0.43}, PALADIN = {0.96,0.55,0.73}, HUNTER = {0.67,0.83,0.45},
-    ROGUE = {1,0.96,0.41}, PRIEST = {1,1,1}, DEATHKNIGHT = {0.77,0.12,0.23},
-    SHAMAN = {0,0.44,0.87}, MAGE = {0.25,0.78,0.92}, WARLOCK = {0.53,0.53,0.93},
-    MONK = {0,1,0.60}, DRUID = {1,0.49,0.04}, DEMONHUNTER = {0.64,0.19,0.79},
-    EVOKER = {0.20,0.58,0.50},
-}
 
-local function CreateBuffBar(parent, idx)
-    local p = ECME.db.profile.buffBars
-    local bar = CreateFrame("StatusBar", "ECME_BuffBar" .. idx, parent)
-    bar:SetSize(p.width, p.height)
-    if bar.EnableMouseClicks then bar:EnableMouseClicks(false) end
-    bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
-    bar:SetMinMaxValues(0, 1)
-    bar:SetValue(1)
-
-    local bg = bar:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetColorTexture(0, 0, 0, p.bgAlpha)
-    bar._bg = bg
-
-    -- Border via unified PP system (outside the bar)
-    local PP = EllesmereUI and EllesmereUI.PP
-    local borderWrap = CreateFrame("Frame", nil, bar)
-    borderWrap:SetFrameLevel(bar:GetFrameLevel())
-    bar._borderWrap = borderWrap
-
-    function bar:ApplyBorder(s, r, g, b, a)
-        local bw = self._borderWrap
-        if s and s > 0 then
-            bw:ClearAllPoints()
-            if PP then
-                PP.SetOutside(bw, self, s, s)
-            else
-                bw:SetPoint("TOPLEFT", self, "TOPLEFT", -s, s)
-                bw:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT", s, -s)
-            end
-            if not bw._ppBorders then
-                if PP then PP.CreateBorder(bw, r, g, b, a or 1, s, "OVERLAY", 7) end
-            else
-                if PP then PP.UpdateBorder(bw, s, r, g, b, a or 1) end
-            end
-            bw:Show()
-        else
-            bw:Hide()
-        end
-    end
-
-    -- Icon
-    local icon = bar:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(p.iconSize, p.iconSize)
-    icon:SetPoint("LEFT", bar, "LEFT", 2, 0)
-    icon:SetTexCoord(0.06, 0.94, 0.06, 0.94)
-    bar._icon = icon
-
-    -- Name text
-    local nameText = bar:CreateFontString(nil, "OVERLAY")
-    SetTBBFont(nameText, GetCDMFont(), 11)
-    nameText:SetTextColor(1, 1, 1, 0.9)
-    nameText:SetPoint("LEFT", icon, "RIGHT", 4, 0)
-    nameText:SetJustifyH("LEFT")
-    bar._nameText = nameText
-
-    -- Timer text
-    local timerText = bar:CreateFontString(nil, "OVERLAY")
-    SetTBBFont(timerText, GetCDMFont(), 11)
-    timerText:SetTextColor(1, 1, 1, 0.9)
-    timerText:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
-    timerText:SetJustifyH("RIGHT")
-    bar._timerText = timerText
-
-    bar:Hide()
-    return bar
-end
-
-FormatTime = function(sec)
-    local key = floor(sec * 10)
-    local now = floor(GetTime())
-    if now ~= _fmtCacheSec then
-        wipe(_fmtCache)
-        _fmtCacheSec = now
-    end
-    local cached = _fmtCache[key]
-    if cached then return cached end
-    local result
-    if sec >= 3600 then result = format("%dh", floor(sec / 3600))
-    elseif sec >= 60 then result = format("%dm", floor(sec / 60))
-    elseif sec >= 10 then result = format("%d", floor(sec))
-    else result = format("%.1f", sec)
-    end
-    _fmtCache[key] = result
-    return result
-end
-
-local function MatchesFilter(name, filterMode, filterList)
-    if filterMode == "all" then return true end
-    if not filterList or filterList == "" then return filterMode == "blacklist" end
-    local lower = name:lower()
-    for entry in filterList:gmatch("[^,;]+") do
-        entry = entry:match("^%s*(.-)%s*$"):lower()
-        if entry ~= "" and lower:find(entry, 1, true) then
-            return filterMode == "whitelist"
-        end
-    end
-    return filterMode == "blacklist"
-end
-
-local _buffBarBuf = {}
-local _buffSortNow = 0
-local function _SortBuffsByRemaining(a, b)
-    local ra = a.expires > 0 and (a.expires - _buffSortNow) or 9999
-    local rb = b.expires > 0 and (b.expires - _buffSortNow) or 9999
-    return ra < rb
-end
-
-UpdateBuffBars = function()
-    if not ECME or not ECME.db then return end
-    local p = ECME.db.profile.buffBars
-    if not p.enabled then
-        if buffBarFrame then buffBarFrame:Hide() end
-        return
-    end
-
-    if not buffBarFrame then
-        buffBarFrame = CreateFrame("Frame", "ECME_BuffBarFrame", UIParent)
-        buffBarFrame:SetPoint("CENTER", UIParent, "CENTER", p.offsetX, p.offsetY)
-        buffBarFrame:SetSize(p.width + 4, 200)
-        buffBarFrame:SetFrameStrata("MEDIUM")
-        buffBarFrame:SetMovable(true)
-        buffBarFrame:SetClampedToScreen(true)
-        if buffBarFrame.EnableMouseClicks then buffBarFrame:EnableMouseClicks(false) end
-        buffBarFrame:RegisterForDrag("LeftButton")
-        buffBarFrame:SetScript("OnDragStart", function(self)
-            if not ECME.db.profile.buffBars.locked then self:StartMoving() end
-        end)
-        buffBarFrame:SetScript("OnDragStop", function(self)
-            self:StopMovingOrSizing()
-            local _, _, _, x, y = self:GetPoint(1)
-            if x then
-                ECME.db.profile.buffBars.offsetX = x
-                ECME.db.profile.buffBars.offsetY = y
-            end
-        end)
-    end
-
-    buffBarFrame:Show()
-    buffBarTickFrame:Show()
-
-    local _, classFile = UnitClass("player")
-    local now = GetTime()
-    local buffs = _buffBarBuf
-    local buffCount = 0
-
-    for i = 1, 40 do
-        local auraData = C_UnitAuras and C_UnitAuras.GetBuffDataByIndex("player", i)
-        if not auraData then break end
-        local name = auraData.name
-        local iconTex = auraData.icon
-        local duration = auraData.duration or 0
-        local expirationTime = auraData.expirationTime or 0
-
-        if name and MatchesFilter(name, p.filterMode, p.filterList) then
-            buffCount = buffCount + 1
-            local entry = buffs[buffCount]
-            if not entry then
-                entry = {}
-                buffs[buffCount] = entry
-            end
-            entry.name = name
-            entry.icon = iconTex
-            entry.duration = duration
-            entry.expires = expirationTime
-        end
-        if buffCount >= p.maxBars then break end
-    end
-    for i = buffCount + 1, #buffs do buffs[i] = nil end
-
-    _buffSortNow = now
-    table.sort(buffs, _SortBuffsByRemaining)
-
-    local cr, cg, cb = p.barR, p.barG, p.barB
-    if p.useClassColor then
-        local cc = CLASS_COLORS_BUFF[classFile]
-        if cc then cr, cg, cb = cc[1], cc[2], cc[3] end
-    end
-
-    for idx = 1, #buffs do
-        local data = buffs[idx]
-        local bar = buffBarPool[idx]
-        if not bar then
-            bar = CreateBuffBar(buffBarFrame, idx)
-            buffBarPool[idx] = bar
-        end
-
-        bar:SetSize(p.width, p.height)
-        bar:ClearAllPoints()
-        local yDir = p.growUp and 1 or -1
-        bar:SetPoint("TOPLEFT", buffBarFrame, "TOPLEFT", 0, yDir * (idx - 1) * (p.height + p.spacing))
-        bar:ApplyBorder(p.borderSize, p.borderR, p.borderG, p.borderB, p.borderA)
-        bar._bg:SetColorTexture(0, 0, 0, p.bgAlpha)
-        bar:GetStatusBarTexture():SetVertexColor(cr, cg, cb, 1)
-
-        if p.showIcon and data.icon then
-            bar._icon:SetTexture(data.icon)
-            bar._icon:SetSize(p.iconSize, p.iconSize)
-            bar._icon:Show()
-            bar._nameText:SetPoint("LEFT", bar._icon, "RIGHT", 4, 0)
-        else
-            bar._icon:Hide()
-            bar._nameText:SetPoint("LEFT", bar, "LEFT", 4, 0)
-        end
-
-        bar._nameText:SetText(data.name)
-        bar._data = data
-        bar._nameText:SetWidth(p.width - (p.showIcon and p.iconSize + 8 or 8) - (p.showTimer and 40 or 0))
-
-        if data.duration > 0 and data.expires > 0 then
-            local remaining = data.expires - now
-            if remaining < 0 then remaining = 0 end
-            bar:SetValue(remaining / data.duration)
-            if p.showTimer then
-                bar._timerText:SetText(FormatTime(remaining))
-                bar._timerText:Show()
-            else
-                bar._timerText:Hide()
-            end
-        else
-            bar:SetValue(1)
-            if p.showTimer then
-                bar._timerText:SetText("")
-            end
-            bar._timerText:Hide()
-        end
-
-        bar:Show()
-        activeBuffBars[idx] = bar
-    end
-
-    for i = #buffs + 1, #buffBarPool do
-        if buffBarPool[i] then buffBarPool[i]:Hide() end
-    end
-    for i = #buffs + 1, #activeBuffBars do activeBuffBars[i] = nil end
-
-    local totalH = #buffs * (p.height + p.spacing)
-    buffBarFrame:SetSize(p.width + 4, totalH > 0 and totalH or 1)
-end
-
-local buffBarTickFrame = CreateFrame("Frame")
-buffBarTickFrame:Hide()
-buffBarTickFrame:SetScript("OnUpdate", function(self, elapsed)
-    self.elapsed = (self.elapsed or 0) + elapsed
-    if self.elapsed < 0.05 then return end
-    self.elapsed = 0
-    if not ECME or not ECME.db or not ECME.db.profile.buffBars.enabled then
-        self:Hide()
-        return
-    end
-    local now = GetTime()
-    for idx, bar in ipairs(activeBuffBars) do
-        if bar and bar:IsShown() and bar._data then
-            local data = bar._data
-            if data.duration > 0 and data.expires > 0 then
-                local remaining = data.expires - now
-                if remaining < 0 then remaining = 0 end
-                bar:SetValue(remaining / data.duration)
-                if ECME.db.profile.buffBars.showTimer then
-                    bar._timerText:SetText(FormatTime(remaining))
-                end
-            end
-        end
-    end
-end)
-
-end  -- do (Buff Bars scope)
---]] -- END BUFF BARS DISABLED

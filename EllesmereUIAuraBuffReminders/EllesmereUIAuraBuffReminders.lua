@@ -90,18 +90,29 @@ end
 --  Instance / Difficulty helpers
 --  Cached per-frame: call CacheInstanceInfo() at the start of Refresh()
 -------------------------------------------------------------------------------
-local _cachedIType, _cachedDiffID
+local _cachedIType, _cachedDiffID, _cachedMapID
 
 local function CacheInstanceInfo()
     local _, iType, diffID = GetInstanceInfo()
     _cachedIType = iType
     _cachedDiffID = tonumber(diffID) or 0
+    _cachedMapID = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player") or nil
 end
 
 local function InRealInstancedContent()
-    if _cachedDiffID == 0 then return false end
-    if C_Garrison and C_Garrison.IsOnGarrisonMap and C_Garrison.IsOnGarrisonMap() then return false end
-    if _cachedIType == "party" or _cachedIType == "raid" or _cachedIType == "scenario" then return true end
+    if C_Garrison and C_Garrison.IsOnGarrisonMap and C_Garrison.IsOnGarrisonMap() then
+        return false
+    end
+
+    if _cachedIType == "party"
+    or _cachedIType == "raid"
+    or _cachedIType == "scenario"
+    or _cachedIType == "arena"
+    or _cachedIType == "pvp"
+    then
+        return true
+    end
+
     return false
 end
 
@@ -109,7 +120,7 @@ local function InMythicPlusKey()
     return C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive and C_ChallengeMode.IsChallengeModeActive()
 end
 
--- Mythic 0 dungeon (party, normal difficulty 1) or Mythic raid (difficulty 16)
+--Mythic 0 dungeon (party, normal difficulty 1) or Mythic raid (difficulty 16)
 local function InMythicZeroDungeonOrMythicRaid()
     if _cachedIType == "party" and (_cachedDiffID == 23 or _cachedDiffID == 8) then return true end
     if _cachedIType == "raid" and _cachedDiffID == 16 then return true end
@@ -123,25 +134,67 @@ local function InHeroicOrMythicContent()
     return false
 end
 
+local function InPvPInstance()
+    return _cachedIType == "pvp" or _cachedIType == "arena"
+end
+
 -------------------------------------------------------------------------------
---  Midnight Season 1 Dungeon & Raid Instance Names
+--  Midnight Season 1 Dungeon, Raid & PvP Instance Names
 -------------------------------------------------------------------------------
 local TALENT_REMINDER_ZONES = {
-    { name="The Voidspire",              type="raid" },
-    { name="Magister's Terrace",         type="dungeon", mapID=2515 },
-    { name="Maisara Caverns",            type="dungeon", mapID=2501 },
-    { name="Nexus-Point Xenas",          type="dungeon", mapID=2556 },
-    { name="Windrunner Spire",           type="dungeon", mapID=2492 },
-    { name="Algeth'ar Academy",          type="dungeon", mapID=2097 },
-    { name="Seat of the Triumvirate",    type="dungeon", mapID=8910 },
-    { name="Skyreach",                   type="dungeon", mapID=601  },
-    { name="Pit of Saron",               type="dungeon", mapID=184  },
+    { name="The Voidspire",           type="raid", },
+    { name="The Dreamrift",           type="raid", },
+    { name="March on Quel'Danas",     type="raid", },
+
+    { name="Magister's Terrace",      type="dungeon", mapID=2515 },
+    { name="Maisara Caverns",         type="dungeon", mapID=2501 },
+    { name="Nexus-Point Xenas",       type="dungeon", mapID=2556 },
+    { name="Windrunner Spire",        type="dungeon", mapID=2492 },
+    { name="Algeth'ar Academy",       type="dungeon", mapID=2097 },
+    { name="Seat of the Triumvirate", type="dungeon", mapID=8910 },
+    { name="Skyreach",                type="dungeon", mapID=601  },
+    { name="Pit of Saron",            type="dungeon", mapID=184  },
+-------------------------------------------------------------------------------
+--  PvP Maps - MapID are all nill due to how Blizzard does map detection for PvP and they are secret values so return nil.
+-------------------------------------------------------------------------------
+    { name="Nagrand Arena",           type="pvp",     mapID=nil },
+    { name="Blade's Edge Arena",      type="pvp",     mapID=nil },
+    { name="Ruins of Lordaeron",      type="pvp",     mapID=nil },
+    { name="Dalaran Sewers",          type="pvp",     mapID=nil },
+    { name="The Ring of Valor",       type="pvp",     mapID=nil },
+    { name="Tol'viron Arena",         type="pvp",     mapID=nil },
+    { name="Tiger's Peak",            type="pvp",     mapID=nil },
+    { name="Black Rook Hold Arena",   type="pvp",     mapID=nil },
+    { name="Ashamane's Fall",         type="pvp",     mapID=nil },
+    { name="Mugambala",               type="pvp",     mapID=nil },
+    { name="Hook Point",              type="pvp",     mapID=nil },
+    { name="Empyrean Domain",         type="pvp",     mapID=nil },
+    { name="Warsong Gulch",           type="pvp",     mapID=nil },
+    { name="Arathi Basin",            type="pvp",     mapID=nil },
+    { name="Eye of the Storm",        type="pvp",     mapID=nil },
+    { name="Strand of the Ancients",  type="pvp",     mapID=nil },
+    { name="Isle of Conquest",        type="pvp",     mapID=nil },
+    { name="Twin Peaks",              type="pvp",     mapID=nil },
+    { name="Silvershard Mines",       type="pvp",     mapID=nil },
+    { name="Battle for Gilneas",      type="pvp",     mapID=nil },
+    { name="Temple of Kotmogu",       type="pvp",     mapID=nil },
+    { name="Deepwind Gorge",          type="pvp",     mapID=nil },
+    { name="Ashran",                  type="pvp",     mapID=nil },
+    { name="Seething Shore",          type="pvp",     mapID=nil },
+    { name="Wintergrasp",             type="pvp",     mapID=nil },
+    { name="Slayer's Rise",           type="pvp",     mapID=nil },
 }
 
 -- mapID to zone entry for fast ID-based matching
 local TALENT_REMINDER_ZONE_BY_MAPID = {}
 for _, z in ipairs(TALENT_REMINDER_ZONES) do
-    if z.mapID then TALENT_REMINDER_ZONE_BY_MAPID[z.mapID] = z end
+    if z.mapID then
+        TALENT_REMINDER_ZONE_BY_MAPID[z.mapID] = z
+    end
+end
+
+local function GetCurrentTalentReminderZone()
+    return TALENT_REMINDER_ZONE_BY_MAPID[_cachedMapID]
 end
 
 -------------------------------------------------------------------------------
@@ -693,6 +746,8 @@ local FLASK_ITEMS = {
       items={241326, 241327, 245929, 245928} },
     { key="thalassian_resistance", buffID=1235057, name="Flask of Thalassian Resistance",
       items={241320, 241321, 245926, 245927} },
+    { key="thalassian_horror", buffID=1239355, name="Vicious Thalassian Flask of Honor",
+      items={241334} },
 }
 local FLASK_BUFF_IDS = {}
 local FLASK_BUFF_ID_SET = {}
@@ -711,6 +766,7 @@ for _, id in ipairs(TWW_FLASK_BUFF_IDS) do
 end
 
 -- Food Items (Midnight)
+-- Food Items (Midnight)
 local FOOD_ITEMS = {
     { key="royal_roast",           itemID=242275, name="Royal Roast" },
     { key="impossibly_royal_roast", itemID=255847, name="Impossibly Royal Roast" },
@@ -727,7 +783,66 @@ local FOOD_ITEMS = {
     { key="tasty_smoked_tetra",    itemID=242278, name="Tasty Smoked Tetra" },
     { key="crimson_calamari",      itemID=242277, name="Crimson Calamari" },
     { key="braised_blood_hunter",  itemID=242276, name="Braised Blood Hunter" },
+    { key="harandar_celebration",  itemID=255846, name="Harandar Celebration" },
+    { key="silvermoon_parade",     itemID=255845, name="Silvermoon Parade" },
+    { key="queldorei_medley",      itemID=242272, name="Quel'dorei Medley" },
+    { key="blooming_feast",        itemID=242273, name="Blooming Feast" },
+    { key="sunwell_delight",       itemID=242293, name="Sunwell Delight" },
+    { key="hearthflame_supper",    itemID=242295, name="Hearthflame Supper" },
+    { key="fried_bloomtail",       itemID=242291, name="Fried Bloomtail" },
+    { key="felberry_figs",         itemID=242294, name="Felberry Figs" },
+    { key="eversong_pudding",      itemID=242292, name="Eversong Pudding" },
+    { key="bloodthistle_wrapped_cutlets", itemID=242296, name="Bloodthistle-wrapped Cutlets" },
+    { key="wise_tails",            itemID=242290, name="Wise Tails" },
+    { key="twilight_anglers_medley", itemID=242288, name="Twilight Angler's Medley" },
+    { key="spellfire_filet",       itemID=242289, name="Spellfire Filet" },
+    { key="spiced_biscuits",       itemID=242304, name="Spiced Biscuits" },
+    { key="silvermoon_standard",   itemID=242305, name="Silvermoon Standard" },
+    { key="quick_sandwich",        itemID=242307, name="Quick Sandwich" },
+    { key="portable_snack",        itemID=242308, name="Portable Snack" },
+    { key="mana_infused_stew",     itemID=242303, name="Mana-Infused Stew" },
+    { key="foragers_medley",       itemID=242306, name="Forager's Medley" },
+    { key="farstrider_rations",    itemID=242309, name="Farstrider Rations" },
+    { key="bloom_skewers",         itemID=242302, name="Bloom Skewers" },
+    -- Hearty Food Items
+    { key="hearty_royal_roast",            itemID=242747, name="Hearty Royal Roast" },
+    { key="hearty_impossibly_royal_roast",  itemID=268679, name="Hearty Impossibly Royal Roast" },
+    { key="hearty_flora_frenzy",            itemID=267000, name="Hearty Flora Frenzy" },
+    { key="hearty_champions_bento",         itemID=242746, name="Hearty Champion's Bento" },
+    { key="hearty_warped_wise_wings",       itemID=242757, name="Hearty Warped Wise Wings" },
+    { key="hearty_void_kissed_fish_rolls",  itemID=242756, name="Hearty Void-Kissed Fish Rolls" },
+    { key="hearty_sun_seared_lumifin",      itemID=242755, name="Hearty Sun-Seared Lumifin" },
+    { key="hearty_null_and_void_plate",     itemID=242754, name="Hearty Null and Void Plate" },
+    { key="hearty_glitter_skewers",         itemID=242753, name="Hearty Glitter Skewers" },
+    { key="hearty_fel_kissed_filet",        itemID=242758, name="Hearty Fel-Kissed Filet" },
+    { key="hearty_buttered_root_crab",      itemID=242752, name="Hearty Buttered Root Crab" },
+    { key="hearty_arcano_cutlets",          itemID=242759, name="Hearty Arcano Cutlets" },
+    { key="hearty_tasty_smoked_tetra",      itemID=242750, name="Hearty Tasty Smoked Tetra" },
+    { key="hearty_crimson_calamari",        itemID=242749, name="Hearty Crimson Calamari" },
+    { key="hearty_braised_blood_hunter",    itemID=242748, name="Hearty Braised Blood Hunter" },
+    { key="hearty_harandar_celebration",    itemID=266996, name="Hearty Harandar Celebration" },
+    { key="hearty_silvermoon_parade",       itemID=266985, name="Hearty Silvermoon Parade" },
+    { key="hearty_queldorei_medley",        itemID=242744, name="Hearty Quel'dorei Medley" },
+    { key="hearty_blooming_feast",          itemID=242745, name="Hearty Blooming Feast" },
+    { key="hearty_sunwell_delight",         itemID=242765, name="Hearty Sunwell Delight" },
+    { key="hearty_hearthflame_supper",      itemID=242767, name="Hearty Hearthflame Supper" },
+    { key="hearty_fried_bloomtail",         itemID=242763, name="Hearty Fried Bloomtail" },
+    { key="hearty_felberry_figs",           itemID=242766, name="Hearty Felberry Figs" },
+    { key="hearty_eversong_pudding",        itemID=242764, name="Hearty Eversong Pudding" },
+    { key="hearty_bloodthistle_wrapped_cutlets", itemID=242768, name="Hearty Bloodthistle-Wrapped Cutlets" },
+    { key="hearty_wise_tails",              itemID=242762, name="Hearty Wise Tails" },
+    { key="hearty_twilight_anglers_medley", itemID=242760, name="Hearty Twilight Angler's Medley" },
+    { key="hearty_spellfire_filet",         itemID=242761, name="Hearty Spellfire Filet" },
+    { key="hearty_spiced_biscuits",         itemID=242771, name="Hearty Spiced Biscuits" },
+    { key="hearty_silvermoon_standard",     itemID=242772, name="Hearty Silvermoon Standard" },
+    { key="hearty_quick_sandwich",          itemID=242774, name="Hearty Quick Sandwich" },
+    { key="hearty_portable_snack",          itemID=242775, name="Hearty Portable Snack" },
+    { key="hearty_mana_infused_stew",       itemID=242770, name="Hearty Mana-Infused Stew" },
+    { key="hearty_foragers_medley",         itemID=242773, name="Hearty Forager's Medley" },
+    { key="hearty_farstrider_rations",      itemID=242776, name="Hearty Farstrider Rations" },
+    { key="hearty_bloom_skewers",           itemID=242769, name="Hearty Bloom Skewers" },
 }
+
 
 -- Weapon Enchant dropdown choices (name best itemID lookup at runtime)
 local WEAPON_ENCHANT_CHOICES = {
@@ -1370,6 +1485,10 @@ local function LayoutIcons()
         btn:ClearAllPoints()
         btn:SetPoint("CENTER", iconAnchor, "CENTER", startX + (i-1)*(sz+spacing), 0)
     end
+    -- Size the anchor to the grid so the unlock mode mover covers it correctly
+    local textH = 0
+    if p.showText then textH = (p.textSize or 11) + abs(p.textYOffset or -2) end
+    iconAnchor:SetSize(totalW, sz + textH)
 end
 
 local function ShowIcon(iconIdx, setupFn, dismissKey)
@@ -2062,12 +2181,10 @@ local function ApplyUnlockPos()
     if not iconAnchor or not db then return end
     local pos = db.profile.unlockPos
     if pos and pos.point then
-        if pos.scale then pcall(function() iconAnchor:SetScale(pos.scale) end) end
         iconAnchor:ClearAllPoints()
         iconAnchor:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
     else
         local d = db.profile.display
-        pcall(function() iconAnchor:SetScale(1) end)
         iconAnchor:ClearAllPoints()
         iconAnchor:SetPoint("CENTER", UIParent, "CENTER", d.xOffset or 0, d.yOffset or 0)
     end
@@ -2075,8 +2192,9 @@ end
 
 local function RegisterUnlockElements()
     if not EllesmereUI or not EllesmereUI.RegisterUnlockElements then return end
+    local MK = EllesmereUI.MakeUnlockElement
     EllesmereUI:RegisterUnlockElements({
-        {
+        MK({
             key = "EABR_Reminders",
             label = "AuraBuff Reminders",
             group = "AuraBuff Reminders",
@@ -2087,36 +2205,50 @@ local function RegisterUnlockElements()
                 local baseScale = p.scale or 1.0
                 local sz = floor(ICON_SIZE * baseScale + 0.5)
                 local spacing = p.iconSpacing or 8
-                -- Size to fit 3 icons wide (typical max visible)
                 local count = max(#activeIcons, 3)
                 local w = count * sz + (count - 1) * spacing
-                -- Height: icon + gap + text line
                 local textH = 0
                 if p.showText then
                     textH = (p.textSize or 11) + abs(p.textYOffset or -2)
                 end
                 local h = sz + textH
-                -- Offset mover center down by half the text overhang
                 return w, h, -(textH / 2)
             end,
-            savePosition = function(key, point, relPoint, x, y, scale)
-                db.profile.unlockPos = {point=point, relPoint=relPoint, x=x, y=y, scale=scale}
+            linkedDimensions = true,
+            setWidth = function(_, newW)
+                local p = db.profile.display
+                local spacing = p.iconSpacing or 8
+                local count = max(#activeIcons, 3)
+                local sz = (newW - (count - 1) * spacing) / count
+                if sz < 8 then sz = 8 end
+                p.scale = sz / ICON_SIZE
+                if _G._EABR_RequestRefresh then _G._EABR_RequestRefresh() end
+            end,
+            setHeight = function(_, newH)
+                local p = db.profile.display
+                local textH = 0
+                if p.showText then
+                    textH = (p.textSize or 11) + abs(p.textYOffset or -2)
+                end
+                local sz = newH - textH
+                if sz < 8 then sz = 8 end
+                p.scale = sz / ICON_SIZE
+                if _G._EABR_RequestRefresh then _G._EABR_RequestRefresh() end
+            end,
+            savePos = function(key, point, relPoint, x, y)
+                db.profile.unlockPos = {point=point, relPoint=relPoint, x=x, y=y}
                 ApplyUnlockPos()
             end,
-            loadPosition = function()
+            loadPos = function()
                 return db.profile.unlockPos
             end,
-            getScale = function()
-                local pos = db.profile.unlockPos
-                return pos and pos.scale or 1.0
-            end,
-            clearPosition = function()
+            clearPos = function()
                 db.profile.unlockPos = nil
             end,
-            applyPosition = function()
+            applyPos = function()
                 ApplyUnlockPos()
             end,
-        },
+        }),
     })
 end
 
@@ -2404,17 +2536,6 @@ local mainFrame = CreateFrame("Frame")
 mainFrame:SetScript("OnEvent", function(_, e, arg1, arg2, arg3)
     if e == "PLAYER_LOGIN" then
         db = EllesmereUI.Lite.NewDB("EllesmereUIAuraBuffRemindersDB", defaults, true)
-
-        -- Migration: Source of Magic moved from raidBuffs to auras
-        if db.profile.raidBuffs and db.profile.raidBuffs.enabled and db.profile.raidBuffs.enabled.som ~= nil then
-            if db.profile.auras and db.profile.auras.enabled then
-                if db.profile.auras.enabled.som == nil then
-                    db.profile.auras.enabled.som = db.profile.raidBuffs.enabled.som
-                end
-            end
-            db.profile.raidBuffs.enabled.som = nil
-        end
-
 
         -- Expose globals for options
         _G._EABR_AceDB = db

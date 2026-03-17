@@ -245,7 +245,7 @@ initFrame:SetScript("OnEvent", function(self)
 
             -- Static center -- no y-offset interaction with preview
 
-            local pScale = sp.scale or 1.0
+            local pScale = 1.0
             local function ApplyPipTransform()
                 local s = pc["_anim_scale"] or pScale
                 pc:SetScale(s)
@@ -289,6 +289,43 @@ initFrame:SetScript("OnEvent", function(self)
                     pc._barFill:SetVertexColor(pr, pg, pb, 1)
                     UnsnapTex(pc._barFill)
                     pc._barFill:Show()
+                end
+
+                -- Tick marks on bar preview
+                if not pc._previewTicks then pc._previewTicks = {} end
+                do
+                    local tickStr = sp.tickValues or ""
+                    local ticks = pc._previewTicks
+                    for i = 1, #ticks do ticks[i]:Hide() end
+                    local vals = {}
+                    for s in tickStr:gmatch("[^,]+") do
+                        local n = tonumber(s:match("^%s*(.-)%s*$"))
+                        if n and n > 0 then vals[#vals + 1] = n end
+                    end
+                    -- Use the actual resource max for tick positioning
+                    local gsr = _G._ERB_GetSecondaryResource
+                    local secInfo = gsr and gsr()
+                    local previewMax = (secInfo and secInfo.max) or 100
+                    local PP = EllesmereUI and EllesmereUI.PP
+                    local onePx = PP and PP.Scale(1) or 1
+                    for i, v in ipairs(vals) do
+                        if v <= previewMax then
+                            if not ticks[i] then
+                                local t = pc:CreateTexture(nil, "OVERLAY", nil, 7)
+                                t:SetColorTexture(1, 1, 1, 1)
+                                t:SetSnapToPixelGrid(false)
+                                t:SetTexelSnappingBias(0)
+                                ticks[i] = t
+                            end
+                            local t = ticks[i]
+                            t:ClearAllPoints()
+                            local frac = v / previewMax
+                            local off = PP and PP.Scale(totalW * frac) or (totalW * frac)
+                            t:SetSize(onePx, pipH)
+                            t:SetPoint("TOPLEFT", pc, "TOPLEFT", off, 0)
+                            t:Show()
+                        end
+                    end
                 end
 
                 -- Hide pips if any exist from a previous build
@@ -419,8 +456,11 @@ initFrame:SetScript("OnEvent", function(self)
                     _previewFrames.pips[i]:Hide()
                 end
 
-                -- Hide bar fill if it exists from a previous build
+                -- Hide bar fill and tick marks if they exist from a previous build
                 if pc._barFill then pc._barFill:Hide() end
+                if pc._previewTicks then
+                    for i = 1, #pc._previewTicks do pc._previewTicks[i]:Hide() end
+                end
             end
 
             -- Full-bar border on container
@@ -1463,10 +1503,11 @@ initFrame:SetScript("OnEvent", function(self)
             EllesmereUI.RegisterWidgetRefresh(UpdateSwDis2)
             UpdateSwDis2()
         end
-        -- Inline cog on Threshold Count for partial coloring toggle
+        -- Inline cog on Threshold Count: partial coloring (pip-type) or tick marks (bar-type)
         do
             local rgn = threshRow._rightRegion
-            local _, cogShow = EllesmereUI.BuildCogPopup({
+            -- Build two cog popups: one for pip-type, one for bar-type
+            local _, cogShowPips = EllesmereUI.BuildCogPopup({
                 title = "Threshold Coloring",
                 rows = {
                     { type = "toggle", label = "Only Color At/Above Threshold",
@@ -1477,112 +1518,51 @@ initFrame:SetScript("OnEvent", function(self)
                       end },
                 },
             })
-            local cogBtn = MakeCogBtn(rgn, cogShow)
+            local _, cogShowBar = EllesmereUI.BuildCogPopup({
+                title = "Tick Marks",
+                rows = {
+                    { type = "input", label = "Ticks at Values (Ex: 25,50,75)", inputWidth = 70,
+                      get = function() local p = DB(); return p and p.secondary.tickValues or "" end,
+                      set = function(v)
+                          local p = DB(); if not p then return end
+                          p.secondary.tickValues = v; RebuildClass()
+                      end },
+                },
+            })
+            local cogBtn = MakeCogBtn(rgn, function(anchor)
+                if IsBarTypeSecondary() then
+                    cogShowBar(anchor)
+                else
+                    cogShowPips(anchor)
+                end
+            end)
             local cogDis = CreateFrame("Frame", nil, rgn)
             cogDis:SetAllPoints(cogBtn)
             cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
             cogDis:EnableMouse(true)
             cogDis:SetScript("OnEnter", function()
-                if IsBarTypeSecondary() then
-                    EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("This option is not available for your spec"))
-                else
+                if not IsBarTypeSecondary() and not (DB() and DB().secondary.thresholdEnabled) then
                     EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("This option requires Threshold Color to be enabled"))
                 end
             end)
             cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
             local function UpdateCogDisThresh()
                 local p = DB()
-                if p and (not p.secondary.enabled or not p.secondary.thresholdEnabled or IsBarTypeSecondary()) then cogDis:Show() else cogDis:Hide() end
+                -- For bar-type: cog is available whenever class resource is enabled
+                -- For pip-type: cog requires threshold to be enabled
+                if p and not p.secondary.enabled then
+                    cogDis:Show()
+                elseif IsBarTypeSecondary() then
+                    cogDis:Hide()
+                elseif p and not p.secondary.thresholdEnabled then
+                    cogDis:Show()
+                else
+                    cogDis:Hide()
+                end
             end
             cogBtn:HookScript("OnShow", UpdateCogDisThresh)
             EllesmereUI.RegisterWidgetRefresh(UpdateCogDisThresh)
             UpdateCogDisThresh()
-        end
-
-        -- Row 6: Anchored To | Anchor Position (inline DIRECTIONS cog)
-        local classAnchorRow
-        classAnchorRow, h = W:DualRow(parent, y,
-            { type = "dropdown", text = "Anchored To",
-              disabled = classOff,
-              disabledTooltip = "Enable Class Resource",
-              values = {
-                  none = "None", erb_powerbar = "Power Bar", erb_health = "Health Bar",
-                  erb_cdm = "CDM Cooldowns", mouse = "Mouse Cursor",
-                  partyframe = "Party Frame", playerframe = "Player Frame", erb_castbar = "Cast Bar",
-              },
-              order = { "none", "erb_powerbar", "erb_health", "---", "erb_cdm", "mouse", "partyframe", "playerframe", "erb_castbar" },
-              getValue = function() local p = DB(); return GetAnchorDropdownValue(p and p.secondary.anchorTo) end,
-              setValue = function(v)
-                  local p = DB(); if not p then return end
-                  p.secondary.anchorTo = v
-                  if v ~= "none" then p.secondary.unlockPos = nil end
-                  SmoothRefresh()
-              end },
-            { type = "dropdown", text = "Anchor Position",
-              disabled = function() local p = DB(); return p and (not p.secondary.enabled or (p.secondary.anchorTo or "none") == "none") end,
-              disabledTooltip = "Set Anchored To first",
-              values = { left = "Left", right = "Right", top = "Top", bottom = "Bottom" },
-              order = { "left", "right", "top", "bottom" },
-              getValue = function() local p = DB(); return p and p.secondary.anchorPosition or "left" end,
-              setValue = function(v)
-                  local p = DB(); if not p then return end
-                  p.secondary.anchorPosition = v; SmoothRefresh()
-              end }
-        );  y = y - h
-        -- Inline DIRECTIONS cog on Anchor Position for growth + x/y
-        do
-            local rgn = classAnchorRow._rightRegion
-            local _, cogShow = EllesmereUI.BuildCogPopup({
-                title = "Class Resource Anchor",
-                rows = {
-                    { type = "dropdown", label = "Growth",
-                      values = { UP = "Up", DOWN = "Down", LEFT = "Left", RIGHT = "Right" },
-                      order = { "UP", "DOWN", "LEFT", "RIGHT" },
-                      disabled = function() local p = DB(); return p and (p.secondary.anchorTo or "none") == "mouse" end,
-                      disabledTooltip = EllesmereUI.DisabledTooltip("Not available for Mouse Cursor anchor"),
-                      get = function() local p = DB(); return p and p.secondary.growthDirection or "UP" end,
-                      set = function(v)
-                          local p = DB(); if not p then return end
-                          p.secondary.growthDirection = v; SmoothRefresh()
-                      end },
-                    { type = "toggle", label = "Grow Centered",
-                      disabled = function() local p = DB(); return p and (p.secondary.anchorTo or "none") == "mouse" end,
-                      disabledTooltip = EllesmereUI.DisabledTooltip("Not available for Mouse Cursor anchor"),
-                      get = function() local p = DB(); return p and p.secondary.growCentered ~= false end,
-                      set = function(v)
-                          local p = DB(); if not p then return end
-                          p.secondary.growCentered = v; SmoothRefresh()
-                      end },
-                    { type = "slider", label = "X Offset", min = -125, max = 125, step = 1,
-                      get = function() local p = DB(); return p and p.secondary.anchorX or 0 end,
-                      set = function(v)
-                          local p = DB(); if not p then return end
-                          p.secondary.anchorX = v; SmoothRefresh()
-                      end },
-                    { type = "slider", label = "Y Offset", min = -125, max = 125, step = 1,
-                      get = function() local p = DB(); return p and p.secondary.anchorY or 0 end,
-                      set = function(v)
-                          local p = DB(); if not p then return end
-                          p.secondary.anchorY = v; SmoothRefresh()
-                      end },
-                },
-            })
-            local cogBtn = MakeCogBtn(rgn, cogShow, nil, EllesmereUI.DIRECTIONS_ICON)
-            local cogDis = CreateFrame("Frame", nil, rgn)
-            cogDis:SetAllPoints(cogBtn)
-            cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
-            cogDis:EnableMouse(true)
-            cogDis:SetScript("OnEnter", function()
-                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Set Anchored To first"))
-            end)
-            cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-            local function UpdateClassAnchorCogDis()
-                local p = DB()
-                if p and (not p.secondary.enabled or (p.secondary.anchorTo or "none") == "none") then cogDis:Show() else cogDis:Hide() end
-            end
-            cogBtn:HookScript("OnShow", UpdateClassAnchorCogDis)
-            EllesmereUI.RegisterWidgetRefresh(UpdateClassAnchorCogDis)
-            UpdateClassAnchorCogDis()
         end
 
         _, h = W:Spacer(parent, y, 16);  y = y - h
@@ -2037,81 +2017,6 @@ initFrame:SetScript("OnEvent", function(self)
             UpdatePowerThreshCogDis()
         end
 
-        -- Row 6: Anchored To | Anchor Position (inline DIRECTIONS cog)
-        local powerAnchorRow
-        powerAnchorRow, h = W:DualRow(parent, y,
-            { type = "dropdown", text = "Anchored To",
-              disabled = powerOff,
-              disabledTooltip = powerDisTip,
-              values = {
-                  none = "None", erb_classresource = "Class Resource", erb_health = "Health Bar",
-                  erb_cdm = "CDM Cooldowns", mouse = "Mouse Cursor",
-                  partyframe = "Party Frame", playerframe = "Player Frame", erb_castbar = "Cast Bar",
-              },
-              order = { "none", "erb_classresource", "erb_health", "---", "erb_cdm", "mouse", "partyframe", "playerframe", "erb_castbar" },
-              getValue = function() local p = DB(); return GetAnchorDropdownValue(p and p.primary.anchorTo) end,
-              setValue = function(v)
-                  local p = DB(); if not p then return end
-                  p.primary.anchorTo = v
-                  if v ~= "none" then p.primary.unlockPos = nil end
-                  SmoothRefresh()
-              end },
-            { type = "dropdown", text = "Anchor Position",
-              disabled = function()
-                  if noPrimaryPower then return true end
-                  local p = DB(); return p and (not p.primary.enabled or (p.primary.anchorTo or "none") == "none")
-              end,
-              disabledTooltip = function()
-                  if noPrimaryPower then return SPEC_DIS end
-                  return "Set Anchored To first"
-              end,
-              values = { left = "Left", right = "Right", top = "Top", bottom = "Bottom" },
-              order = { "left", "right", "top", "bottom" },
-              getValue = function() local p = DB(); return p and p.primary.anchorPosition or "left" end,
-              setValue = function(v)
-                  local p = DB(); if not p then return end
-                  p.primary.anchorPosition = v; SmoothRefresh()
-              end }
-        );  y = y - h
-        -- Inline DIRECTIONS cog on Anchor Position for x/y
-        do
-            local rgn = powerAnchorRow._rightRegion
-            local _, cogShow = EllesmereUI.BuildCogPopup({
-                title = "Power Bar Anchor",
-                rows = {
-                    { type = "slider", label = "X Offset", min = -125, max = 125, step = 1,
-                      get = function() local p = DB(); return p and p.primary.anchorX or 0 end,
-                      set = function(v)
-                          local p = DB(); if not p then return end
-                          p.primary.anchorX = v; SmoothRefresh()
-                      end },
-                    { type = "slider", label = "Y Offset", min = -125, max = 125, step = 1,
-                      get = function() local p = DB(); return p and p.primary.anchorY or 0 end,
-                      set = function(v)
-                          local p = DB(); if not p then return end
-                          p.primary.anchorY = v; SmoothRefresh()
-                      end },
-                },
-            })
-            local cogBtn = MakeCogBtn(rgn, cogShow, nil, EllesmereUI.DIRECTIONS_ICON)
-            local cogDis = CreateFrame("Frame", nil, rgn)
-            cogDis:SetAllPoints(cogBtn)
-            cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
-            cogDis:EnableMouse(true)
-            cogDis:SetScript("OnEnter", function()
-                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip(noPrimaryPower and SPEC_DIS or "Set Anchored To first"))
-            end)
-            cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-            local function UpdatePowerAnchorCogDis()
-                if noPrimaryPower then cogDis:Show(); return end
-                local p = DB()
-                if p and (not p.primary.enabled or (p.primary.anchorTo or "none") == "none") then cogDis:Show() else cogDis:Hide() end
-            end
-            cogBtn:HookScript("OnShow", UpdatePowerAnchorCogDis)
-            EllesmereUI.RegisterWidgetRefresh(UpdatePowerAnchorCogDis)
-            UpdatePowerAnchorCogDis()
-        end
-
         _, h = W:Spacer(parent, y, 16);  y = y - h
 
         -----------------------------------------------------------------------
@@ -2494,74 +2399,6 @@ initFrame:SetScript("OnEvent", function(self)
             UpdateHealthThreshSwDis()
         end
 
-        -- Row 6: Anchored To | Anchor Position (inline DIRECTIONS cog)
-        local healthAnchorRow
-        healthAnchorRow, h = W:DualRow(parent, y,
-            { type = "dropdown", text = "Anchored To",
-              disabled = healthOff,
-              disabledTooltip = "Enable Health Bar",
-              values = {
-                  none = "None", erb_classresource = "Class Resource", erb_powerbar = "Power Bar",
-                  erb_cdm = "CDM Cooldowns", mouse = "Mouse Cursor",
-                  partyframe = "Party Frame", playerframe = "Player Frame", erb_castbar = "Cast Bar",
-              },
-              order = { "none", "erb_classresource", "erb_powerbar", "---", "erb_cdm", "mouse", "partyframe", "playerframe", "erb_castbar" },
-              getValue = function() local p = DB(); return GetAnchorDropdownValue(p and p.health.anchorTo) end,
-              setValue = function(v)
-                  local p = DB(); if not p then return end
-                  p.health.anchorTo = v
-                  if v ~= "none" then p.health.unlockPos = nil end
-                  SmoothRefresh()
-              end },
-            { type = "dropdown", text = "Anchor Position",
-              disabled = function() local p = DB(); return p and (not p.health.enabled or (p.health.anchorTo or "none") == "none") end,
-              disabledTooltip = "Set Anchored To first",
-              values = { left = "Left", right = "Right", top = "Top", bottom = "Bottom" },
-              order = { "left", "right", "top", "bottom" },
-              getValue = function() local p = DB(); return p and p.health.anchorPosition or "left" end,
-              setValue = function(v)
-                  local p = DB(); if not p then return end
-                  p.health.anchorPosition = v; SmoothRefresh()
-              end }
-        );  y = y - h
-        -- Inline DIRECTIONS cog on Anchor Position for x/y
-        do
-            local rgn = healthAnchorRow._rightRegion
-            local _, cogShow = EllesmereUI.BuildCogPopup({
-                title = "Health Bar Anchor",
-                rows = {
-                    { type = "slider", label = "X Offset", min = -125, max = 125, step = 1,
-                      get = function() local p = DB(); return p and p.health.anchorX or 0 end,
-                      set = function(v)
-                          local p = DB(); if not p then return end
-                          p.health.anchorX = v; SmoothRefresh()
-                      end },
-                    { type = "slider", label = "Y Offset", min = -125, max = 125, step = 1,
-                      get = function() local p = DB(); return p and p.health.anchorY or 0 end,
-                      set = function(v)
-                          local p = DB(); if not p then return end
-                          p.health.anchorY = v; SmoothRefresh()
-                      end },
-                },
-            })
-            local cogBtn = MakeCogBtn(rgn, cogShow, nil, EllesmereUI.DIRECTIONS_ICON)
-            local cogDis = CreateFrame("Frame", nil, rgn)
-            cogDis:SetAllPoints(cogBtn)
-            cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
-            cogDis:EnableMouse(true)
-            cogDis:SetScript("OnEnter", function()
-                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Set Anchored To first"))
-            end)
-            cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-            local function UpdateHealthAnchorCogDis()
-                local p = DB()
-                if p and (not p.health.enabled or (p.health.anchorTo or "none") == "none") then cogDis:Show() else cogDis:Hide() end
-            end
-            cogBtn:HookScript("OnShow", UpdateHealthAnchorCogDis)
-            EllesmereUI.RegisterWidgetRefresh(UpdateHealthAnchorCogDis)
-            UpdateHealthAnchorCogDis()
-        end
-
         _, h = W:Spacer(parent, y, 16);  y = y - h
 
         -- Wire up click mappings for preview hit overlays
@@ -2602,15 +2439,15 @@ initFrame:SetScript("OnEvent", function(self)
             function() return false end,
             function()
                 local p = DB(); if not p then return end
-                p.health.offsetX = 0;   p.health.offsetY = -64;   p.health.unlockPos = nil; p.health.scale = 1.0
-                p.primary.offsetX = 0;  p.primary.offsetY = -52; p.primary.unlockPos = nil; p.primary.scale = 1.0
-                p.secondary.offsetX = 0; p.secondary.offsetY = -38; p.secondary.unlockPos = nil; p.secondary.scale = 1.0
+                p.health.offsetX = 0;   p.health.offsetY = -64;   p.health.unlockPos = nil
+                p.primary.offsetX = 0;  p.primary.offsetY = -52; p.primary.unlockPos = nil
+                p.secondary.offsetX = 0; p.secondary.offsetY = -38; p.secondary.unlockPos = nil
                 p.secondary.countTextUnlockPos = nil
                 p.castBar.unlockPos = nil; p.castBar.anchorX = 0; p.castBar.anchorY = -50
                 Refresh()
             end,
             nil,
-            "Click to reset all element positions and scales to defaults"
+            "Click to reset all element positions to defaults"
         );  y = y - h
 
         return math.abs(y)
@@ -3023,12 +2860,6 @@ initFrame:SetScript("OnEvent", function(self)
                       set = function(v)
                           local p = DB(); if not p then return end
                           p.castBar.anchorY = v; RefreshCast()
-                      end },
-                    { type = "slider", label = "Scale", min = 0.5, max = 3, step = 0.05,
-                      get = function() local p = DB(); return p and p.castBar.scale or 1.0 end,
-                      set = function(v)
-                          local p = DB(); if not p then return end
-                          p.castBar.scale = v; RefreshCast()
                       end },
                 },
                 footer = { unlockKey = "ERB_CastBar" },

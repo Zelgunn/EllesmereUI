@@ -90,14 +90,10 @@ local defaults = {
     classColorFriendly = true,
     showEnemyPets = false,
     font = "Interface\\AddOns\\EllesmereUI\\media\\fonts\\Expressway.TTF",
-    showHealthNumber = false,
-    hpPercentPos = "right",
-    hpNumberPos = "none",
     textSlotTop = "enemyName",
     textSlotRight = "healthPercent",
     textSlotLeft = "none",
     textSlotCenter = "none",
-    healthTextColor = { r = 1, g = 1, b = 1 },
     showTargetArrows = false,
     targetArrowScale = 1.0,
     showClassPower = false,
@@ -118,10 +114,7 @@ local defaults = {
     hitboxScaleY = 100,
     nameplateYOffset = 0,
     enemyNameTextSize = 11,
-    enemyNameColor = { r = 1, g = 1, b = 1 },
-    debuffTextWhite = false,
     debuffTimerColor = { r = 1, g = 1, b = 1 },
-    debuffTextPosition = "topleft",
     auraTextPosition = "topleft",
     debuffTimerPosition = "topleft",
     buffTimerPosition = "topleft",
@@ -136,7 +129,6 @@ local defaults = {
     debuffYOffset = 2,
     sideAuraXOffset = 2,
     nameYOffset = 0,
-    enemyNamePos = "top",
     auraSpacing = 2,
     debuffIconSize = 26,
     buffIconSize = 24,
@@ -145,22 +137,17 @@ local defaults = {
     ccIconSize = 24,
     ccTextSize = 12,
     ccTextColor = { r = 1, g = 1, b = 1 },
-    showTargetGlow = true,  -- legacy compat (true = "ellesmereui")
     targetGlowStyle = "ellesmereui",
     raidMarkerPos = "topright",
     raidMarkerSize = 24,
-    raidMarkerYOffset = 2,
     classificationSlot = "topleft",
     rareEliteIconSize = 20,
-    rareEliteIconYOffset = 0,
-    rareEliteIconXOffset = 0,
     castBarHeight = 17,
     castNameSize = 10,
     castNameColor = { r = 1, g = 1, b = 1 },
     castTargetSize = 10,
     castTargetClassColor = true,
     castTargetColor = { r = 1, g = 1, b = 1 },
-    healthTextSize = 10,
     showAllDebuffs = false,
     borderStyle = "ellesmere",
     borderColor = { r = 0.067, g = 0.067, b = 0.067 },
@@ -288,17 +275,8 @@ end
 ns.GetEnemyNameTextSize = GetEnemyNameTextSize
 local function GetDebuffTextColor()
     local db = EllesmereUINameplatesDB
-    -- Legacy support: if debuffTextWhite was set but debuffTimerColor wasn't customized, use white
-    if db and db.debuffTimerColor then
-        local c = db.debuffTimerColor
-        return c.r, c.g, c.b, 1
-    end
-    local useWhite = db and db.debuffTextWhite or defaults.debuffTextWhite
-    if useWhite then
-        return 1, 1, 1, 1
-    else
-        return defaults.debuffTimerColor.r, defaults.debuffTimerColor.g, defaults.debuffTimerColor.b, 1
-    end
+    local c = db and db.debuffTimerColor or defaults.debuffTimerColor
+    return c.r, c.g, c.b, 1
 end
 ns.GetDebuffTextColor = GetDebuffTextColor
 local function GetPandemicGlow()
@@ -324,23 +302,6 @@ local function GetPandemicGlowStyle()
     local db = EllesmereUINameplatesDB
     local raw = db and db.pandemicGlowStyle
     if raw == nil then return defaults.pandemicGlowStyle end
-    -- One-time legacy migration: old string keys or old numeric indices new order
-    -- The flag _pandemicGlowMigrated prevents re-migration after the user picks a new value
-    if not db._pandemicGlowMigrated then
-        local migrated
-        if raw == "pixel" or raw == "ants" then migrated = 1
-        elseif raw == "button" or raw == "proc" then migrated = 5
-        elseif raw == "autocast" then migrated = 3
-        elseif type(raw) == "number" and raw <= 4 then
-            local map = { [1] = 5, [2] = 5, [3] = 6, [4] = 1 }
-            migrated = map[raw]
-        end
-        if migrated then
-            db.pandemicGlowStyle = migrated
-            raw = migrated
-        end
-        db._pandemicGlowMigrated = true
-    end
     if type(raw) == "number" then return raw end
     return 1
 end
@@ -411,7 +372,7 @@ local function GetRaidMarkerSize()
 end
 ns.GetRaidMarkerSize = GetRaidMarkerSize
 local function GetRaidMarkerYOffset()
-    return 0  -- legacy stub; slot Y offset used instead
+    return 0
 end
 ns.GetRaidMarkerYOffset = GetRaidMarkerYOffset
 local function GetClassificationSlot()
@@ -424,14 +385,6 @@ local function GetRareEliteIconSize()
     return EllesmereUINameplatesDB and EllesmereUINameplatesDB[pos .. "SlotSize"] or defaults[pos .. "SlotSize"] or 20
 end
 ns.GetRareEliteIconSize = GetRareEliteIconSize
-local function GetRareEliteIconYOffset()
-    return 0  -- legacy stub; slot Y offset used instead
-end
-ns.GetRareEliteIconYOffset = GetRareEliteIconYOffset
-local function GetRareEliteIconXOffset()
-    return 0  -- legacy stub; slot X offset used instead
-end
-ns.GetRareEliteIconXOffset = GetRareEliteIconXOffset
 local function GetNameYOffset()
     return EllesmereUINameplatesDB and EllesmereUINameplatesDB.nameYOffset or defaults.nameYOffset
 end
@@ -529,12 +482,9 @@ ns.GetCCIconSize = GetCCIconSize
 local function GetTargetGlowStyle()
     local db = EllesmereUINameplatesDB
     if db and db.targetGlowStyle then return db.targetGlowStyle end
-    -- Backward compat: old boolean showTargetGlow
-    if db and db.showTargetGlow == false then return "none" end
     return defaults.targetGlowStyle
 end
 ns.GetTargetGlowStyle = GetTargetGlowStyle
--- Legacy wrapper
 local function GetShowTargetGlow()
     return GetTargetGlowStyle() ~= "none"
 end
@@ -1176,7 +1126,7 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
     -- Text overlay frame: renders above focus stripe overlay (level +1)
     plate.healthTextFrame = CreateFrame("Frame", nil, plate)
     plate.healthTextFrame:SetAllPoints(plate.health)
-    plate.healthTextFrame:SetFrameLevel(plate.health:GetFrameLevel() + 2)
+    plate.healthTextFrame:SetFrameLevel(plate.health:GetFrameLevel() + 7)
     plate.hpText = plate.healthTextFrame:CreateFontString(nil, "OVERLAY")
     SetFSFont(plate.hpText, 10, GetNPOutline())
     PP.Point(plate.hpText, "RIGHT", plate.health, "RIGHT", -2, 0)
@@ -1419,105 +1369,6 @@ local function InitDB()
     if not EllesmereUINameplatesDB then
         EllesmereUINameplatesDB = {}
     end
-    -- Migrate font path from old location to EllesmereUI/media
-    if EllesmereUINameplatesDB.font == "Interface\\AddOns\\EllesmereUINameplates\\Expressway.TTF" then
-        EllesmereUINameplatesDB.font = defaults.font
-    end
-    -- Migrate font path from old media root to fonts subfolder
-    if EllesmereUINameplatesDB.font == "Interface\\AddOns\\EllesmereUI\\media\\Expressway.TTF" then
-        EllesmereUINameplatesDB.font = defaults.font
-    end
-    -- Migrate auraSpacing from old raw pixel value (>=22) to new gap-only value
-    if EllesmereUINameplatesDB.auraSpacing and EllesmereUINameplatesDB.auraSpacing >= 22 then
-        EllesmereUINameplatesDB.auraSpacing = math.max(EllesmereUINameplatesDB.auraSpacing - 28, 0)
-    end
-    -- Migrate debuffIconW/H to single debuffIconSize (use the larger of the two)
-    if EllesmereUINameplatesDB.debuffIconW or EllesmereUINameplatesDB.debuffIconH then
-        local w = EllesmereUINameplatesDB.debuffIconW or 28
-        local h = EllesmereUINameplatesDB.debuffIconH or 24
-        EllesmereUINameplatesDB.debuffIconSize = math.max(w, h)
-        EllesmereUINameplatesDB.debuffIconW = nil
-        EllesmereUINameplatesDB.debuffIconH = nil
-    end
-    -- Migrate debuffTextPosition auraTextPosition (timer position now applies to all auras)
-    if EllesmereUINameplatesDB.debuffTextPosition and not EllesmereUINameplatesDB.auraTextPosition then
-        EllesmereUINameplatesDB.auraTextPosition = EllesmereUINameplatesDB.debuffTextPosition
-    end
-    -- Migrate unified auraTextPosition per-type timer positions
-    if EllesmereUINameplatesDB.auraTextPosition and not EllesmereUINameplatesDB.debuffTimerPosition then
-        local pos = EllesmereUINameplatesDB.auraTextPosition
-        EllesmereUINameplatesDB.debuffTimerPosition = pos
-        EllesmereUINameplatesDB.buffTimerPosition = pos
-        EllesmereUINameplatesDB.ccTimerPosition = pos
-    end
-    -- Migrate old per-type text color unified auraDurationTextColor
-    if not EllesmereUINameplatesDB.auraDurationTextColor then
-        if EllesmereUINameplatesDB.debuffTimerColor then
-            local c = EllesmereUINameplatesDB.debuffTimerColor
-            EllesmereUINameplatesDB.auraDurationTextColor = { r = c.r, g = c.g, b = c.b }
-        end
-    end
-    -- Migrate showHealthNumber toggle hpNumberPos dropdown
-    if EllesmereUINameplatesDB.showHealthNumber ~= nil and not EllesmereUINameplatesDB.hpNumberPos then
-        if EllesmereUINameplatesDB.showHealthNumber then
-            EllesmereUINameplatesDB.hpNumberPos = "center"
-        else
-            EllesmereUINameplatesDB.hpNumberPos = "none"
-        end
-    end
-    -- Migrate old text position keys new slot-based system
-    if EllesmereUINameplatesDB.textSlotTop == nil
-       and (EllesmereUINameplatesDB.enemyNamePos ~= nil
-         or EllesmereUINameplatesDB.hpPercentPos ~= nil
-         or EllesmereUINameplatesDB.hpNumberPos ~= nil) then
-        local db = EllesmereUINameplatesDB
-        db.textSlotTop = "none"
-        db.textSlotRight = "none"
-        db.textSlotLeft = "none"
-        db.textSlotCenter = "none"
-        local posToSlot = {
-            top = "textSlotTop", right = "textSlotRight",
-            left = "textSlotLeft", center = "textSlotCenter",
-        }
-        -- Enemy name first (highest priority)
-        local namePos = db.enemyNamePos or defaults.enemyNamePos
-        local nameSlot = posToSlot[namePos]
-        if nameSlot then db[nameSlot] = "enemyName" end
-        -- Health percent
-        local pctPos = db.hpPercentPos or defaults.hpPercentPos
-        if pctPos ~= "none" then
-            local pctSlot = posToSlot[pctPos]
-            if pctSlot and db[pctSlot] == "none" then
-                db[pctSlot] = "healthPercent"
-            end
-        end
-        -- Health number
-        local numPos = db.hpNumberPos or defaults.hpNumberPos
-        if numPos ~= "none" then
-            local numSlot = posToSlot[numPos]
-            if numSlot and db[numSlot] == "none" then
-                db[numSlot] = "healthNumber"
-            end
-        end
-        -- Clean up old keys
-        db.enemyNamePos = nil
-        db.hpPercentPos = nil
-        db.hpNumberPos = nil
-    end
-    -- Migrate old global text colors per-slot colors
-    if EllesmereUINameplatesDB.textSlotTopColor == nil then
-        local db = EllesmereUINameplatesDB
-        local oldNameC = db.enemyNameColor or defaults.enemyNameColor
-        local oldHealthC = db.healthTextColor or defaults.healthTextColor
-        for _, sk in ipairs(textSlotKeys) do
-            local element = db[sk] or defaults[sk]
-            if element == "enemyName" then
-                db[sk .. "Color"] = { r = oldNameC.r, g = oldNameC.g, b = oldNameC.b }
-            elseif element ~= "none" then
-                db[sk .. "Color"] = { r = oldHealthC.r, g = oldHealthC.g, b = oldHealthC.b }
-            end
-        end
-    end
     for k, v in pairs(defaults) do
         if EllesmereUINameplatesDB[k] == nil then
             if type(v) == "table" then
@@ -1682,23 +1533,6 @@ kickWatcher:SetScript("OnEvent", function(self, event)
             end
         end
     else
-        -- Migrate old overlay texture names to v2 (once, at login)
-        if event == "PLAYER_LOGIN" and EllesmereUINameplatesDB then
-            local old = EllesmereUINameplatesDB.focusOverlayTexture
-            if old == "striped" then EllesmereUINameplatesDB.focusOverlayTexture = "striped-v2"
-            elseif old == "striped-wide" then EllesmereUINameplatesDB.focusOverlayTexture = "striped-wide-v2"
-            end
-            local presets = EllesmereUINameplatesDB._color_presets
-            if presets then
-                for _, preset in pairs(presets) do
-                    local pt = preset.focusOverlayTexture
-                    if pt == "striped" then preset.focusOverlayTexture = "striped-v2"
-                    elseif pt == "striped-wide" then preset.focusOverlayTexture = "striped-wide-v2"
-                    end
-                end
-            end
-        end
-        -- Blizzard options panel is registered centrally in EllesmereUI.lua
         RefreshKickAbility()
     end
 end)
@@ -4083,8 +3917,7 @@ function NameplateFrame:UpdateKickTick(kickProtected, isChannel)
             end
         end)
     else
-        -- Legacy path (non-Midnight): use GetTime() math
-        -- Not implementing legacy path since user is on Midnight
+        -- API not available; hide tick
         self:HideKickTick()
     end
 end

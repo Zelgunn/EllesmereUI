@@ -1,7 +1,7 @@
 -------------------------------------------------------------------------------
 --  EUI_CursorLite_Options.lua
---  Registers the Cursor Lite module with EllesmereUI
---  Pure UI migration – all get/set calls go to the addon's AceDB profile.
+--  Registers the Cursor Lite module with EllesmereUI.
+--  All get/set calls go to the addon's DB profile.
 --  Does NOT touch cursor tracking logic.
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...

@@ -11,9 +11,8 @@ local ADDON_NAME = ...
 --
 --  SavedVariables (EllesmereUIDB) aren't available at file scope — they load
 --  at ADDON_LOADED. So we use events:
---    ADDON_LOADED  → DB is available. If we have a saved scale, apply it.
---                    If migrating from old system, convert and apply.
---    PLAYER_ENTERING_WORLD → Blizzard has applied the user's CVar scale.
+--    ADDON_LOADED  -> DB is available. If we have a saved scale, apply it.
+--    PLAYER_ENTERING_WORLD -> Blizzard has applied the user's CVar scale.
 --                    If no saved scale yet (first install / reset), snapshot
 --                    the user's current Blizzard scale and save it.
 -------------------------------------------------------------------------------
@@ -66,15 +65,6 @@ do
                 return max(0.4, min(perfect, 1.15))
             end
 
-            -- Migration from old percentage-based blizzUIScale
-            if EllesmereUIDB.ppUIScale == nil and EllesmereUIDB.blizzUIScale then
-                EllesmereUIDB.ppUIScale = PixelBestSize()
-                EllesmereUIDB.ppUIScaleAuto = true
-            end
-
-            -- If ppUIScale is already saved from a previous session,
-            -- the user is a returning user. We skip SetScale here and
-            -- apply it once at PLAYER_LOGIN instead.
             if EllesmereUIDB.ppUIScale then
                 scaleKnown = true
             end
@@ -115,7 +105,7 @@ do
             local scale = EllesmereUIDB.ppUIScale
             if not scale then return end
 
-            -- First-time conversion / migration path: full safety net.
+            -- First-time install: apply scale with safety net.
             -- Apply scale multiple times to guarantee it sticks even on
             -- slow machines where Blizzard may reset it during init.
             if EllesmereUI and EllesmereUI.PP and EllesmereUI.PP.UpdateMult then
@@ -145,11 +135,6 @@ end
 -- CombatTextFont may not exist yet here, so we also hook ADDON_LOADED
 -- to catch it as soon as it becomes available.
 do
-    -- Migrate old media path if needed
-    if EllesmereUIDB and EllesmereUIDB.fctFont and type(EllesmereUIDB.fctFont) == "string" then
-        EllesmereUIDB.fctFont = EllesmereUIDB.fctFont:gsub("\\media\\Expressway", "\\media\\fonts\\Expressway")
-    end
-
     local function ApplyCombatTextFont()
         local saved = EllesmereUIDB and EllesmereUIDB.fctFont
         if not saved or type(saved) ~= "string" or saved == "" then return end

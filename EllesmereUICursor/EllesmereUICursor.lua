@@ -816,109 +816,100 @@ end
 -------------------------------------------------------------------------------
 local function RegisterUnlockElements()
     if not EllesmereUI or not EllesmereUI.RegisterUnlockElements then return end
-
-    local function gcdSavePos(key, point, relPoint, x, y, scale)
-        local p = ECL.db and ECL.db.profile
-        if not p then return end
-        if not p.gcd then p.gcd = {} end
-        p.gcd.pos = { point = point, relPoint = relPoint, x = x, y = y }
-        if scale then
-            p.gcd.scale = floor(scale * 100 + 0.5)
-        end
-        ApplyGCDCircle()
-    end
-    local function gcdLoadPos(key)
-        local g = GCD_DB()
-        local pos = g.pos
-        if pos then
-            pos.scale = g.scale and (g.scale / 100) or nil
-        end
-        return pos
-    end
-    local function gcdClearPos(key)
-        local p = ECL.db and ECL.db.profile
-        if p and p.gcd then p.gcd.pos = nil end
-    end
-    local function gcdGetFrame(key)
-        return gcdRoot
-    end
-    local function gcdGetSize(key)
-        local g = GCD_DB()
-        local r = g.radius or 30
-        return r * 2, r * 2
-    end
-    local function gcdApplyPos(key)
-        _G._ECL_ApplyGCDPosition()
-    end
-
-    local function castSavePos(key, point, relPoint, x, y, scale)
-        local p = ECL.db and ECL.db.profile
-        if not p then return end
-        if not p.castCircle then p.castCircle = {} end
-        p.castCircle.pos = { point = point, relPoint = relPoint, x = x, y = y }
-        if scale then
-            p.castCircle.scale = floor(scale * 100 + 0.5)
-        end
-        ApplyCastCircle()
-    end
-    local function castLoadPos(key)
-        local c = Cast_DB()
-        local pos = c.pos
-        if pos then
-            pos.scale = c.scale and (c.scale / 100) or nil
-        end
-        return pos
-    end
-    local function castClearPos(key)
-        local p = ECL.db and ECL.db.profile
-        if p and p.castCircle then p.castCircle.pos = nil end
-    end
-    local function castGetFrame(key)
-        return castRoot
-    end
-    local function castGetSize(key)
-        local c = Cast_DB()
-        local r = c.radius or 36
-        return r * 2, r * 2
-    end
-    local function castApplyPos(key)
-        _G._ECL_ApplyCastPosition()
-    end
+    local MK = EllesmereUI.MakeUnlockElement
 
     local elements = {}
 
     local g = GCD_DB()
     if g.enabled and g.attached == false then
-        elements[#elements + 1] = {
+        elements[#elements + 1] = MK({
             key = "ECL_GCD",
             label = "GCD Circle",
             group = "Cursor Lite",
             order = 500,
-            getFrame = gcdGetFrame,
-            getSize = gcdGetSize,
-            getScale = function() local g = GCD_DB(); return g.scale and (g.scale / 100) or 1.0 end,
-            savePosition = gcdSavePos,
-            loadPosition = gcdLoadPos,
-            clearPosition = gcdClearPos,
-            applyPosition = gcdApplyPos,
-        }
+            getFrame = function() return gcdRoot end,
+            getSize = function()
+                local g2 = GCD_DB()
+                local r = g2.radius or 30
+                return r * 2, r * 2
+            end,
+            setWidth = function(_, w)
+                local p = ECL.db and ECL.db.profile
+                if not p or not p.gcd then return end
+                p.gcd.radius = math.max(math.floor(w / 2 + 0.5), 5)
+                ApplyGCDCircle()
+            end,
+            setHeight = function(_, h)
+                local p = ECL.db and ECL.db.profile
+                if not p or not p.gcd then return end
+                p.gcd.radius = math.max(math.floor(h / 2 + 0.5), 5)
+                ApplyGCDCircle()
+            end,
+            savePos = function(key, point, relPoint, x, y)
+                local p = ECL.db and ECL.db.profile
+                if not p then return end
+                if not p.gcd then p.gcd = {} end
+                p.gcd.pos = { point = point, relPoint = relPoint, x = x, y = y }
+                ApplyGCDCircle()
+            end,
+            loadPos = function()
+                local g2 = GCD_DB()
+                return g2.pos
+            end,
+            clearPos = function()
+                local p = ECL.db and ECL.db.profile
+                if p and p.gcd then p.gcd.pos = nil end
+            end,
+            applyPos = function()
+                _G._ECL_ApplyGCDPosition()
+            end,
+        })
     end
 
     local c = Cast_DB()
     if c.enabled and c.attached == false then
-        elements[#elements + 1] = {
+        elements[#elements + 1] = MK({
             key = "ECL_Cast",
             label = "Cast Bar Circle",
             group = "Cursor Lite",
             order = 501,
-            getFrame = castGetFrame,
-            getSize = castGetSize,
-            getScale = function() local c = Cast_DB(); return c.scale and (c.scale / 100) or 1.0 end,
-            savePosition = castSavePos,
-            loadPosition = castLoadPos,
-            clearPosition = castClearPos,
-            applyPosition = castApplyPos,
-        }
+            getFrame = function() return castRoot end,
+            getSize = function()
+                local c2 = Cast_DB()
+                local r = c2.radius or 36
+                return r * 2, r * 2
+            end,
+            setWidth = function(_, w)
+                local p = ECL.db and ECL.db.profile
+                if not p or not p.castCircle then return end
+                p.castCircle.radius = math.max(math.floor(w / 2 + 0.5), 5)
+                ApplyCastCircle()
+            end,
+            setHeight = function(_, h)
+                local p = ECL.db and ECL.db.profile
+                if not p or not p.castCircle then return end
+                p.castCircle.radius = math.max(math.floor(h / 2 + 0.5), 5)
+                ApplyCastCircle()
+            end,
+            savePos = function(key, point, relPoint, x, y)
+                local p = ECL.db and ECL.db.profile
+                if not p then return end
+                if not p.castCircle then p.castCircle = {} end
+                p.castCircle.pos = { point = point, relPoint = relPoint, x = x, y = y }
+                ApplyCastCircle()
+            end,
+            loadPos = function()
+                local c2 = Cast_DB()
+                return c2.pos
+            end,
+            clearPos = function()
+                local p = ECL.db and ECL.db.profile
+                if p and p.castCircle then p.castCircle.pos = nil end
+            end,
+            applyPos = function()
+                _G._ECL_ApplyCastPosition()
+            end,
+        })
     end
 
     if #elements > 0 then

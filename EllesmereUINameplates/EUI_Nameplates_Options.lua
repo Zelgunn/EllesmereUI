@@ -1,8 +1,7 @@
 -------------------------------------------------------------------------------
 --  EUI_Nameplates_Options.lua
---  Registers the Nameplates module with EllesmereUI
---  Pure UI migration all get/set calls go to EllesmereUINameplatesDB,
---  same keys, same defaults, same refresh functions as the AceConfig version.
+--  Registers the Nameplates module with EllesmereUI.
+--  All get/set calls go to EllesmereUINameplatesDB.
 --  Does NOT touch nameplate rendering logic.
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
@@ -418,7 +417,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Text overlay frame: renders above health bar fill and borders (same as real addon)
         local healthTextFrame = CreateFrame("Frame", nil, health)
         healthTextFrame:SetAllPoints(health)
-        healthTextFrame:SetFrameLevel(health:GetFrameLevel() + 2)
+        healthTextFrame:SetFrameLevel(health:GetFrameLevel() + 7)
 
         -- Top text overlay: renders above health bar + borders so top-slot text is never hidden
         local topTextFrame = CreateFrame("Frame", nil, pf)
@@ -1150,7 +1149,7 @@ initFrame:SetScript("OnEvent", function(self)
             local auraDurC = (DB() and DB().auraDurationTextColor) or defaults.auraDurationTextColor
             local auraStackSz = DBVal("auraStackTextSize") or defaults.auraStackTextSize
             local auraStackC = (DB() and DB().auraStackTextColor) or defaults.auraStackTextColor
-            local atPos = DBVal("auraTextPosition") or DBVal("debuffTextPosition") or defaults.auraTextPosition
+            local atPos = DBVal("auraTextPosition") or defaults.auraTextPosition
             local debuffTPos = DBVal("debuffTimerPosition") or atPos
             local buffTPos   = DBVal("buffTimerPosition")   or atPos
             local ccTPos     = DBVal("ccTimerPosition")     or atPos
@@ -1675,7 +1674,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Only show glow if pandemic glow is enabled
         if off then return end
 
-        -- Use the core addon's migration logic (writes back to DB)
+        -- Read the current glow style
         local styleIdx = ns.GetPandemicGlowStyle and ns.GetPandemicGlowStyle() or (DBVal("pandemicGlowStyle") or 1)
         if type(styleIdx) ~= "number" then styleIdx = 1 end
         local styles = ns.PANDEMIC_GLOW_STYLES
@@ -2731,8 +2730,6 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     local _updatePreviewHooked = false
 
-    local _refreshAllPlatesHooked = false
-
     local function BuildDisplayPage(pageName, parent, yOffset)
         local W = EllesmereUI.Widgets
         local y = yOffset
@@ -2957,7 +2954,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end
 
-        local atFallback = DBVal("auraTextPosition") or DBVal("debuffTextPosition") or defaults.auraTextPosition
+        local atFallback = DBVal("auraTextPosition") or defaults.auraTextPosition
 
         -----------------------------------------------------------------------
         --  STYLE
@@ -3164,8 +3161,7 @@ initFrame:SetScript("OnEvent", function(self)
             if _refreshClassificationEyePos then _refreshClassificationEyePos() end
         end
 
-        -- Map element name to XY offset key prefix (legacy, kept for reference)
-        -- Now using slot-based offsets: pos .. "SlotXOffset" / "SlotYOffset"
+        -- Slot-based offsets: pos .. "SlotXOffset" / "SlotYOffset"
 
         local function CorePosXGet(pos)
             return DBVal(pos .. "SlotXOffset") or 0
@@ -4248,8 +4244,6 @@ initFrame:SetScript("OnEvent", function(self)
             end
             local adColorSet = function(r, g, b)
                 DB().auraDurationTextColor = { r = r, g = g, b = b }
-                DB().debuffTimerColor = { r = r, g = g, b = b }
-                DB().debuffTextWhite = nil
                 for _, plate in pairs(plates) do
                     for i = 1, 4 do
                         if plate.debuffs[i] and plate.debuffs[i].cd and plate.debuffs[i].cd.text then
@@ -5419,59 +5413,6 @@ initFrame:SetScript("OnEvent", function(self)
             return proxy
         end
 
-        -- Shuffle cast icons and fills so each preview is unique
-        -- ShuffleCastIcons()  -- disabled: no cast previews on Colors page
-        -- ResetCastFills()    -- disabled: no cast previews on Colors page
-
-        --[[ COLOR PRESET SYSTEM (disabled kept for future use)
-        -- Color preset keys
-        local colorPresetKeys = {
-            "focusColorEnabled", "focus", "focusOverlayTexture", "focusOverlayAlpha", "focusOverlayColor", "caster", "miniboss", "enemyInCombat",
-            "castBar", "interruptReady",
-            "tankHasAggroEnabled", "tankHasAggro", "tankLosingAggro", "tankNoAggro",
-            "dpsHasAggro", "dpsNearAggro",
-        }
-
-        local function RandomizeColorSettings(db)
-            local function rColor() return { r = math.random(), g = math.random(), b = math.random() } end
-            for _, key in ipairs(colorPresetKeys) do
-                if key == "focusColorEnabled" or key == "tankHasAggroEnabled" then
-                    db[key] = true  -- always enable during randomize so user can see the color
-                elseif key ~= "focusOverlayTexture" and key ~= "focusOverlayAlpha" and key ~= "focusOverlayColor" then
-                    db[key] = rColor()
-                end
-            end
-        end
-
-        -- Inline preset system at top of scroll area (no content header)
-        local checkDrift, presetH = EllesmereUI:BuildPresetSystem({
-            presetKeys  = colorPresetKeys,
-            dbFunc      = DB,
-            dbValFunc   = DBVal,
-            defaults    = defaults,
-            dbPrefix    = "_color",
-            randomizeFn = RandomizeColorSettings,
-            refreshFn   = function()
-                RefreshAllPlates()
-            end,
-            inlineParent = parent,
-            yOffset      = y,
-        })
-        onColorPresetSettingChanged = checkDrift
-        _colorPresetCheckDrift = checkDrift
-        y = y - presetH
-
-        -- Hook RefreshAllPlates to auto-detect color drift (same pattern as Display's UpdatePreview hook)
-        if not _refreshAllPlatesHooked then
-            _refreshAllPlatesHooked = true
-            local _origRefreshAllPlates = RefreshAllPlates
-            RefreshAllPlates = function()
-                _origRefreshAllPlates()
-                if onColorPresetSettingChanged then onColorPresetSettingChanged() end
-            end
-        end
-        --]]
-
         local focusPrev
 
         -----------------------------------------------------------------------
@@ -5951,8 +5892,6 @@ initFrame:SetScript("OnEvent", function(self)
                     EllesmereUI:SetContentHeaderHeightSilent(_headerBaseH + (dismissed and 0 or 29))
                 end
             elseif pageName == PAGE_COLORS then
-                -- Color preset restore disabled (preset system commented out)
-                -- onColorPresetSettingChanged = _colorPresetCheckDrift
                 -- Randomize preview fills/icons when switching TO this tab
                 if _colorPreviewRandomizeAll then _colorPreviewRandomizeAll() end
                 -- Refresh all color preview bars (colors from DB)

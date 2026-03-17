@@ -10,21 +10,14 @@ end
 local db
 local defaults = {
     profile = {
-        showPortrait = true,
         castbarOpacity = 1.0,
         castbarColor = { r = 0.114, g = 0.655, b = 0.514 },
-        selectedFont = "Expressway",
-        use3DPortrait = false,
         portraitMode = "2d",
         portraitStyle = "attached",
         healthBarTexture = "none",
-        healthBarOpacity = 90,
-        powerBarOpacity = 100,
         darkTheme = false,
-        -- NEW: separate player sub-table (migrated from shared playerTarget)
         player = {
             frameWidth = 181,
-            frameScale = 100,
             healthHeight = 46,
             powerHeight = 6,
             powerPosition = "below",
@@ -109,7 +102,6 @@ local defaults = {
             detachedPortraitBorder = true,
             detachedPortraitBorderOpacity = 100,
             detachedPortraitBorderSize = 7,
-            selectedFont = "Expressway",
             healthBarTexture = "none",
             healthBarOpacity = 90,
             powerBarOpacity = 100,
@@ -161,10 +153,8 @@ local defaults = {
             visHideNoTarget = false,
             visHideNoEnemy = false,
         },
-        -- NEW: separate target sub-table (migrated from shared playerTarget)
         target = {
             frameWidth = 181,
-            frameScale = 100,
             healthHeight = 46,
             powerHeight = 6,
             powerPosition = "below",
@@ -261,7 +251,6 @@ local defaults = {
             detachedPortraitBorder = true,
             detachedPortraitBorderOpacity = 100,
             detachedPortraitBorderSize = 7,
-            selectedFont = "Expressway",
             healthBarTexture = "none",
             healthBarOpacity = 90,
             powerBarOpacity = 100,
@@ -312,11 +301,9 @@ local defaults = {
         totPet = {
             frameWidth = 101,
             healthHeight = 25,
-            frameScale = 100,
             customBgColor = { r = 0.067, g = 0.067, b = 0.067 },
             showPortrait = false,
             portraitMode = "2d",
-            selectedFont = "Expressway",
             healthBarTexture = "none",
             healthBarOpacity = 90,
             textSize = 12,
@@ -331,11 +318,9 @@ local defaults = {
         pet = {
             frameWidth = 101,
             healthHeight = 25,
-            frameScale = 100,
             customBgColor = { r = 0.067, g = 0.067, b = 0.067 },
             showPortrait = false,
             portraitMode = "2d",
-            selectedFont = "Expressway",
             healthBarTexture = "none",
             healthBarOpacity = 90,
             textSize = 12,
@@ -349,7 +334,6 @@ local defaults = {
         },
         focus = {
             frameWidth = 160,
-            frameScale = 100,
             healthHeight = 34,
             powerHeight = 6,
             powerPosition = "below",
@@ -436,7 +420,6 @@ local defaults = {
             detachedPortraitBorderSize = 7,
             btbBgColor = { r = 0.2, g = 0.2, b = 0.2 },
             btbBgOpacity = 1.0,
-            selectedFont = "Expressway",
             healthBarTexture = "none",
             healthBarOpacity = 90,
             powerBarOpacity = 100,
@@ -460,7 +443,6 @@ local defaults = {
         },
         boss = {
             frameWidth = 160,
-            frameScale = 100,
             healthHeight = 34,
             powerHeight = 6,
             powerPosition = "below",
@@ -481,7 +463,6 @@ local defaults = {
             healthDisplay = "perhp",
             showPortrait = false,
             portraitMode = "2d",
-            selectedFont = "Expressway",
             healthBarTexture = "none",
             healthBarOpacity = 90,
             powerBarOpacity = 100,
@@ -1206,7 +1187,7 @@ local function ApplyDetachedPortraitShape(backdrop, uSettings, unitToken)
         if backdrop._bg then backdrop._bg:AddMaskTexture(backdrop._shapeMask) end
     end
 
-    -- Hide legacy square border textures if they exist
+    -- Hide old square border textures if they exist on this frame
     if backdrop._sqBorderTexs then
         for _, t in ipairs(backdrop._sqBorderTexs) do t:Hide() end
     end
@@ -1445,7 +1426,30 @@ local function ApplyFramePosition(frame, unit)
     if not frame or not db.profile.positions[unit] then return end
     local pos = db.profile.positions[unit]
     frame:ClearAllPoints()
-    frame:SetPoint(pos.point, UIParent, pos.point, pos.x, pos.y)
+    frame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
+end
+
+-- Clip container for health + power bars — prevents sub-pixel overflow at
+-- certain UI scales where independent pixel-snapping pushes edges 1px out.
+local function EnsureBarClip(frame)
+    if frame._barClip then return frame._barClip end
+    local clip = CreateFrame("Frame", nil, frame)
+    clip:SetAllPoints(frame)
+    clip:SetClipsChildren(true)
+    clip:SetFrameLevel(frame:GetFrameLevel())
+    clip:EnableMouse(false)
+    frame._barClip = clip
+    return clip
+end
+
+local function ReparentBarsToClip(frame)
+    local clip = EnsureBarClip(frame)
+    if frame.Health and frame.Health:GetParent() ~= clip then
+        frame.Health:SetParent(clip)
+    end
+    if frame.Power and frame.Power:GetParent() ~= clip then
+        frame.Power:SetParent(clip)
+    end
 end
 
 -- Recalculate all element sizes after frame scale changes so everything remains
@@ -1616,140 +1620,7 @@ local function UpdateBordersForScale(frame, unit)
     end
 end
 
--- Snap a requested frame scale to the nearest pixel-perfect value.
--- 768 / physicalHeight gives the scale where
--- 1 logical pixel = 1 physical pixel.  We snap the frame scale so that the
--- combined effective scale (UIParent ES * frameScale) is a multiple of that
--- base pixel size, ensuring all PixelUtil sizes land on exact physical pixels.
-local function SnapScaleToPixel(requestedScale)
-    local _, physH = GetPhysicalScreenSize()
-    if not physH or physH == 0 then return requestedScale end
-    local pixelSize = 768 / physH  -- 1 physical pixel in UI points
-    local parentES = UIParent:GetEffectiveScale()
-    if parentES == 0 then return requestedScale end
-    -- The combined effective scale
-    local rawES = parentES * requestedScale
-    -- Snap to nearest multiple of pixelSize
-    local snapped = math.floor(rawES / pixelSize + 0.5) * pixelSize
-    if snapped < pixelSize then snapped = pixelSize end
-    return snapped / parentES
-end
-
--- Smoothly animate frame scale from center point.
--- On init, applies instantly. On live changes, lerps over SCALE_ANIM_DURATION.
--- Keeps the visual center fixed by computing the anchor offset delta caused by
--- the scale change (frame dimensions in screen space change, shifting the center
--- away from the anchor point).
-local SCALE_ANIM_DURATION = 0.18
-local function ApplyFrameScaleCentered(frame, unit, newScale, animate)
-    if not frame then return end
-    local oldScale = frame._euiCurrentScale or frame:GetScale()
-
-    -- Stop any in-progress scale animation
-    if frame._euiScaleOnUpdate then
-        frame._euiCurrentScale = frame:GetScale()
-        oldScale = frame._euiCurrentScale
-        frame:SetScript("OnUpdate", frame._euiPrevOnUpdate)
-        frame._euiScaleOnUpdate = nil
-        frame._euiPrevOnUpdate = nil
-    end
-
-    -- Compute the new anchor offset needed to keep the visual center fixed
-    -- when scale changes from s1 to s2.
-    -- WoW multiplies SetPoint offsets by the frame's scale to get screen position.
-    -- For anchor "TOPLEFT" with offset (ox, oy):
-    --   screen_left = ox * scale,  screen_top = oy * scale
-    --   screen_center_x = ox * scale + width * scale / 2
-    -- To keep center fixed: newOx * s2 + w*s2/2 = ox * s1 + w*s1/2
-    --   newOx = ox * s1/s2 + w * (s1 - s2) / (2 * s2)
-    local function ComputeNewOffset(frm, s1, s2, unitKey)
-        if not db.profile.positions[unitKey] then return nil end
-        local pos = db.profile.positions[unitKey]
-        local ox, oy = pos.x, pos.y
-        local w = frm:GetWidth()
-        local h = frm:GetHeight()
-        local ratio = s1 / s2
-        local pt = pos.point
-
-        local newOx, newOy = ox * ratio, oy * ratio
-
-        -- Horizontal center compensation
-        local halfWDelta = w * (s1 - s2) / (2 * s2)
-        if pt == "TOPLEFT" or pt == "LEFT" or pt == "BOTTOMLEFT" then
-            newOx = newOx + halfWDelta
-        elseif pt == "TOPRIGHT" or pt == "RIGHT" or pt == "BOTTOMRIGHT" then
-            newOx = newOx - halfWDelta
-        end
-        -- TOP/BOTTOM/CENTER horizontal anchors are already centered, no x adjustment
-
-        -- Vertical center compensation
-        local halfHDelta = h * (s1 - s2) / (2 * s2)
-        if pt == "TOPLEFT" or pt == "TOP" or pt == "TOPRIGHT" then
-            newOy = newOy - halfHDelta
-        elseif pt == "BOTTOMLEFT" or pt == "BOTTOM" or pt == "BOTTOMRIGHT" then
-            newOy = newOy + halfHDelta
-        end
-        -- LEFT/RIGHT/CENTER vertical anchors are already centered, no y adjustment
-
-        return newOx, newOy
-    end
-
-    local function ApplyScaleAndReposition(frm, sc, unitKey)
-        local prevScale = frm:GetScale()
-        if math.abs(sc - prevScale) < 0.0001 then return end
-        local newOx, newOy = ComputeNewOffset(frm, prevScale, sc, unitKey)
-        frm:SetScale(sc)
-        if newOx and db.profile.positions[unitKey] then
-            local pos = db.profile.positions[unitKey]
-            pos.x = newOx
-            pos.y = newOy
-            frm:ClearAllPoints()
-            frm:SetPoint(pos.point, UIParent, pos.point, pos.x, pos.y)
-        end
-    end
-
-    if not animate or math.abs(newScale - oldScale) < 0.001 then
-        if animate and math.abs(newScale - oldScale) < 0.0001 then
-            return
-        end
-        -- On init (animate=false), just apply scale and re-anchor from saved
-        -- position without recomputing offsets. The saved position is already
-        -- correct for the saved scale; recomputing would displace the frame.
-        if not animate then
-            frame:SetScale(newScale)
-            ApplyFramePosition(frame, unit)
-        else
-            ApplyScaleAndReposition(frame, newScale, unit)
-        end
-        frame._euiCurrentScale = newScale
-        UpdateBordersForScale(frame, unit)
-        return
-    end
-
-    -- Animated scale
-    local elapsed = 0
-    local startScale = oldScale
-    local endScale = newScale
-    frame._euiPrevOnUpdate = frame:GetScript("OnUpdate")
-    frame._euiScaleOnUpdate = true
-
-    frame:SetScript("OnUpdate", function(self, dt)
-        elapsed = elapsed + dt
-        local t = elapsed / SCALE_ANIM_DURATION
-        if t >= 1 then t = 1 end
-        local eased = 1 - (1 - t) * (1 - t)
-        local curScale = startScale + (endScale - startScale) * eased
-        ApplyScaleAndReposition(self, curScale, unit)
-
-        if t >= 1 then
-            self._euiCurrentScale = endScale
-            self:SetScript("OnUpdate", self._euiPrevOnUpdate)
-            self._euiScaleOnUpdate = nil
-            self._euiPrevOnUpdate = nil
-            UpdateBordersForScale(self, unit)
-        end
-    end)
-end
+-- Scale system removed -- all sizing is now width/height based.
 
 -- ToggleLock removed � positioning is now handled by Unlock Mode
 
@@ -2182,7 +2053,7 @@ local function CreatePortrait(frame, side, frameHeight, unit)
     local mode
     do
         mode = (uSettings and uSettings.portraitMode) or db.profile.portraitMode or "2d"
-        -- Legacy: if portraitMode is still "none" from old DB, hide portrait
+        -- "none" means portrait is disabled
         if mode == "none" then
             backdrop:Hide()
             return nil
@@ -2808,6 +2679,7 @@ local function StyleFullFrame(frame, unit)
 
     CreateUnifiedBorder(frame, unit)
     UpdateBordersForScale(frame, unit)
+    ReparentBarsToClip(frame)
 
     -- Text overlay frame -- sits above the StatusBar for clean text rendering.
     local textOverlay = CreateFrame("Frame", nil, frame)
@@ -2841,7 +2713,7 @@ local function StyleFullFrame(frame, unit)
     centerText:SetTextColor(1, 1, 1)
     frame.CenterText = centerText
 
-    -- Backward compat aliases
+    -- Shorthand aliases for font/tag application code
     frame.NameText = leftText
     frame.HealthValue = rightText
 
@@ -3024,6 +2896,7 @@ local function StyleFocusFrame(frame, unit)
 
     CreateUnifiedBorder(frame, unit)
     UpdateBordersForScale(frame, unit)
+    ReparentBarsToClip(frame)
 
     -- Text overlay frame -- sits above the StatusBar for clean text rendering.
     local textOverlay = CreateFrame("Frame", nil, frame.Health)
@@ -3056,7 +2929,7 @@ local function StyleFocusFrame(frame, unit)
     centerText:SetTextColor(1, 1, 1)
     frame.CenterText = centerText
 
-    -- Backward compat aliases
+    -- Shorthand aliases for font/tag application code
     frame.NameText = leftText
     frame.HealthValue = rightText
 
@@ -3198,6 +3071,7 @@ local function StyleSimpleFrame(frame, unit)
     frame.Health = health
     CreateUnifiedBorder(frame, unit)
     UpdateBordersForScale(frame, unit)
+    ReparentBarsToClip(frame)
 
     -- Text overlay frame
     local textOverlay = CreateFrame("Frame", nil, health)
@@ -3228,7 +3102,7 @@ local function StyleSimpleFrame(frame, unit)
     centerText:SetTextColor(1, 1, 1)
     frame.CenterText = centerText
 
-    -- Backward compat aliases
+    -- Shorthand aliases for font/tag application code
     frame.NameText = leftText
     frame.HealthValue = rightText
 
@@ -3354,6 +3228,7 @@ local function StylePetFrame(frame, unit)
 
     CreateUnifiedBorder(frame, unit)
     UpdateBordersForScale(frame, unit)
+    ReparentBarsToClip(frame)
 
     -- Text overlay frame
     local textOverlay = CreateFrame("Frame", nil, health)
@@ -3488,6 +3363,7 @@ local function StyleBossFrame(frame, unit)
 
     CreateUnifiedBorder(frame, unit)
     UpdateBordersForScale(frame, unit)
+    ReparentBarsToClip(frame)
 
     -- Text overlay frame
     local textOverlay = CreateFrame("Frame", nil, frame.Health)
@@ -4195,15 +4071,13 @@ local function ReloadFrames()
                 local bossIdx = tonumber(unit:match("(%d+)$"))
                 if bossPos and bossIdx then
                     frame:ClearAllPoints()
-                    frame:SetPoint(bossPos.point, UIParent, bossPos.point, bossPos.x, bossPos.y - ((bossIdx - 1) * bossSpacing))
+                    frame:SetPoint(bossPos.point, UIParent, bossPos.relPoint or bossPos.point, bossPos.x, bossPos.y - ((bossIdx - 1) * bossSpacing))
+                end            if bossPos and bossIdx then
+                    frame:ClearAllPoints()
+                    frame:SetPoint(bossPos.point, UIParent, bossPos.relPoint or bossPos.point, bossPos.x, bossPos.y - ((bossIdx - 1) * bossSpacing))
                 end
             else
                 ApplyFramePosition(frame, unit)
-            end
-            do
-                local settings2 = GetSettingsForUnit(unit)
-                local sc = (settings2 and settings2.frameScale) or 100
-                ApplyFrameScaleCentered(frame, unit, sc / 100, false)
             end
             local settings = GetSettingsForUnit(unit)
             local showPortrait = (db.profile.portraitStyle or "attached") ~= "none" and settings.showPortrait ~= false
@@ -4607,6 +4481,7 @@ local function ReloadFrames()
                     end
 
                     UpdateBordersForScale(frame, unit)
+                    ReparentBarsToClip(frame)
 
                 elseif unit == "target" then
                     local pSide = settings.portraitSide or "right"
@@ -4740,7 +4615,7 @@ local function ReloadFrames()
                     end
 
                     -- Bottom Text Bar update (target) ? must come before castbar so castbar can anchor to it
-                    local tPpBtbAnchor = (ppIsAtt and (settings.powerHeight or 0) > 0 and frame.Power) or frame.Health
+                    local tPpBtbAnchor = (ppIsAtt and (settings.powerHeight or 0) > 0 and frame.Power and frame.Power:IsShown()) and frame.Power or frame.Health
                     if settings.bottomTextBar then
                         local btbPos2 = settings.btbPosition or "bottom"
                         local btbIsAtt = (btbPos2 == "top" or btbPos2 == "bottom")
@@ -4936,6 +4811,7 @@ local function ReloadFrames()
                     end
 
                     UpdateBordersForScale(frame, unit)
+                    ReparentBarsToClip(frame)
                 end
 
                 -- (health tag re-tagging now handled by _applyTextTags above)
@@ -5181,6 +5057,7 @@ local function ReloadFrames()
                 end
 
                 UpdateBordersForScale(frame, unit)
+                ReparentBarsToClip(frame)
 
             elseif unit == "pet" or unit == "targettarget" or unit == "focustarget" then
                 if unit == "pet" then
@@ -5220,6 +5097,7 @@ local function ReloadFrames()
                 end
 
                 UpdateBordersForScale(frame, unit)
+                ReparentBarsToClip(frame)
 
             elseif unit:match("^boss%d$") then
                 local bPpPos = settings.powerPosition or "below"
@@ -5311,6 +5189,7 @@ local function ReloadFrames()
                 end
 
                 UpdateBordersForScale(frame, unit)
+                ReparentBarsToClip(frame)
             end
 
             -- Determine if this is a mini frame that inherits border/texture/font
@@ -5439,15 +5318,6 @@ local function ReloadFrames()
         end
     end
 
-    -- Apply frame scale for all units after layout (centered, animated)
-    for unit, frame in pairs(frames) do
-        if type(unit) == "string" and unit:sub(1,1) ~= "_" and frame then
-            local s = GetSettingsForUnit(unit)
-            local sc = (s and s.frameScale) or 100
-            ApplyFrameScaleCentered(frame, unit, sc / 100, true)
-        end
-    end
-
     -- Refresh combat indicator on player frame after settings change
     if frames.player and frames.player._applyCombatTexture then
         frames.player._applyCombatTexture()
@@ -5537,19 +5407,10 @@ function InitializeFrames()
         frame:HookScript("OnLeave", UnitFrame_OnLeave)
     end
 
-    -- Apply frame scale from per-unit settings
-    local function ApplyFrameScale(frame, unit)
-        if not frame then return end
-        local settings = GetSettingsForUnit(unit)
-        local scale = (settings and settings.frameScale) or 100
-        ApplyFrameScaleCentered(frame, unit, scale / 100, false)
-    end
-
     -- Always spawn all frames; hide disabled ones for zero performance impact
     oUF:SetActiveStyle("EllesmerePlayer")
     frames.player = oUF:Spawn("player", "EllesmereUIUnitFrames_Player")
     ApplyFramePosition(frames.player, "player")
-    ApplyFrameScale(frames.player, "player")
     SetupUnitMenu(frames.player, "player")
 
     if enabled.player == false then
@@ -5672,7 +5533,8 @@ function InitializeFrames()
                 pf._restEventFrame:RegisterEvent("PLAYER_UPDATE_RESTING")
                 pf._restEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
                 pf._restEventFrame:SetScript("OnEvent", function()
-                    if IsResting() then
+                    local enabled = not EllesmereUIDB or EllesmereUIDB.showRestedIndicator ~= false
+                    if enabled and IsResting() then
                         pf._restIndicator:Show()
                     else
                         pf._restIndicator:Hide()
@@ -5684,7 +5546,8 @@ function InitializeFrames()
             pf._restIndicator:ClearAllPoints()
             pf._restIndicator:SetPoint("TOPLEFT", pf.Health, "TOPLEFT", 3, -2)
 
-            if IsResting() then pf._restIndicator:Show() else pf._restIndicator:Hide() end
+            local restEnabled = not EllesmereUIDB or EllesmereUIDB.showRestedIndicator ~= false
+            if restEnabled and IsResting() then pf._restIndicator:Show() else pf._restIndicator:Hide() end
         end
     end
 
@@ -5934,7 +5797,7 @@ function InitializeFrames()
     -- Called with the style string: "none", "modern", or "blizzard"
     frames._toggleClassPower = function(style)
         style = style or db.profile.player.classPowerStyle or "none"
-        -- Also keep showClassPowerBar in sync for backward compat
+        -- Keep showClassPowerBar in sync with style
         db.profile.player.showClassPowerBar = (style ~= "none")
         db.profile.player.classPowerStyle = style
 
@@ -5992,7 +5855,6 @@ function InitializeFrames()
     oUF:SetActiveStyle("EllesmereTarget")
     frames.target = oUF:Spawn("target", "EllesmereUIUnitFrames_Target")
     ApplyFramePosition(frames.target, "target")
-    ApplyFrameScale(frames.target, "target")
     SetupUnitMenu(frames.target, "target")
     if enabled.target == false then
         frames.target:Hide()
@@ -6002,7 +5864,6 @@ function InitializeFrames()
     oUF:SetActiveStyle("EllesmereFocus")
     frames.focus = oUF:Spawn("focus", "EllesmereUIUnitFrames_Focus")
     ApplyFramePosition(frames.focus, "focus")
-    ApplyFrameScale(frames.focus, "focus")
     SetupUnitMenu(frames.focus, "focus")
     if enabled.focus == false then
         frames.focus:Hide()
@@ -6012,7 +5873,6 @@ function InitializeFrames()
     oUF:SetActiveStyle("EllesmerePet")
     frames.pet = oUF:Spawn("pet", "EllesmereUIUnitFrames_Pet")
     ApplyFramePosition(frames.pet, "pet")
-    ApplyFrameScale(frames.pet, "pet")
     SetupUnitMenu(frames.pet, "pet")
     if enabled.pet == false then
         frames.pet:Hide()
@@ -6022,7 +5882,6 @@ function InitializeFrames()
     oUF:SetActiveStyle("EllesmereTargetTarget")
     frames.targettarget = oUF:Spawn("targettarget", "EllesmereUIUnitFrames_TargetTarget")
     ApplyFramePosition(frames.targettarget, "targettarget")
-    ApplyFrameScale(frames.targettarget, "targettarget")
     SetupUnitMenu(frames.targettarget, "targettarget")
     if enabled.targettarget == false then
         frames.targettarget:Hide()
@@ -6032,7 +5891,6 @@ function InitializeFrames()
     oUF:SetActiveStyle("EllesmereFocusTarget")
     frames.focustarget = oUF:Spawn("focustarget", "EllesmereUIUnitFrames_FocusTarget")
     ApplyFramePosition(frames.focustarget, "focustarget")
-    ApplyFrameScale(frames.focustarget, "focustarget")
     SetupUnitMenu(frames.focustarget, "focustarget")
     if enabled.focustarget == false then
         frames.focustarget:Hide()
@@ -6049,7 +5907,7 @@ function InitializeFrames()
 
         if bossPos then
             bossFrame:ClearAllPoints()
-            bossFrame:SetPoint(bossPos.point, UIParent, bossPos.point, bossPos.x, bossPos.y - ((i - 1) * spacing))
+            bossFrame:SetPoint(bossPos.point, UIParent, bossPos.relPoint or bossPos.point, bossPos.x, bossPos.y - ((i - 1) * spacing))
         end
 
         SetupUnitMenu(bossFrame, bossUnit)
@@ -6340,8 +6198,6 @@ function SetupOptionsPanel()
     ns.db = db
     ns.frames = frames
     ns.ApplyFramePosition = ApplyFramePosition
-    ns.ApplyFrameScale = ApplyFrameScale
-    ns.SnapScaleToPixel = SnapScaleToPixel
     ns.GetFrameDimensions = GetFrameDimensions
     local reloadPending = false
     local reloadThrottle = CreateFrame("Frame")
@@ -6370,6 +6226,7 @@ function SetupOptionsPanel()
     --  Register unit frame elements with Unlock Mode
     ---------------------------------------------------------------------------
     if EllesmereUI and EllesmereUI.RegisterUnlockElements then
+        local MK = EllesmereUI.MakeUnlockElement
         local UNIT_LABELS = {
             player = "Player", target = "Target", focus = "Focus",
             pet = "Pet", targettarget = "Target of Target",
@@ -6377,10 +6234,12 @@ function SetupOptionsPanel()
             classPower = "Class Resource",
         }
         local elements = {}
-        local orderBase = 100  -- unit frames sort after action bars
+        local orderBase = 100
+
+        local function Rebuild() ns.ReloadFrames() end
 
         local function MakeUFElement(key, order)
-            return {
+            return MK({
                 key = key,
                 label = UNIT_LABELS[key] or key,
                 group = "Unit Frames",
@@ -6420,86 +6279,100 @@ function SetupOptionsPanel()
                     if k == "boss" then return GetFrameDimensions("boss1") end
                     return GetFrameDimensions(k)
                 end,
-                loadPosition = function(k)
+                setWidth = function(k, w)
+                    if k == "classPower" or k == "playerCastbar" then return end
+                    local unit = (k == "boss") and "boss1" or k
+                    local s = GetSettingsForUnit(unit)
+                    if not s then return end
+                    -- Subtract portrait width to get the bar-only frameWidth
+                    local showPortrait = (db.profile.portraitStyle or "attached") ~= "none" and s.showPortrait ~= false
+                    local isAttached = (db.profile.portraitStyle or "attached") == "attached"
+                    if showPortrait and isAttached then
+                        local pSizeAdj = s.portraitSize or 0
+                        if not isAttached then pSizeAdj = pSizeAdj + 10 end
+                        local powerPos = s.powerPosition or "below"
+                        local powerIsAtt = (powerPos == "below" or powerPos == "above")
+                        local ptH = s.healthHeight + (powerIsAtt and (s.powerHeight or 6) or 0)
+                        local adjPH = ptH + pSizeAdj
+                        if adjPH < 8 then adjPH = 8 end
+                        s.frameWidth = math.max(math.floor(w - adjPH + 0.5), 50)
+                    else
+                        s.frameWidth = math.max(math.floor(w + 0.5), 50)
+                    end
+                    Rebuild()
+                end,
+                setHeight = function(k, h)
+                    if k == "classPower" or k == "playerCastbar" then return end
+                    local unit = (k == "boss") and "boss1" or k
+                    local s = GetSettingsForUnit(unit)
+                    if not s then return end
+                    -- Subtract power bar and BTB from total to get healthHeight
+                    local powerPos = s.powerPosition or "below"
+                    local powerIsAtt = (powerPos == "below" or powerPos == "above")
+                    local powerH = powerIsAtt and (s.powerHeight or 6) or 0
+                    local btbPos = s.btbPosition or "bottom"
+                    local btbIsAtt = (btbPos == "top" or btbPos == "bottom")
+                    local btbH = (s.bottomTextBar and btbIsAtt) and (s.bottomTextBarHeight or 16) or 0
+                    s.healthHeight = math.max(math.floor(h - powerH - btbH + 0.5), 8)
+                    Rebuild()
+                end,
+                loadPos = function(k)
                     local pos = db.profile.positions[k]
                     if not pos then return nil end
-                    return { point = pos.point, relPoint = pos.point, x = pos.x, y = pos.y, scale = pos.scale }
+                    return { point = pos.point, relPoint = pos.relPoint or pos.point, x = pos.x, y = pos.y }
                 end,
-                getScale = function(k)
-                    local pos = db.profile.positions[k]
-                    return pos and pos.scale or 1.0
-                end,
-                savePosition = function(k, point, relPoint, x, y, scale)
-                    db.profile.positions[k] = { point = point, x = x, y = y, scale = scale }
-                    -- Write scale back to the per-unit settings so ApplyFrameScale
-                    -- on reload uses the unlock mode value instead of overwriting it.
-                    if scale then
-                        local unitKey = (k == "boss") and "boss"
-                                     or (k == "classPower") and nil
-                                     or (k == "targettarget" or k == "focustarget") and "totPet"
-                                     or k
-                        if unitKey and db.profile[unitKey] then
-                            db.profile[unitKey].frameScale = math.floor(scale * 100 + 0.5)
-                        end
-                    end
-                    -- Apply to live frame immediately
+                savePos = function(k, point, relPoint, x, y)
+                    db.profile.positions[k] = { point = point, relPoint = relPoint, x = x, y = y }
                     local fr
                     if k == "boss" then
                         local spacing = db.profile.bossSpacing or 60
                         for i = 1, 5 do
                             if frames["boss" .. i] then
-                                if scale then pcall(function() frames["boss" .. i]:SetScale(scale) end) end
                                 frames["boss" .. i]:ClearAllPoints()
-                                frames["boss" .. i]:SetPoint(point, UIParent, point, x, y - ((i - 1) * spacing))
+                                frames["boss" .. i]:SetPoint(point, UIParent, relPoint, x, y - ((i - 1) * spacing))
                             end
                         end
                     elseif k == "classPower" then
                         if frames._classPowerBar then
-                            if scale then pcall(function() frames._classPowerBar:SetScale(scale) end) end
                             frames._classPowerBar:ClearAllPoints()
-                            frames._classPowerBar:SetPoint(point, UIParent, point, x, y)
+                            frames._classPowerBar:SetPoint(point, UIParent, relPoint, x, y)
                         end
                     else
                         fr = frames[k]
                         if fr then
-                            if scale then pcall(function() fr:SetScale(scale) end) end
                             fr:ClearAllPoints()
-                            fr:SetPoint(point, UIParent, point, x, y)
+                            fr:SetPoint(point, UIParent, relPoint, x, y)
                         end
                     end
                 end,
-                clearPosition = function(k)
+                clearPos = function(k)
                     db.profile.positions[k] = nil
                 end,
-                applyPosition = function(k)
+                applyPos = function(k)
                     local pos = db.profile.positions[k]
                     if not pos then return end
-                    local sc = pos.scale
                     if k == "boss" then
                         local spacing = db.profile.bossSpacing or 60
                         for i = 1, 5 do
                             if frames["boss" .. i] then
-                                if sc then pcall(function() frames["boss" .. i]:SetScale(sc) end) end
                                 frames["boss" .. i]:ClearAllPoints()
-                                frames["boss" .. i]:SetPoint(pos.point, UIParent, pos.point, pos.x, pos.y - ((i - 1) * spacing))
+                                frames["boss" .. i]:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y - ((i - 1) * spacing))
                             end
                         end
                     elseif k == "classPower" then
                         if frames._classPowerBar then
-                            if sc then pcall(function() frames._classPowerBar:SetScale(sc) end) end
                             frames._classPowerBar:ClearAllPoints()
-                            frames._classPowerBar:SetPoint(pos.point, UIParent, pos.point, pos.x, pos.y)
+                            frames._classPowerBar:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
                         end
                     else
                         local fr = frames[k]
                         if fr then
-                            if sc then pcall(function() fr:SetScale(sc) end) end
                             fr:ClearAllPoints()
-                            fr:SetPoint(pos.point, UIParent, pos.point, pos.x, pos.y)
+                            fr:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
                         end
                     end
                 end,
-            }
+            })
         end
 
         -- Core unit frames
@@ -6555,149 +6428,9 @@ StaticPopupDialogs["ELLESMERE_RESET_DEFAULTS"] = {
 
 local EllesmereUF = EllesmereUI.Lite.NewAddon("EllesmereUIUnitFrames")
 
--- Migrate old shared playerTarget table into separate player/target sub-tables
-local function MigratePlayerTarget()
-    local p = db.profile
-    -- Use a dedicated flag so this migration runs exactly once.
-    -- The old guard (checking frameWidth != default) was unreliable: users
-    -- with frameWidth at the default value would re-run migration every load,
-    -- overwriting their saved healthHeight/powerHeight with the old defaults.
-    if p._playerTargetMigrated then return end
-    -- Skip if the old table doesn't exist (new installs)
-    local old = p.playerTarget
-    if not old then
-        p._playerTargetMigrated = true
-        return
-    end
-    local oldDef = defaults.profile.playerTarget
-
-    -- Copy shared values into player table
-    p.player = p.player or {}
-    p.player.frameWidth = old.frameWidth or oldDef.frameWidth
-    p.player.healthHeight = old.healthHeight or oldDef.healthHeight
-    p.player.powerHeight = old.powerHeight or oldDef.powerHeight
-    p.player.healthDisplay = old.healthDisplay or oldDef.healthDisplay
-    p.player.showPlayerAbsorb = old.showPlayerAbsorb or false
-    p.player.showPlayerCastbar = old.showPlayerCastbar or false
-    p.player.showClassPowerBar = old.showClassPowerBar or false
-    p.player.playerCastbarX = old.playerCastbarX or 0
-    p.player.playerCastbarY = old.playerCastbarY or 0
-    p.player.playerCastbarWidth = old.playerCastbarWidth or 0
-    p.player.playerCastbarHeight = old.playerCastbarHeight or 0
-    p.player.classPowerBarX = old.classPowerBarX or 0
-    p.player.classPowerBarY = old.classPowerBarY or 0
-    p.player.showPortrait = p.showPortrait  -- migrate from root level
-
-    -- Copy shared values into target table
-    p.target = p.target or {}
-    p.target.frameWidth = old.frameWidth or oldDef.frameWidth
-    p.target.healthHeight = old.healthHeight or oldDef.healthHeight
-    p.target.powerHeight = old.powerHeight or oldDef.powerHeight
-    p.target.castbarHeight = old.castbarHeight or oldDef.castbarHeight
-    p.target.healthDisplay = old.healthDisplay or oldDef.healthDisplay
-    p.target.showBuffs = old.showBuffs
-    if p.target.showBuffs == nil then p.target.showBuffs = true end
-    p.target.onlyPlayerDebuffs = old.onlyPlayerDebuffs or false
-    p.target.showPortrait = p.showPortrait  -- migrate from root level
-
-    -- Mark as done so this never runs again
-    p._playerTargetMigrated = true
-    -- Leave old playerTarget intact for backward compat
-end
-
 function EllesmereUF:OnInitialize()
     db = EllesmereUI.Lite.NewDB("EllesmereUIUnitFramesDB", defaults, true)
-    MigratePlayerTarget()
 
-    -- Migrate enabledFrames=false to barVisibility="never"
-    -- (Enable Frame toggle was removed; "Never" visibility now serves that role)
-    do
-        local prof = db.profile
-        local ef = prof.enabledFrames
-        if ef then
-            for _, uKey in ipairs({"player", "target", "focus"}) do
-                if ef[uKey] == false and prof[uKey] then
-                    prof[uKey].barVisibility = "never"
-                end
-            end
-        end
-    end
-
-    -- Migrate old showInRaid/showInParty/showSolo booleans to new barVisibility key
-    do
-        local prof = db.profile
-        for _, uKey in ipairs({"player", "target", "focus"}) do
-            local s = prof[uKey]
-            if s and s.barVisibility == nil then
-                local raid  = s.showInRaid ~= false
-                local party = s.showInParty ~= false
-                local solo  = s.showSolo ~= false
-                if raid and party and solo then
-                    s.barVisibility = "always"
-                elseif not raid and not party and not solo then
-                    s.barVisibility = "never"
-                elseif raid and not party and not solo then
-                    s.barVisibility = "in_raid"
-                elseif raid and party and not solo then
-                    s.barVisibility = "in_party"
-                elseif not raid and not party and solo then
-                    s.barVisibility = "solo"
-                else
-                    -- Mixed combination that does not map cleanly; keep always
-                    s.barVisibility = "always"
-                end
-            end
-        end
-    end
-
-    -- Migrate old use3DPortrait boolean to new portraitMode string (one-time)
-    do
-        local prof = db.profile
-        if prof.use3DPortrait ~= nil then
-            if prof.use3DPortrait == true then
-                prof.portraitMode = "3d"
-            elseif prof.use3DPortrait == false and not prof.portraitMode then
-                prof.portraitMode = "2d"
-            end
-            prof.use3DPortrait = nil  -- clear so migration doesn't re-run
-        end
-    end
-
-    -- Migrate global portraitMode / selectedFont / healthBarTexture
-    -- into per-unit sub-tables.  Runs once: when the global key still exists.
-    do
-        local prof = db.profile
-        local UNITS = { "player", "target", "focus", "boss", "pet", "totPet" }
-        local globalPM   = prof.portraitMode
-        local globalFont = prof.selectedFont
-        local globalTex  = prof.healthBarTexture
-        if globalPM ~= nil or globalFont ~= nil or globalTex ~= nil then
-            for _, uKey in ipairs(UNITS) do
-                local s = prof[uKey]
-                if s then
-                    -- Portrait mode: if unit had showPortrait=false, set to "none"
-                    if s.portraitMode == nil then
-                        if s.showPortrait == false then
-                            s.portraitMode = "none"
-                        else
-                            s.portraitMode = globalPM or "2d"
-                        end
-                    end
-                    if s.selectedFont == nil then
-                        s.selectedFont = globalFont or "Expressway"
-                    end
-                    if s.healthBarTexture == nil then
-                        s.healthBarTexture = globalTex or "none"
-                    end
-                end
-            end
-            -- Clear globals so migration doesn't re-run
-            prof.portraitMode = nil
-            prof.selectedFont = nil
-            prof.healthBarTexture = nil
-            prof.healthBarTextureOpacity = nil
-        end
-    end
     ResolveFontPath()
 
     -- Append SharedMedia textures to runtime tables so SM texture keys resolve
@@ -6708,140 +6441,6 @@ function EllesmereUF:OnInitialize()
             nil,
             healthBarTextures
         )
-    end
-
-    -- Migrate old texture keys (gradient, grunge, stripe) to "none"
-    do
-        local prof = db.profile
-        local OLD_KEYS = { gradient = true, grunge = true, stripe = true }
-        local UNITS = { "player", "target", "focus", "boss", "pet", "totPet" }
-        for _, uKey in ipairs(UNITS) do
-            local s = prof[uKey]
-            if s and s.healthBarTexture and OLD_KEYS[s.healthBarTexture] then
-                s.healthBarTexture = "none"
-            end
-        end
-    end
-
-    -- Migrate opacity values stored as 0-1 floats to 0-100 integers
-    do
-        local prof = db.profile
-        local UNITS = { "player", "target", "focus", "boss", "pet", "totPet" }
-        if prof.healthBarOpacity and prof.healthBarOpacity <= 1.0 then
-            prof.healthBarOpacity = math.floor(prof.healthBarOpacity * 100 + 0.5)
-        end
-        if prof.powerBarOpacity and prof.powerBarOpacity <= 1.0 then
-            prof.powerBarOpacity = math.floor(prof.powerBarOpacity * 100 + 0.5)
-        end
-        for _, uKey in ipairs(UNITS) do
-            local s = prof[uKey]
-            if s then
-                if s.healthBarOpacity and s.healthBarOpacity <= 1.0 then
-                    s.healthBarOpacity = math.floor(s.healthBarOpacity * 100 + 0.5)
-                end
-                if s.powerBarOpacity and s.powerBarOpacity <= 1.0 then
-                    s.powerBarOpacity = math.floor(s.powerBarOpacity * 100 + 0.5)
-                end
-            end
-        end
-    end
-
-    -- Migrate old namePosition/healthTextPosition to new leftTextContent/rightTextContent
-    do
-        local prof = db.profile
-        local UNITS = { "player", "target", "focus" }
-        for _, uKey in ipairs(UNITS) do
-            local s = prof[uKey]
-            if s and s.leftTextContent == nil and (s.namePosition or s.healthTextPosition) then
-                local np = s.namePosition or "left"
-                local hp = s.healthTextPosition or "right"
-                local hd = s.healthDisplay or (uKey == "focus" and "perhp" or "both")
-                -- Map old positions to new content model
-                if np == "left" then
-                    s.leftTextContent = "name"
-                    s.rightTextContent = (hp == "right") and hd or "none"
-                elseif np == "right" then
-                    s.rightTextContent = "name"
-                    s.leftTextContent = (hp == "left") and hd or "none"
-                else -- np == "none"
-                    s.leftTextContent = (hp == "left") and hd or "none"
-                    s.rightTextContent = (hp == "right") and hd or "none"
-                end
-                -- Migrate textSize to per-side sizes
-                local ts = s.textSize or 12
-                if s.leftTextSize == nil then s.leftTextSize = ts end
-                if s.rightTextSize == nil then s.rightTextSize = ts end
-                if s.leftTextX == nil then s.leftTextX = 0 end
-                if s.leftTextY == nil then s.leftTextY = 0 end
-                if s.rightTextX == nil then s.rightTextX = 0 end
-                if s.rightTextY == nil then s.rightTextY = 0 end
-            end
-        end
-    end
-
-    -- Migrate old classPowerStyle values (bars/circles ? modern) and
-    -- sync showClassPowerBar with classPowerStyle
-    do
-        local p = db and db.profile
-        if p and p.player then
-            local s = p.player
-            if s.classPowerStyle == "bars" or s.classPowerStyle == "circles" then
-                s.classPowerStyle = "modern"
-            end
-            -- If showClassPowerBar was true but classPowerStyle is still default "none",
-            -- set it to "blizzard" to preserve old behavior
-            if s.showClassPowerBar and (s.classPowerStyle == "none" or s.classPowerStyle == nil) then
-                s.classPowerStyle = "blizzard"
-            end
-            -- Sync: if classPowerStyle is set to something other than none, ensure showClassPowerBar is true
-            if s.classPowerStyle and s.classPowerStyle ~= "none" then
-                s.showClassPowerBar = true
-            end
-        end
-    end
-
-    -- Migrate portraitMode="none" ? portraitStyle="none" + portraitMode="2d"
-    -- (portrait hide moved from per-unit portraitMode to global portraitStyle)
-    do
-        local prof = db.profile
-        local UNITS = { "player", "target", "focus", "boss", "pet", "totPet" }
-        local anyNone = false
-        for _, uKey in ipairs(UNITS) do
-            local s = prof[uKey]
-            if s and s.portraitMode == "none" then
-                anyNone = true
-                break
-            end
-        end
-        if anyNone then
-            -- Set global portraitStyle to "none" (hides all portraits)
-            prof.portraitStyle = "none"
-            for _, uKey in ipairs(UNITS) do
-                local s = prof[uKey]
-                if s and s.portraitMode == "none" then
-                    s.portraitMode = "2d"
-                    s.showPortrait = false
-                end
-            end
-        end
-    end
-
-    -- Migrate powerPercentPowerColor split: copy old value to new powerPercentTextPowerColor
-    -- Old behavior: powerPercentPowerColor controlled both fill swatch disable AND text color.
-    -- New behavior: powerPercentPowerColor controls fill only, powerPercentTextPowerColor controls text.
-    do
-        local prof = db.profile
-        local UNITS = { "player", "target", "focus", "boss" }
-        for _, uKey in ipairs(UNITS) do
-            local s = prof[uKey]
-            if s and s.powerPercentTextPowerColor == nil and s.powerPercentPowerColor ~= nil then
-                s.powerPercentTextPowerColor = s.powerPercentPowerColor
-            end
-        end
-        local old = prof.playerTarget
-        if old and old.powerPercentTextPowerColor == nil and old.powerPercentPowerColor ~= nil then
-            old.powerPercentTextPowerColor = old.powerPercentPowerColor
-        end
     end
 
     -- Blizzard options panel is registered centrally in EllesmereUI.lua

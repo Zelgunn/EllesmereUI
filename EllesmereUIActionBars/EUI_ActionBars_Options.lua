@@ -79,19 +79,6 @@ initFrame:SetScript("OnEvent", function(self)
     end
 
     ---------------------------------------------------------------------------
-    --  Scale slider 2x multiplier conversion
-    --  Slider value stored barScale with 2x distance from 100
-    ---------------------------------------------------------------------------
-    local function SliderToScale(sliderVal)
-        return (100 + (sliderVal - 100) * 2) / 100
-    end
-
-    local function ScaleToSlider(barScale)
-        local actual = barScale * 100
-        return floor(100 + (actual - 100) / 2 + 0.5)
-    end
-
-    ---------------------------------------------------------------------------
     --  Ordered dropdown values for the bar selector
     ---------------------------------------------------------------------------
     local barLabels = {}
@@ -461,9 +448,9 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         -- Scale-aware snap: snaps val to whole physical pixels at the preview's
-        -- effective scale * barScale. Uses the same approach as the border system.
-        local function SnapS(val, scale)
-            local es = pf:GetEffectiveScale() * (scale or 1)
+        -- effective scale. Uses the same approach as the border system.
+        local function SnapS(val)
+            local es = pf:GetEffectiveScale()
             return EllesmereUI.PP.SnapForES(val, es)
         end
 
@@ -577,11 +564,10 @@ initFrame:SetScript("OnEvent", function(self)
             local brdClassColor = settings.borderClassColor
             local zoom = ((settings.iconZoom or EAB.db.profile.iconZoom or 5.5)) / 100
             local square    = EAB.db.profile.squareIcons
-            local barScale  = settings.barScale or 1.0
             local hideKB    = settings.hideKeybind
 
             -- Font path (global setting)
-            local fontPath  = (EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("actionBars")) or EAB.db.profile.font or DEFAULT_FONT
+            local fontPath  = (EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("actionBars")) or DEFAULT_FONT
 
             -- Font settings
             local kbSize    = settings.keybindFontSize or 12
@@ -604,26 +590,26 @@ initFrame:SetScript("OnEvent", function(self)
                 if ct then local cc = RAID_CLASS_COLORS[ct]; if cc then shapeBrdR, shapeBrdG, shapeBrdB = cc.r, cc.g, cc.b end end
             end
 
-            local scaledBtnW = SnapS(btnW * (self._blizzEditScale or 1) * barScale, barScale)
-            local scaledBtnH = SnapS(btnH * (self._blizzEditScale or 1) * barScale, barScale)
+            local scaledBtnW = SnapS(btnW * (self._blizzEditScale or 1))
+            local scaledBtnH = SnapS(btnH * (self._blizzEditScale or 1))
             -- Expand button size for custom shapes (mirrors SHAPE_BTN_EXPAND in main file)
             if btnShape ~= "none" and btnShape ~= "cropped" then
-                local shapeExp = SnapS(ns.SHAPE_BTN_EXPAND * (self._blizzEditScale or 1) * barScale, barScale)
+                local shapeExp = SnapS(ns.SHAPE_BTN_EXPAND * (self._blizzEditScale or 1))
                 scaledBtnW = scaledBtnW + shapeExp
                 scaledBtnH = scaledBtnH + shapeExp
             end
             -- Shrink button height for "cropped" mode (10% top + 10% bottom)
             if btnShape == "cropped" then
-                scaledBtnH = SnapS(scaledBtnH * 0.80, barScale)
+                scaledBtnH = SnapS(scaledBtnH * 0.80)
             end
 
-            local scaledPad  = SnapS(spacing * (self._blizzEditScale or 1) * barScale, barScale)
+            local scaledPad  = SnapS(spacing * (self._blizzEditScale or 1))
 
             -- Orientation
             local isVertical = (settings.orientation or "horizontal") == "vertical"
 
             -- Scale font sizes proportionally
-            local totalScale = (self._blizzEditScale or 1) * barScale
+            local totalScale = (self._blizzEditScale or 1)
             local scaledKBSize = math.max(6, floor(kbSize * totalScale + 0.5))
             local scaledCTSize = math.max(6, floor(ctSize * totalScale + 0.5))
 
@@ -741,7 +727,7 @@ initFrame:SetScript("OnEvent", function(self)
                             local _, ct2 = UnitClass("player")
                             if ct2 then local cc2 = RAID_CLASS_COLORS[ct2]; if cc2 then cr, cg, cb = cc2.r, cc2.g, cc2.b end end
                         end
-                        local sz = SnapS(brdSize, barScale)
+                        local sz = SnapS(brdSize)
 
                         bT:SetColorTexture(cr, cg, cb, ca)
                         UnsnapTex(bT)
@@ -1324,7 +1310,7 @@ initFrame:SetScript("OnEvent", function(self)
 
                 local function ApplyVisKey(s, v)
                     s.barVisibility = v
-                    -- Keep legacy booleans in sync for backward compat
+                    -- Keep boolean flags in sync
                     s.alwaysHidden     = (v == "never")
                     s.mouseoverEnabled = (v == "mouseover")
                     s.mouseoverAlpha   = (v == "mouseover") and 0 or 1
@@ -1545,63 +1531,16 @@ initFrame:SetScript("OnEvent", function(self)
             end
 
             row, h = W:DualRow(parent, y,
-                { type="slider", text="Bar Scale", min=75, max=125, step=1,
-                  getValue=function()
-                      local v = SGet("barScale")
-                      return ScaleToSlider(v or 1.0)
-                  end,
-                  setValue=function(v)
-                      local real = SliderToScale(v)
-                      SB().barScale = real
-                      EAB:ApplyScalePreserveCenter(SelectedKey())
-                      SUpdatePreviewAndResize()
-                      EllesmereUI:RefreshPage()
-                  end },
                 { type="slider", text="Button Spacing", min=-10, max=20, step=1,
                   getValue=function() return SVal("buttonPadding", 2) end,
                   setValue=function(v)
                       SSet("buttonPadding", v, function(k) EAB:ApplyPaddingForBar(k) end)
                       SUpdatePreview()
-                  end });  y = y - h
-            -- Sync icons: Bar Scale (left) and Button Spacing (right)
+                  end },
+                { type="label", text="" });  y = y - h
+            -- Sync icon: Button Spacing (left)
             do
                 local rgn = row._leftRegion
-                EllesmereUI.BuildSyncIcon({
-                    region  = rgn,
-                    tooltip = "Apply Bar Scale to all Bars",
-                    onClick = function()
-                        local v = SB().barScale or 1.0
-                        for _, key in ipairs(GROUP_BAR_ORDER) do
-                            EAB.db.profile.bars[key].barScale = v
-                            EAB:ApplyScalePreserveCenter(key)
-                        end
-                        EllesmereUI:RefreshPage()
-                    end,
-                    isSynced = function()
-                        local v = SB().barScale or 1.0
-                        for _, key in ipairs(GROUP_BAR_ORDER) do
-                            if (EAB.db.profile.bars[key].barScale or 1.0) ~= v then return false end
-                        end
-                        return true
-                    end,
-                    flashTargets = function() return { rgn } end,
-                    multiApply = {
-                        elementKeys   = GROUP_BAR_ORDER,
-                        elementLabels = SHORT_LABELS,
-                        getCurrentKey = function() return SelectedKey() end,
-                        onApply       = function(checkedKeys)
-                            local v = SB().barScale or 1.0
-                            for _, key in ipairs(checkedKeys) do
-                                EAB.db.profile.bars[key].barScale = v
-                                EAB:ApplyScalePreserveCenter(key)
-                            end
-                            EllesmereUI:RefreshPage()
-                        end,
-                    },
-                })
-            end
-            do
-                local rgn = row._rightRegion
                 EllesmereUI.BuildSyncIcon({
                     region  = rgn,
                     tooltip = "Apply Button Spacing to all Bars",
@@ -1762,6 +1701,79 @@ initFrame:SetScript("OnEvent", function(self)
                 })
                 local growCogShow = growCogShowRaw
                 MakeCogBtn(rightRgn, growCogShow)
+            end
+
+            -- Icon Size | (empty)
+            local iconSizeRow
+            iconSizeRow, h = W:DualRow(parent, y,
+                { type="slider", text="Icon Size", min=16, max=80, step=1,
+                  getValue=function()
+                      local s = SB()
+                      if s.buttonWidth and s.buttonWidth > 0 then return s.buttonWidth end
+                      local info = BAR_LOOKUP[SelectedKey()]
+                      local btn1 = info and _G[info.buttonPrefix .. "1"]
+                      return btn1 and math.floor((btn1:GetWidth() or 36) + 0.5) or 36
+                  end,
+                  setValue=function(v)
+                      SB().buttonWidth  = v
+                      SB().buttonHeight = v
+                      EAB:ApplyButtonSizeForBar(SelectedKey())
+                      SUpdatePreviewAndResize()
+                      EllesmereUI:RefreshPage()
+                  end },
+                { type="label", text="" });  y = y - h
+            -- Sync icon: Icon Size (left)
+            do
+                local rgn = iconSizeRow._leftRegion
+                EllesmereUI.BuildSyncIcon({
+                    region  = rgn,
+                    tooltip = "Apply Icon Size to all Bars",
+                    onClick = function()
+                        local s = SB()
+                        local info = BAR_LOOKUP[SelectedKey()]
+                        local btn1 = info and _G[info.buttonPrefix .. "1"]
+                        local v = (s.buttonWidth and s.buttonWidth > 0) and s.buttonWidth
+                            or (btn1 and math.floor((btn1:GetWidth() or 36) + 0.5)) or 36
+                        for _, key in ipairs(GROUP_BAR_ORDER) do
+                            EAB.db.profile.bars[key].buttonWidth  = v
+                            EAB.db.profile.bars[key].buttonHeight = v
+                            EAB:ApplyButtonSizeForBar(key)
+                        end
+                        EllesmereUI:RefreshPage()
+                    end,
+                    isSynced = function()
+                        local s = SB()
+                        local info = BAR_LOOKUP[SelectedKey()]
+                        local btn1 = info and _G[info.buttonPrefix .. "1"]
+                        local v = (s.buttonWidth and s.buttonWidth > 0) and s.buttonWidth
+                            or (btn1 and math.floor((btn1:GetWidth() or 36) + 0.5)) or 36
+                        for _, key in ipairs(GROUP_BAR_ORDER) do
+                            local ks = EAB.db.profile.bars[key]
+                            local kv = (ks.buttonWidth and ks.buttonWidth > 0) and ks.buttonWidth or v
+                            if kv ~= v then return false end
+                        end
+                        return true
+                    end,
+                    flashTargets = function() return { rgn } end,
+                    multiApply = {
+                        elementKeys   = GROUP_BAR_ORDER,
+                        elementLabels = SHORT_LABELS,
+                        getCurrentKey = function() return SelectedKey() end,
+                        onApply       = function(checkedKeys)
+                            local s = SB()
+                            local info = BAR_LOOKUP[SelectedKey()]
+                            local btn1 = info and _G[info.buttonPrefix .. "1"]
+                            local v = (s.buttonWidth and s.buttonWidth > 0) and s.buttonWidth
+                                or (btn1 and math.floor((btn1:GetWidth() or 36) + 0.5)) or 36
+                            for _, key in ipairs(checkedKeys) do
+                                EAB.db.profile.bars[key].buttonWidth  = v
+                                EAB.db.profile.bars[key].buttonHeight = v
+                                EAB:ApplyButtonSizeForBar(key)
+                            end
+                            EllesmereUI:RefreshPage()
+                        end,
+                    },
+                })
             end
 
             -- Vertical Orientation | (empty)
