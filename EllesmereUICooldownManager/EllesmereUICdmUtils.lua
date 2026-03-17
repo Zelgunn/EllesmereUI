@@ -271,12 +271,12 @@ utils.UpdateBagItemIcon = UpdateBagItemIcon
 --- @return boolean blizzardBuffChildTextureSet     true if the texture was set, false otherwise
 -------------------------------------------------------------------------------
 local function CopyBuffWidgetTexture(icon, blizzardBuffChild, overrideTexture)
-    if blizzardBuffChild and not overrideTexture then
+    if blizzardBuffChild and not overrideTexture and blizzardBuffChild.Icon then
         local iconWidget = blizzardBuffChild.Icon
-        if iconWidget and not iconWidget.GetTexture and iconWidget.Icon then
+        if not iconWidget.GetTexture and iconWidget.Icon then
             iconWidget = iconWidget.Icon
         end
-        if iconWidget and iconWidget.GetTexture then
+        if iconWidget.GetTexture then
             local childTex = iconWidget:GetTexture()
             if childTex then
                 icon._tex:SetTexture(childTex)

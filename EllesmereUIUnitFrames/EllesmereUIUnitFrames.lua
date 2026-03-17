@@ -5533,7 +5533,7 @@ function InitializeFrames()
                 pf._restEventFrame:RegisterEvent("PLAYER_UPDATE_RESTING")
                 pf._restEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
                 pf._restEventFrame:SetScript("OnEvent", function()
-                    local enabled = not EllesmereUIDB or EllesmereUIDB.showRestedIndicator ~= false
+                    local enabled = EllesmereUIDB and EllesmereUIDB.showRestedIndicator == true
                     if enabled and IsResting() then
                         pf._restIndicator:Show()
                     else
@@ -5546,7 +5546,7 @@ function InitializeFrames()
             pf._restIndicator:ClearAllPoints()
             pf._restIndicator:SetPoint("TOPLEFT", pf.Health, "TOPLEFT", 3, -2)
 
-            local restEnabled = not EllesmereUIDB or EllesmereUIDB.showRestedIndicator ~= false
+            local restEnabled = EllesmereUIDB and EllesmereUIDB.showRestedIndicator == true
             if restEnabled and IsResting() then pf._restIndicator:Show() else pf._restIndicator:Hide() end
         end
     end

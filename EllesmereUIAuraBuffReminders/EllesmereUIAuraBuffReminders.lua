@@ -120,7 +120,7 @@ local function InMythicPlusKey()
     return C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive and C_ChallengeMode.IsChallengeModeActive()
 end
 
---Mythic 0 dungeon (party, normal difficulty 1) or Mythic raid (difficulty 16)
+-- Mythic 0 dungeon (party, normal difficulty 1) or Mythic raid (difficulty 16)
 local function InMythicZeroDungeonOrMythicRaid()
     if _cachedIType == "party" and (_cachedDiffID == 23 or _cachedDiffID == 8) then return true end
     if _cachedIType == "raid" and _cachedDiffID == 16 then return true end
@@ -154,9 +154,7 @@ local TALENT_REMINDER_ZONES = {
     { name="Seat of the Triumvirate", type="dungeon", mapID=8910 },
     { name="Skyreach",                type="dungeon", mapID=601  },
     { name="Pit of Saron",            type="dungeon", mapID=184  },
--------------------------------------------------------------------------------
---  PvP Maps - MapID are all nill due to how Blizzard does map detection for PvP and they are secret values so return nil.
--------------------------------------------------------------------------------
+    -- PvP maps: mapID is nil (matched by instance type, not map ID)
     { name="Nagrand Arena",           type="pvp",     mapID=nil },
     { name="Blade's Edge Arena",      type="pvp",     mapID=nil },
     { name="Ruins of Lordaeron",      type="pvp",     mapID=nil },
@@ -766,7 +764,6 @@ for _, id in ipairs(TWW_FLASK_BUFF_IDS) do
 end
 
 -- Food Items (Midnight)
--- Food Items (Midnight)
 local FOOD_ITEMS = {
     { key="royal_roast",           itemID=242275, name="Royal Roast" },
     { key="impossibly_royal_roast", itemID=255847, name="Impossibly Royal Roast" },
@@ -842,7 +839,6 @@ local FOOD_ITEMS = {
     { key="hearty_farstrider_rations",      itemID=242776, name="Hearty Farstrider Rations" },
     { key="hearty_bloom_skewers",           itemID=242769, name="Hearty Bloom Skewers" },
 }
-
 
 -- Weapon Enchant dropdown choices (name best itemID lookup at runtime)
 local WEAPON_ENCHANT_CHOICES = {
@@ -1471,6 +1467,26 @@ local function HideAllIcons()
     if talentIconAnchor then talentIconAnchor:Hide() end
 end
 
+-- Resize iconAnchor while keeping its visual center in place.
+-- TOPLEFT anchoring means we need to shift the position by half the width delta.
+-- Skip the position shift during unlock mode -- the mover handles positioning.
+local function ResizeAnchorCentered(newW, newH)
+    if not iconAnchor then return end
+    local oldW = iconAnchor:GetWidth() or 0
+    iconAnchor:SetSize(newW, newH)
+    local inUnlock = EllesmereUI and EllesmereUI.IsUnlockModeActive and EllesmereUI.IsUnlockModeActive()
+    if not inUnlock then
+        local dx = (oldW - newW) * 0.5
+        if math.abs(dx) > 0.5 then
+            local p, rel, rp, px, py = iconAnchor:GetPoint(1)
+            if p then
+                iconAnchor:ClearAllPoints()
+                iconAnchor:SetPoint(p, rel, rp, (px or 0) + dx, py or 0)
+            end
+        end
+    end
+end
+
 local function LayoutIcons()
     local count = #activeIcons; if count == 0 then return end
     local p = db.profile.display
@@ -1478,17 +1494,16 @@ local function LayoutIcons()
     local baseScale = p.scale or 1.0
     local sz = floor(ICON_SIZE * baseScale + 0.5)
     local totalW = (count * sz) + ((count-1) * spacing)
-    local startX = -(totalW/2) + (sz/2)
     for i, btn in ipairs(activeIcons) do
         btn:SetSize(sz, sz)
         btn:SetAlpha(p.opacity or 1.0)
         btn:ClearAllPoints()
-        btn:SetPoint("CENTER", iconAnchor, "CENTER", startX + (i-1)*(sz+spacing), 0)
+        btn:SetPoint("TOPLEFT", iconAnchor, "TOPLEFT", (i-1)*(sz+spacing), 0)
     end
     -- Size the anchor to the grid so the unlock mode mover covers it correctly
     local textH = 0
     if p.showText then textH = (p.textSize or 11) + abs(p.textYOffset or -2) end
-    iconAnchor:SetSize(totalW, sz + textH)
+    ResizeAnchorCentered(totalW, sz + textH)
 end
 
 local function ShowIcon(iconIdx, setupFn, dismissKey)
@@ -1526,12 +1541,11 @@ local function LayoutTalentIcons()
     local baseScale = p.scale or 1.0
     local sz = floor(ICON_SIZE * baseScale + 0.5)
     local totalW = (count * sz) + ((count-1) * spacing)
-    local startX = -(totalW/2) + (sz/2)
     for i, btn in ipairs(talentActiveIcons) do
         btn:SetSize(sz, sz)
         btn:SetAlpha(p.opacity or 1.0)
         btn:ClearAllPoints()
-        btn:SetPoint("CENTER", talentIconAnchor, "CENTER", startX + (i-1)*(sz+spacing), 0)
+        btn:SetPoint("TOPLEFT", talentIconAnchor, "TOPLEFT", (i-1)*(sz+spacing), 0)
     end
 end
 
@@ -2184,9 +2198,25 @@ local function ApplyUnlockPos()
         iconAnchor:ClearAllPoints()
         iconAnchor:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
     else
+        -- Convert legacy CENTER offset to TOPLEFT
         local d = db.profile.display
+        local baseScale = d.scale or 1.0
+        local sz = floor(ICON_SIZE * baseScale + 0.5)
+        local spacing = d.iconSpacing or 8
+        local count = max(#activeIcons, 2)
+        local w = count * sz + (count - 1) * spacing
+        local textH = 0
+        if d.showText then
+            textH = (d.textSize or 11) + abs(d.textYOffset or -2)
+        end
+        local h = sz + textH
+        iconAnchor:SetSize(w, h)
+        local uiW = UIParent:GetWidth()
+        local uiH = UIParent:GetHeight()
+        local cx = uiW * 0.5 + (d.xOffset or 0)
+        local cy = uiH * 0.5 + (d.yOffset or 0)
         iconAnchor:ClearAllPoints()
-        iconAnchor:SetPoint("CENTER", UIParent, "CENTER", d.xOffset or 0, d.yOffset or 0)
+        iconAnchor:SetPoint("TOPLEFT", UIParent, "TOPLEFT", cx - w * 0.5, cy - uiH + h * 0.5)
     end
 end
 
@@ -2205,20 +2235,22 @@ local function RegisterUnlockElements()
                 local baseScale = p.scale or 1.0
                 local sz = floor(ICON_SIZE * baseScale + 0.5)
                 local spacing = p.iconSpacing or 8
-                local count = max(#activeIcons, 3)
+                local count = max(#activeIcons, 2)
                 local w = count * sz + (count - 1) * spacing
                 local textH = 0
                 if p.showText then
                     textH = (p.textSize or 11) + abs(p.textYOffset or -2)
                 end
                 local h = sz + textH
-                return w, h, -(textH / 2)
+                -- Keep iconAnchor sized correctly so Sync() never sees it as a tiny anchor
+                if iconAnchor then ResizeAnchorCentered(w, h) end
+                return w, h
             end,
             linkedDimensions = true,
             setWidth = function(_, newW)
                 local p = db.profile.display
                 local spacing = p.iconSpacing or 8
-                local count = max(#activeIcons, 3)
+                local count = max(#activeIcons, 2)
                 local sz = (newW - (count - 1) * spacing) / count
                 if sz < 8 then sz = 8 end
                 p.scale = sz / ICON_SIZE
@@ -2612,7 +2644,7 @@ mainFrame:SetScript("OnEvent", function(_, e, arg1, arg2, arg3)
         talentIconAnchor:SetSize(1, 1)
         talentIconAnchor:SetFrameStrata(GetStrata())
         talentIconAnchor:EnableMouse(false)
-        talentIconAnchor:SetPoint("CENTER", iconAnchor, "CENTER", 0, db.profile.talentReminderYOffset or -50)
+        talentIconAnchor:SetPoint("TOP", iconAnchor, "BOTTOM", 0, db.profile.talentReminderYOffset or -50)
         talentIconAnchor:Hide()
 
         local function ApplyStrata()

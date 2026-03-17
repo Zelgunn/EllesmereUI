@@ -2394,9 +2394,9 @@ do
     local function CreateWelcomePopup()
         if welcomePopup then return welcomePopup, welcomeDimmer end
 
-        local POPUP_W, POPUP_H = 440, 240
+        local POPUP_W, POPUP_H = 420, 230
 
-        -- Full-screen dimmer
+        -- Dimmer
         welcomeDimmer = CreateFrame("Frame", "EUIWelcomeDimmer", UIParent)
         welcomeDimmer:SetFrameStrata("FULLSCREEN_DIALOG")
         welcomeDimmer:SetFrameLevel(100)
@@ -2406,7 +2406,7 @@ do
         welcomeDimmer:SetScript("OnMouseWheel", function() end)
         welcomeDimmer:Hide()
 
-        local dimTex = SolidTex(welcomeDimmer, "BACKGROUND", 0, 0, 0, 0.45)
+        local dimTex = SolidTex(welcomeDimmer, "BACKGROUND", 0, 0, 0, 0.25)
         dimTex:SetAllPoints()
 
         -- Popup frame
@@ -2417,23 +2417,20 @@ do
         welcomePopup:SetFrameLevel(welcomeDimmer:GetFrameLevel() + 10)
         welcomePopup:EnableMouse(true)
 
-        -- Background
-        local bg = SolidTex(welcomePopup, "BACKGROUND", 0.06, 0.08, 0.10, 1)
+        local bg = SolidTex(welcomePopup, "BACKGROUND", 0.06, 0.08, 0.10, 0.95)
         bg:SetAllPoints()
-
-        -- Border
         MakeBorder(welcomePopup, BORDER_COLOR.r, BORDER_COLOR.g, BORDER_COLOR.b, 0.15)
 
         -- Title
         local EG = ELLESMERE_GREEN
-        local title = MakeFont(welcomePopup, 18, "", EG.r, EG.g, EG.b)
+        local title = MakeFont(welcomePopup, 16, "", EG.r, EG.g, EG.b)
         title:SetPoint("TOP", welcomePopup, "TOP", 0, -22)
         title:SetText("Welcome to EllesmereUI")
 
         -- Message
         local msg = MakeFont(welcomePopup, 12, nil, TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, TEXT_DIM.a)
-        msg:SetPoint("TOP", title, "BOTTOM", 0, -14)
-        msg:SetWidth(POPUP_W - 50)
+        msg:SetPoint("TOP", title, "BOTTOM", 0, -12)
+        msg:SetWidth(POPUP_W - 60)
         msg:SetJustifyH("CENTER")
         msg:SetWordWrap(true)
         msg:SetSpacing(4)
@@ -2443,50 +2440,41 @@ do
         local disc = welcomePopup:CreateFontString(nil, "OVERLAY")
         disc:SetFont(EXPRESSWAY, 10, "")
         disc:SetTextColor(1, 0.35, 0.35, 0.8)
-        disc:SetPoint("TOP", msg, "BOTTOM", 0, -10)
-        disc:SetWidth(POPUP_W - 50)
+        disc:SetPoint("TOP", msg, "BOTTOM", 0, -8)
+        disc:SetWidth(POPUP_W - 60)
         disc:SetJustifyH("CENTER")
         disc:SetWordWrap(true)
         disc:SetText("This will reset all EllesmereUI settings to defaults.")
 
-        -- Button dimensions
-        local BTN_W, BTN_H = 170, 32
-        local FADE_DUR = 0.1
-
-        -- Reset button (green, centered)
-        local resetBtn = CreateFrame("Button", nil, welcomePopup)
-        resetBtn:SetSize(BTN_W + 2, BTN_H + 2)
-        resetBtn:SetPoint("BOTTOM", welcomePopup, "BOTTOM", 0, 42)
-        resetBtn:SetFrameLevel(welcomePopup:GetFrameLevel() + 2)
-
-        local brd = SolidTex(resetBtn, "BACKGROUND", EG.r, EG.g, EG.b, 0.9)
-        brd:SetAllPoints()
-        local fill = SolidTex(resetBtn, "BORDER", 0.06, 0.08, 0.10, 0.92)
-        fill:SetPoint("TOPLEFT", 1, -1); fill:SetPoint("BOTTOMRIGHT", -1, 1)
-
-        local lbl = MakeFont(resetBtn, 13, nil, EG.r, EG.g, EG.b, 0.9)
-        lbl:SetPoint("CENTER")
-        lbl:SetText("Reset Settings")
-
-        local progress, target = 0, 0
-        local function Apply(t)
-            lbl:SetAlpha(lerp(0.9, 1, t))
-            brd:SetColorTexture(EG.r, EG.g, EG.b, lerp(0.9, 1, t))
+        -- Inline button builder (self-contained so the popup works even if
+        -- EllesmereUI_Widgets.lua failed to load)
+        local function WelcomeBtn(parent, text, onClick)
+            local btn = CreateFrame("Button", nil, parent)
+            btn:SetSize(152, 32)
+            btn:SetFrameLevel(parent:GetFrameLevel() + 2)
+            local bbg = SolidTex(btn, "BACKGROUND", BTN_BG_R, BTN_BG_G, BTN_BG_B, BTN_BG_A)
+            bbg:SetAllPoints()
+            local bbrd = MakeBorder(btn, 1, 1, 1, BTN_BRD_A)
+            local blbl = MakeFont(btn, 13, nil, 1, 1, 1)
+            blbl:SetAlpha(BTN_TXT_A)
+            blbl:SetPoint("CENTER")
+            blbl:SetText(text)
+            btn:SetScript("OnEnter", function()
+                blbl:SetAlpha(BTN_TXT_HA)
+                bbrd:SetColor(1, 1, 1, BTN_BRD_HA)
+                bbg:SetColorTexture(BTN_BG_R, BTN_BG_G, BTN_BG_B, BTN_BG_HA)
+            end)
+            btn:SetScript("OnLeave", function()
+                blbl:SetAlpha(BTN_TXT_A)
+                bbrd:SetColor(1, 1, 1, BTN_BRD_A)
+                bbg:SetColorTexture(BTN_BG_R, BTN_BG_G, BTN_BG_B, BTN_BG_A)
+            end)
+            btn:SetScript("OnClick", function() if onClick then onClick() end end)
+            return btn
         end
-        local function OnUpdate(self, elapsed)
-            local dir = (target == 1) and 1 or -1
-            progress = progress + dir * (elapsed / FADE_DUR)
-            if (dir == 1 and progress >= 1) or (dir == -1 and progress <= 0) then
-                progress = target
-                self:SetScript("OnUpdate", nil)
-            end
-            Apply(progress)
-        end
-        resetBtn:SetScript("OnEnter", function(self) target = 1; self:SetScript("OnUpdate", OnUpdate) end)
-        resetBtn:SetScript("OnLeave", function(self) target = 0; self:SetScript("OnUpdate", OnUpdate) end)
 
-        resetBtn:SetScript("OnClick", function()
-            -- Wipe all EllesmereUI SavedVariables
+        -- Reset button (left) and Close button (right)
+        local resetBtn = WelcomeBtn(welcomePopup, "Reset Settings", function()
             local svNames = {
                 "EllesmereUIDB",
                 "EllesmereUIActionBarsDB",
@@ -2498,33 +2486,18 @@ do
                 "EllesmereUIUnitFramesDB",
             }
             for _, name in ipairs(svNames) do
-                if _G[name] then
-                    wipe(_G[name])
-                end
+                if _G[name] then wipe(_G[name]) end
             end
-            -- Re-create EllesmereUIDB with the reset version stamp
             EllesmereUIDB = { _resetVersion = 1 }
             ReloadUI()
         end)
+        resetBtn:SetPoint("BOTTOMRIGHT", welcomePopup, "BOTTOM", -8, 14)
 
-        -- "Close" text below the button (dismiss without resetting)
-        local closeBtn = CreateFrame("Button", nil, welcomePopup)
-        closeBtn:SetSize(60, 16)
-        closeBtn:SetPoint("TOP", resetBtn, "BOTTOM", 0, -6)
-        closeBtn:SetFrameLevel(welcomePopup:GetFrameLevel() + 2)
-        local closeFS = MakeFont(closeBtn, 10, nil, TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.35)
-        closeFS:SetPoint("CENTER")
-        closeFS:SetText("Close")
-        closeBtn:SetScript("OnEnter", function() closeFS:SetAlpha(0.7) end)
-        closeBtn:SetScript("OnLeave", function() closeFS:SetAlpha(0.35) end)
-        closeBtn:SetScript("OnClick", function()
-            welcomeDimmer:Hide()
-        end)
+        local closeBtn = WelcomeBtn(welcomePopup, "Close", function() welcomeDimmer:Hide() end)
+        closeBtn:SetPoint("BOTTOMLEFT", welcomePopup, "BOTTOM", 8, 14)
 
-        -- Escape to close
+        -- Escape or dimmer click to close
         WirePopupEscape(welcomePopup, welcomeDimmer)
-
-        -- Block dimmer clicks from passing through
         welcomeDimmer:SetScript("OnMouseDown", function()
             if not welcomePopup:IsMouseOver() then
                 welcomeDimmer:Hide()
@@ -5861,7 +5834,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "4.9.8"
+EllesmereUI.VERSION = "5.0"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end
@@ -6480,6 +6453,11 @@ initFrame:SetScript("OnEvent", function(self, event)
 
     -- Stamp fresh installs so they never see the reset popup
     EllesmereUI.StampResetVersion()
+
+    -- Show reset popup on login if needed (short delay so the screen is ready)
+    if EllesmereUI.NeedsBetaReset() then
+        C_Timer.After(1.5, function() EllesmereUI:ShowWelcomePopup() end)
+    end
 
     -- Create native minimap button
     EllesmereUI.CreateMinimapButton()

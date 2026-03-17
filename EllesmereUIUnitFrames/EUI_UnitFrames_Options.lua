@@ -2935,7 +2935,7 @@ initFrame:SetScript("OnEvent", function(self)
             })
         end
 
-        -- Row 2: Border (slider + double inline swatches)
+        -- Row 2: Border (slider + double inline swatches) | Dark Mode
         local sharedScaleBorderRow
         sharedScaleBorderRow, h = W:DualRow(parent, y,
             { type="slider", text="Border",
@@ -2944,7 +2944,13 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                   SSet("borderSize", v); ReloadAndUpdate()
               end },
-            { type="label", text="" });  y = y - h
+            { type="toggle", text="Dark Mode",
+              getValue=function() return db.profile.darkTheme end,
+              setValue=function(v)
+                  db.profile.darkTheme = v
+                  ReloadAndUpdate(); UpdatePreview()
+                  EllesmereUI:RefreshPage()
+              end });  y = y - h
         -- Sync icon: Border Size (left)
         do
             local rgn = sharedScaleBorderRow._leftRegion
@@ -3045,19 +3051,13 @@ initFrame:SetScript("OnEvent", function(self)
             EllesmereUI.RegisterWidgetRefresh(function() updateBorderSwatch(); updateHlSwatch() end)
         end
 
-        -- Row 3: Bar Texture | Dark Mode
+        -- Row 3: Bar Texture
         local sharedTexDarkRow
         sharedTexDarkRow, h = W:DualRow(parent, y,
             { type="dropdown", text="Bar Texture", values=hbtValues, order=hbtOrder,
               getValue=function() return SVal("healthBarTexture", "none") end,
               setValue=function(v) SSet("healthBarTexture", v); ReloadAndUpdate(); UpdatePreview() end },
-            { type="toggle", text="Dark Mode",
-              getValue=function() return db.profile.darkTheme end,
-              setValue=function(v)
-                  db.profile.darkTheme = v
-                  ReloadAndUpdate(); UpdatePreview()
-                  EllesmereUI:RefreshPage()
-              end });  y = y - h
+            { type="label", text="" });  y = y - h
         -- Sync icon: Health Bar Texture (left)
         do
             local rgn = sharedTexDarkRow._leftRegion

@@ -129,6 +129,7 @@ local POWER_COLORS = {
     ["MAELSTROM_BAR"]    = { 0.00, 0.50, 1.00 },
     ["INSANITY_BAR"]     = { 0.40, 0.00, 0.80 },
     ["FOCUS_BAR"]        = { 0.77, 0.53, 0.24 },
+    ["LUNAR_POWER_BAR"]  = { 0.30, 0.52, 0.90 },
     ["TIP_OF_THE_SPEAR"] = { 0.67, 0.83, 0.45 },
     ["WHIRLWIND_STACKS"] = { 0.78, 0.61, 0.43 },
     ["ICICLES"] = { 0.45, 0.85, 1.00 },
@@ -164,7 +165,9 @@ local function GetPrimaryPowerType()
     if classFile == "DRUID" then
         if form == 1 then return PT.ENERGY end
         if form == 5 then return PT.RAGE end
-        if spec == 1 then return PT.LUNAR_POWER end
+        if spec == 1 then return PT.MANA end
+        -- Balance: Mana on the power bar; Astral Power is a class resource bar
+        -- (mirrors Shadow Priest / Elemental Shaman pattern)
         return PT.MANA
     end
 
@@ -242,6 +245,12 @@ local function GetSecondaryResource()
     elseif classFile == "DRUID" and form == 1 then
         local mx = UnitPowerMax("player", PT.COMBO)
         return { power = PT.COMBO, max = (not issecretvalue or not issecretvalue(mx)) and mx or 5, type = "points" }
+    elseif classFile == "DRUID" and spec == 1 then
+        -- Balance: Astral Power as a class resource bar (like Elemental maelstrom)
+        local mx = UnitPowerMax("player", PT.LUNAR_POWER)
+        if issecretvalue and issecretvalue(mx) then mx = 100 end
+        if not mx or mx <= 0 then mx = 100 end
+        return { power = "LUNAR_POWER_BAR", max = mx, type = "bar" }
     elseif classFile == "MONK" and (spec == 3) then
         local mx = UnitPowerMax("player", PT.CHI)
         return { power = PT.CHI, max = (not issecretvalue or not issecretvalue(mx)) and mx or 5, type = "points" }
@@ -414,6 +423,7 @@ local DEFAULTS = {
             thresholdPct     = 30,
             thresholdPartialOnly = false,
             thresholdR = 1.0, thresholdG = 0.2, thresholdB = 0.2, thresholdA = 1,
+            expandIfNoResource = false,
         },
         secondary = {
             enabled     = true,
@@ -882,7 +892,21 @@ local function RegisterUnlockElements()
         elements[#elements + 1] = MK({
             key = "ERB_Power", label = "Power Bar", group = "Resource Bars", order = 501,
             getFrame = function() return primaryBar end,
-            getSize  = function() local s = S(); return s.width, s.height end,
+            getSize  = function()
+                local s = S()
+                local h = s.height
+                local expandDelta = 0
+                if s.expandIfNoResource then
+                    local secRes = GetSecondaryResource()
+                    if not secRes then
+                        local sp2 = ERB.db.profile.secondary
+                        expandDelta = sp2 and sp2.pipHeight or 20
+                        h = h + expandDelta
+                    end
+                end
+                -- 3rd return: centerYOff shifts the mover up to match the bar's upward growth
+                return s.width, h, expandDelta * 0.5
+            end,
             setWidth = function(_, w) S().width = w; Rebuild() end,
             setHeight = function(_, h) S().height = h; Rebuild() end,
             isAnchored = function() local s = S(); return s.anchorTo and s.anchorTo ~= "none" end,
@@ -1376,15 +1400,26 @@ local function BuildBars()
     -- Power bar (primary resource)
     cachedPrimary = GetPrimaryPowerType()
     local pp = p.primary or FALLBACK.primary
+    -- Expand height when spec has no class resource and the option is enabled
+    local ppHeight = pp.height or 14
+    local ppExpandDelta = 0
+    if pp.expandIfNoResource then
+        local secRes = GetSecondaryResource()
+        if not secRes then
+            local sp2 = p.secondary or FALLBACK.secondary
+            ppExpandDelta = sp2.pipHeight or 20
+            ppHeight = ppHeight + ppExpandDelta
+        end
+    end
     if pp.enabled ~= false and cachedPrimary then
         local ppOri = pp.orientation or g.orientation or "HORIZONTAL"
         if not primaryBar then
-            primaryBar = CreateStatusBar(mainFrame, "ERB_PrimaryBar", pp.width, pp.height,
+            primaryBar = CreateStatusBar(mainFrame, "ERB_PrimaryBar", pp.width, ppHeight,
                 pp.borderSize, pp.borderR, pp.borderG, pp.borderB, pp.borderA)
         end
         local primaryAnchorKey = NormalizeAnchorKey(pp.anchorTo)
         if primaryAnchorKey ~= "none" then
-            local ow, oh = OrientedSize(pp.width, pp.height, ppOri)
+            local ow, oh = OrientedSize(pp.width, ppHeight, ppOri)
             local offsetX, offsetY = GetAnchorOffsets(pp)
             primaryBar:SetSize(ow, oh)
             if not ApplyBarAnchor(primaryBar, primaryAnchorKey, pp.anchorPosition, offsetX, offsetY, pp.growthDirection, pp.growCentered) then
@@ -1393,11 +1428,12 @@ local function BuildBars()
         elseif pp.unlockPos and pp.unlockPos.point then
             -- Position fully managed by unlock mode -- no animations, just apply directly
             local rp = pp.unlockPos.relPoint or pp.unlockPos.point
-            local ow, oh = OrientedSize(pp.width, pp.height, ppOri)
+            local ow, oh = OrientedSize(pp.width, ppHeight, ppOri)
             ApplyBarAnchor(primaryBar, "none")
             primaryBar:SetSize(ow, oh)
             primaryBar:ClearAllPoints()
-            primaryBar:SetPoint(pp.unlockPos.point, UIParent, rp, pp.unlockPos.x or 0, pp.unlockPos.y or 0)
+            -- Shift up by expand delta so the bar grows upward (bottom edge stays fixed)
+            primaryBar:SetPoint(pp.unlockPos.point, UIParent, rp, pp.unlockPos.x or 0, (pp.unlockPos.y or 0) + ppExpandDelta)
         else
             -- Clear any mouse-tracking OnUpdate from a previous anchor
             ApplyBarAnchor(primaryBar, "none")
@@ -1405,16 +1441,17 @@ local function BuildBars()
                 local ox = primaryBar["_barAnim_ox"] or pp.offsetX or 0
                 local oy = primaryBar["_barAnim_oy"] or pp.offsetY or -54
                 local w = primaryBar["_barAnim_w"] or pp.width or 214
-                local h2 = primaryBar["_barAnim_h"] or pp.height or 4
+                local h2 = primaryBar["_barAnim_h"] or ppHeight or 4
                 local ow, oh = OrientedSize(w, h2, ppOri)
                 primaryBar:ClearAllPoints()
-                primaryBar:SetPoint("CENTER", mainFrame, "CENTER", ox, oy)
+                -- Shift up by half the expand delta so growth goes upward from center
+                primaryBar:SetPoint("CENTER", mainFrame, "CENTER", ox, oy + ppExpandDelta * 0.5)
                 primaryBar:SetSize(ow, oh)
             end
             SmoothBarAnimate(primaryBar, "ox", pp.offsetX or 0, function() ApplyPowerBarTransform() end)
             SmoothBarAnimate(primaryBar, "oy", pp.offsetY or -54, function() ApplyPowerBarTransform() end)
             SmoothBarAnimate(primaryBar, "w", pp.width or 214, function() ApplyPowerBarTransform() end)
-            SmoothBarAnimate(primaryBar, "h", pp.height or 4, function() ApplyPowerBarTransform() end)
+            SmoothBarAnimate(primaryBar, "h", ppHeight or 4, function() ApplyPowerBarTransform() end)
         end
         primaryBar:ApplyBorder(pp.borderSize, pp.borderR, pp.borderG, pp.borderB, pp.borderA)
 
@@ -2060,6 +2097,11 @@ local function UpdateSecondaryResource()
                 maxC = UnitPowerMax("player", PT.FOCUS) or maxPts
                 if issecretvalue and issecretvalue(maxC) then maxC = maxPts end
                 if maxC <= 0 then maxC = maxPts end
+            elseif powerType == "LUNAR_POWER_BAR" then
+                cur = UnitPower("player", PT.LUNAR_POWER) or 0
+                maxC = UnitPowerMax("player", PT.LUNAR_POWER) or maxPts
+                if issecretvalue and issecretvalue(maxC) then maxC = maxPts end
+                if maxC <= 0 then maxC = maxPts end
             elseif powerType == "BREWMASTER_STAGGER" then
                 cur = UnitStagger("player") or 0
                 maxC = UnitHealthMax("player") or 1
@@ -2093,6 +2135,7 @@ local function UpdateSecondaryResource()
                     local pType = (powerType == "MAELSTROM_BAR") and PT.MAELSTROM
                                or (powerType == "INSANITY_BAR") and PT.INSANITY
                                or (powerType == "FOCUS_BAR") and PT.FOCUS
+                               or (powerType == "LUNAR_POWER_BAR") and PT.LUNAR_POWER
                                or nil
                     if sp.thresholdEnabled and pType and UnitPowerPercent then
                         -- Use ColorCurve + UnitPowerPercent: WoW evaluates the secret
@@ -2153,6 +2196,13 @@ local function UpdateSecondaryResource()
                         end
                     elseif powerType == "FOCUS_BAR" then
                         local pct = UnitPowerPercent and UnitPowerPercent("player", PT.FOCUS) or 0
+                        if not issecretvalue(pct) then
+                            secondaryFrame._countText:SetText(format("%d", pct) .. "%")
+                        else
+                            secondaryFrame._countText:SetText(tostring(cur))
+                        end
+                    elseif powerType == "LUNAR_POWER_BAR" then
+                        local pct = UnitPowerPercent and UnitPowerPercent("player", PT.LUNAR_POWER) or 0
                         if not issecretvalue(pct) then
                             secondaryFrame._countText:SetText(format("%d", pct) .. "%")
                         else
@@ -3651,6 +3701,7 @@ function ERB:OnInitialize()
     _G._ERB_AceDB = self.db
     _G._ERB_Apply = function() ERB:ApplyAll() end
     _G._ERB_GetSecondaryResource = GetSecondaryResource
+    _G._ERB_CalcPipGeometry = CalcPipGeometry
     _G._ERB_GetPrimaryPowerType = GetPrimaryPowerType
     _G._ERB_PowerColors = POWER_COLORS
 

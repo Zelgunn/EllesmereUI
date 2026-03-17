@@ -88,6 +88,7 @@ initFrame:SetScript("OnEvent", function(self)
     IsBarTypeSecondary = function()
         local _, cf = UnitClass("player")
         local spec = GetSpecialization()
+        if cf == "DRUID" and spec == 1 then return true end -- Balance (Astral Power bar)
         if cf == "SHAMAN" and spec == 1 then return true end -- Elemental
         if cf == "PRIEST" and spec == 3 then return true end -- Shadow
         if cf == "MONK" and spec == 1 then return true end -- Brewmaster
@@ -332,34 +333,45 @@ initFrame:SetScript("OnEvent", function(self)
                 for _, pip in ipairs(_previewFrames.pips) do pip:Hide() end
             else
                 -- Pips preview update
-                -- pipWidth is the total bar width; divide evenly across pips.
-                -- Snap helpers: round values to the pip container's physical pixel grid
+                -- Use the same pixel-perfect geometry as the actual resource bar
+                local CalcPG = _G._ERB_CalcPipGeometry
                 local pcScale = pc:GetEffectiveScale()
                 if pcScale <= 0 then pcScale = 1 end
-                -- Round to nearest pixel (for sizes)
+                local onePx = 1 / pcScale
                 local function PipSnap(val)
                     return math.floor(val * pcScale + 0.5) / pcScale
                 end
-                local onePx = 1 / pcScale  -- exactly 1 physical pixel in local coords
                 local totalW = PipSnap(sp.pipWidth)
-                local pipSp = (sp.pipSpacing > 0) and math.max(onePx, PipSnap(sp.pipSpacing)) or 0
                 local snappedPipH = PipSnap(sp.pipHeight)
                 local numPips = 5
-                local isVertical = false   -- preview always horizontal
+                local isVertical = false
                 local isReversed = false
-                -- Available length for pips along the stacking axis
-                local availW = totalW - (numPips - 1) * pipSp
-                local baseW = math.floor(availW * pcScale / numPips) / pcScale
-                local leftover = availW - baseW * numPips
-                local extraCount = math.floor(leftover * pcScale + 0.5)
+
+                local slots
+                if CalcPG then
+                    slots = CalcPG(totalW, numPips, sp.pipSpacing or 1, pc)
+                end
 
                 local pipX = {}
                 local pipW = {}
-                local x0 = 0
-                for i = 1, numPips do
-                    pipX[i] = x0
-                    pipW[i] = baseW + (i <= extraCount and onePx or 0)
-                    x0 = x0 + pipW[i] + pipSp
+                if slots then
+                    for i = 1, numPips do
+                        pipX[i] = slots[i].x0
+                        pipW[i] = slots[i].x1 - slots[i].x0
+                    end
+                else
+                    -- Fallback if CalcPipGeometry not available yet
+                    local pipSp = (sp.pipSpacing > 0) and math.max(onePx, PipSnap(sp.pipSpacing)) or 0
+                    local availW = totalW - (numPips - 1) * pipSp
+                    local baseW = math.floor(availW * pcScale / numPips) / pcScale
+                    local leftover = availW - baseW * numPips
+                    local extraCount = math.floor(leftover * pcScale + 0.5)
+                    local x0 = 0
+                    for i = 1, numPips do
+                        pipX[i] = x0
+                        pipW[i] = baseW + (i <= extraCount and onePx or 0)
+                        x0 = x0 + pipW[i] + pipSp
+                    end
                 end
                 if isVertical then
                     pc:SetSize(snappedPipH, totalW)
@@ -1077,7 +1089,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         local classOff = function() local p = DB(); return p and not p.secondary.enabled end
 
-        -- Row 1: Show Class Resource | Spacing
+        -- Row 1: Show Class Resource (inline cog: Spacing) | Orientation
         local classEnableRow
         classEnableRow, h = W:DualRow(parent, y,
             { type = "toggle", text = "Show Class Resource",
@@ -1087,19 +1099,6 @@ initFrame:SetScript("OnEvent", function(self)
                   p.secondary.enabled = v; RebuildClass()
                   EllesmereUI:RefreshPage()
               end },
-            { type = "slider", text = "Spacing",
-              min = 0, max = 20, step = 1,
-              disabled = classOff,
-              disabledTooltip = "Enable Class Resource",
-              getValue = function() local p = DB(); return p and p.secondary.pipSpacing or 3 end,
-              setValue = function(v)
-                  local p = DB(); if not p then return end
-                  p.secondary.pipSpacing = v; SmoothRefresh()
-              end }
-        );  y = y - h
-
-        -- Row 2: Orientation | empty
-        _, h = W:DualRow(parent, y,
             { type = "dropdown", text = "Orientation",
               disabled = classOff,
               disabledTooltip = "Enable Class Resource",
@@ -1115,11 +1114,41 @@ initFrame:SetScript("OnEvent", function(self)
                   local p = DB(); if not p then return end
                   p.secondary.pipOrientation = v; SmoothRefresh()
                   EllesmereUI:RefreshPage()
-              end },
-            { type = "label", text = "" }
+              end }
         );  y = y - h
+        -- Inline cog on Show Class Resource: Spacing
+        do
+            local rgn = classEnableRow._leftRegion
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title = "Class Resource",
+                rows = {
+                    { type = "slider", label = "Spacing", min = 0, max = 20, step = 1,
+                      get = function() local p = DB(); return p and p.secondary.pipSpacing or 3 end,
+                      set = function(v)
+                          local p = DB(); if not p then return end
+                          p.secondary.pipSpacing = v; SmoothRefresh()
+                      end },
+                },
+            })
+            local cogBtn = MakeCogBtn(rgn, cogShow)
+            local cogDis = CreateFrame("Frame", nil, rgn)
+            cogDis:SetAllPoints(cogBtn)
+            cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
+            cogDis:EnableMouse(true)
+            cogDis:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip("Enable Class Resource"))
+            end)
+            cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdateClassCogDis()
+                local p = DB()
+                if p and not p.secondary.enabled then cogDis:Show() else cogDis:Hide() end
+            end
+            cogBtn:HookScript("OnShow", UpdateClassCogDis)
+            EllesmereUI.RegisterWidgetRefresh(UpdateClassCogDis)
+            UpdateClassCogDis()
+        end
 
-        -- Row 3: (Sync) Height | (Sync) Width
+        -- Row 2: (Sync) Height | (Sync) Width
         local classSizeRow
         classSizeRow, h = W:DualRow(parent, y,
             { type = "slider", text = "Height",
@@ -1610,6 +1639,38 @@ initFrame:SetScript("OnEvent", function(self)
                   p.primary.orientation = v; Refresh()
               end }
         );  y = y - h
+        -- Inline cog on Show Power Bar: Expand if No Resource
+        do
+            local rgn = powerEnableRow._leftRegion
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title = "Power Bar",
+                rows = {
+                    { type = "toggle", label = "Expand Bar if No Resource",
+                      tooltip = "When your spec has no class resource, automatically adds the class resource height to the power bar",
+                      get = function() local p = DB(); return p and p.primary.expandIfNoResource end,
+                      set = function(v)
+                          local p = DB(); if not p then return end
+                          p.primary.expandIfNoResource = v; Refresh()
+                      end },
+                },
+            })
+            local cogBtn = MakeCogBtn(rgn, cogShow)
+            local cogDis = CreateFrame("Frame", nil, rgn)
+            cogDis:SetAllPoints(cogBtn)
+            cogDis:SetFrameLevel(cogBtn:GetFrameLevel() + 5)
+            cogDis:EnableMouse(true)
+            cogDis:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(cogBtn, EllesmereUI.DisabledTooltip(powerDisTip()))
+            end)
+            cogDis:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            local function UpdatePowerCogDis()
+                local off = powerOff()
+                if off then cogDis:Show() else cogDis:Hide() end
+            end
+            cogBtn:HookScript("OnShow", UpdatePowerCogDis)
+            EllesmereUI.RegisterWidgetRefresh(UpdatePowerCogDis)
+            UpdatePowerCogDis()
+        end
 
         -- Row 2: (Sync) Height | (Sync) Width
         local powerSizeRow

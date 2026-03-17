@@ -684,6 +684,7 @@ local DEFAULTS = {
         cdmBars = {
             enabled = true,
             hideBlizzard = true,
+            useBlizzardBuffBars = false,
             -- The 3 default bars (match Blizzard CDM)
             bars = {
                 {
@@ -2075,6 +2076,25 @@ RestoreBlizzardCDM = function()
     end
 end
 
+-- Restore only the Blizzard buff CDM frame (BuffIconCooldownViewer).
+local function RestoreBlizzardBuffFrame()
+    local frameName = BLIZZ_CDM_FRAMES.buffs
+    if not frameName then return end
+    local frame = _G[frameName]
+    if frame and frame._ecmeHidden then
+        frame._ecmeRestoring = true
+        frame:SetAlpha(frame._ecmeOrigAlpha or 1)
+        if frame._ecmeOrigPoints then
+            frame:ClearAllPoints()
+            for _, pt in ipairs(frame._ecmeOrigPoints) do
+                frame:SetPoint(pt[1], pt[2], pt[3], pt[4], pt[5])
+            end
+        end
+        frame._ecmeHidden = false
+        frame._ecmeRestoring = nil
+    end
+end
+
 -------------------------------------------------------------------------------
 --  CDM Bar Position Helpers
 -------------------------------------------------------------------------------
@@ -3211,17 +3231,30 @@ UpdateCDMBarIcons = function(barKey)
     -- We do NOT filter by IsShown() because Blizzard children can briefly
     -- hide/show during state transitions (GCD end, cooldown start, etc.),
     -- which causes our icons to flicker.  Instead we check for a texture.
+    -- BuffIcon children have Icon as a Texture (with GetTexture).
+    -- BuffBar children wrap it: Icon is a Frame, Icon.Icon is the Texture.
+    -- Guard both paths to avoid "GetTexture is nil" errors on BuffBar children.
     -- Reuse buffer to avoid table allocation per tick
     local blizzIcons = _blizzIconsBuf
     local blizzCount = 0
+    -- Dedup by resolved spellID across primary + secondary viewers so that
+    -- spells appearing in both (e.g. Remorseless Winter) only show once.
+    -- Primary viewer children are collected first and win on conflict.
+    local _blizzIconSeen = {}
 
     do
         local children = { blizzFrame:GetChildren() }
         for i = 1, #children do
             local child = children[i]
-            if child and child.Icon and type(child.Icon.GetTexture) == "function" and child.Icon:GetTexture() then
-                blizzCount = blizzCount + 1
-                blizzIcons[blizzCount] = child
+            if child and child.Icon then
+                local iw = child.Icon
+                if not iw.GetTexture and iw.Icon then iw = iw.Icon end
+                if iw.GetTexture and iw:GetTexture() then
+                    local sid = child._ecmeResolvedSid
+                    if sid and sid > 0 then _blizzIconSeen[sid] = true end
+                    blizzCount = blizzCount + 1
+                    blizzIcons[blizzCount] = child
+                end
             end
         end
     end
@@ -3234,9 +3267,17 @@ UpdateCDMBarIcons = function(barKey)
             local children = { secondaryFrame:GetChildren() }
             for i = 1, #children do
                 local child = children[i]
-                if child and child.Icon and type(child.Icon.GetTexture) == "function" and child.Icon:GetTexture() then
-                    blizzCount = blizzCount + 1
-                    blizzIcons[blizzCount] = child
+                if child and child.Icon then
+                    local iw = child.Icon
+                    if not iw.GetTexture and iw.Icon then iw = iw.Icon end
+                    if iw.GetTexture and iw:GetTexture() then
+                        local sid = child._ecmeResolvedSid
+                        if not sid or sid <= 0 or not _blizzIconSeen[sid] then
+                            if sid and sid > 0 then _blizzIconSeen[sid] = true end
+                            blizzCount = blizzCount + 1
+                            blizzIcons[blizzCount] = child
+                        end
+                    end
                 end
             end
         end
@@ -3673,11 +3714,13 @@ local function SnapshotBlizzardCDM(barKey, barData)
     local filterPassives = (barKey ~= "buffs")
 
     local tracked = {}
+    local trackedSeen = {}  -- dedup by spellID across primary + secondary viewers
     for _, child in ipairs(blizzIcons) do
         local sid = EUtils.ResolveChildSpellID(child)
-        if sid and sid > 0 then
+        if sid and sid > 0 and not trackedSeen[sid] then
             local skip = filterPassives and IsTrulyPassive(sid)
             if not skip then
+                trackedSeen[sid] = true
                 tracked[#tracked + 1] = sid
                 -- Store spellID -> cdID mapping for buff bars so the tick cache
                 -- can find the correct viewer child even when the cooldownInfo
@@ -4228,8 +4271,9 @@ local function UpdateAllCDMBars(dt)
 
     ECache.ClearInactivePlacedUnitStart()
 
+    local useBlizzBuffs = p.cdmBars.useBlizzardBuffBars
     for _, barData in ipairs(p.cdmBars.bars) do
-        if barData.enabled then
+        if barData.enabled and not (useBlizzBuffs and barData.key == "buffs") then
             if BLIZZ_CDM_FRAMES[barData.key] then
                 -- Default bar: use tracked spells if snapshotted, otherwise mirror Blizzard
                 -- trackedSpells == nil means never snapshotted; empty table means user cleared all
@@ -4499,26 +4543,36 @@ BuildAllCDMBars = function()
         HideBlizzardCDM()
     end
 
+    local useBlizzBuffs = p.cdmBars.useBlizzardBuffBars
+    if useBlizzBuffs and p.cdmBars.hideBlizzard then
+        RestoreBlizzardBuffFrame()
+    end
+
     -- Build each bar and populate fast lookup
     wipe(barDataByKey)
     for i, barData in ipairs(p.cdmBars.bars) do
         barDataByKey[barData.key] = barData
-        BuildCDMBar(i)
-        RefreshCDMIconAppearance(barData.key)
-        -- Reset cached icon state so textures re-evaluate after a character switch
-        local icons = cdmBarIcons[barData.key]
-        if icons then
-            for _, icon in ipairs(icons) do
-                icon._lastTex = nil
-                icon._lastDesat = nil
-                icon._spellID = nil
-                icon._blizzChild = nil
+        if useBlizzBuffs and barData.key == "buffs" then
+            local frame = cdmBarFrames[barData.key]
+            if frame then frame:Hide() end
+        else
+            BuildCDMBar(i)
+            RefreshCDMIconAppearance(barData.key)
+            -- Reset cached icon state so textures re-evaluate after a character switch
+            local icons = cdmBarIcons[barData.key]
+            if icons then
+                for _, icon in ipairs(icons) do
+                    icon._lastTex = nil
+                    icon._lastDesat = nil
+                    icon._spellID = nil
+                    icon._blizzChild = nil
+                end
             end
+            local frame = cdmBarFrames[barData.key]
+            if frame then frame._prevVisibleCount = nil end
+            LayoutCDMBar(barData.key)
+            ApplyCDMTooltipState(barData.key)
         end
-        local frame = cdmBarFrames[barData.key]
-        if frame then frame._prevVisibleCount = nil end
-        LayoutCDMBar(barData.key)
-        ApplyCDMTooltipState(barData.key)
     end
     _CDMApplyVisibility()
     UpdateCDMKeybinds()
@@ -5372,13 +5426,6 @@ function ns.AddCDMBar(barType, name, numRows)
         customSpells = {},
         outOfRangeOverlay = false,
     }
-    -- Auto-populate new misc bars with player's current extras
-    if barType == "misc" then
-        local newBar = bars[#bars]
-        for _, ex in ipairs(GetExtraSpells()) do
-            newBar.customSpells[#newBar.customSpells + 1] = ex.spellID
-        end
-    end
     BuildAllCDMBars()
     -- Immediately populate icons so the bar is visible without a /reload
     UpdateCustomBarIcons(key)
@@ -6353,7 +6400,12 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo, arg3)
         -- Re-hide immediately so the Blizzard CDM doesn't reappear.
         local p = ECME.db and ECME.db.profile
         if p and p.cdmBars and p.cdmBars.hideBlizzard then
-            C_Timer.After(0, function() HideBlizzardCDM() end)
+            C_Timer.After(0, function()
+                HideBlizzardCDM()
+                if p.cdmBars.useBlizzardBuffBars then
+                    RestoreBlizzardBuffFrame()
+                end
+            end)
         end
         return
     end
@@ -6588,10 +6640,11 @@ SlashCmdList.CDMSTACKS = function()
 
         for i = 1, blizzFrame:GetNumChildren() do
             local child = select(i, blizzFrame:GetChildren())
-            if child and child.Icon and child.Icon:GetTexture() then
+            local dbgIw = child and child.Icon
+            if dbgIw and not dbgIw.GetTexture and dbgIw.Icon then dbgIw = dbgIw.Icon end
+            if dbgIw and dbgIw.GetTexture and dbgIw:GetTexture() then
                 local cdID = child.cooldownID
                 if not cdID and child.cooldownInfo then cdID = child.cooldownInfo.cooldownID end
-
                 local resolvedSid
                 if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
                     local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)

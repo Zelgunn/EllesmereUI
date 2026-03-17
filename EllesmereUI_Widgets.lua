@@ -3711,6 +3711,23 @@ local function BuildCogPopup(opts)
                 lbl:SetText(row.label)
                 lbl:SetPoint("LEFT", pf, "TOPLEFT", SIDE_PAD, curY - TOGGLE_ROW_H / 2 - 1)
 
+                -- Tooltip on label hover
+                if row.tooltip then
+                    local hitFrame = CreateFrame("Frame", nil, pf)
+                    hitFrame:SetPoint("TOPLEFT", lbl, "TOPLEFT", -2, 2)
+                    hitFrame:SetPoint("BOTTOMRIGHT", lbl, "BOTTOMRIGHT", 2, -2)
+                    hitFrame:SetFrameLevel(pf:GetFrameLevel() + 3)
+                    hitFrame:EnableMouse(true)
+                    hitFrame:SetScript("OnEnter", function()
+                        if EllesmereUI.ShowWidgetTooltip then
+                            EllesmereUI.ShowWidgetTooltip(lbl, row.tooltip)
+                        end
+                    end)
+                    hitFrame:SetScript("OnLeave", function()
+                        if EllesmereUI.HideWidgetTooltip then EllesmereUI.HideWidgetTooltip() end
+                    end)
+                end
+
                 -- Toggle button (cog popup, smaller)
                 local cogToggle, _, cogSnap = BuildToggleControl(pf, pf:GetFrameLevel() + 2, row.get, function(v) row.set(v) end, { sizeRatio = 0.8, noAnim = true })
                 cogToggle:SetPoint("RIGHT", pf, "TOPRIGHT", -SIDE_PAD, curY - TOGGLE_ROW_H / 2)
@@ -3815,7 +3832,7 @@ local function BuildCogPopup(opts)
                 local SAVE_W = 34
                 local SAVE_GAP = 4
 
-                -- Save button (always visible, right of input) — primary color
+                -- Save button (always visible, right of input)
                 local EG = ELLESMERE_GREEN
                 local saveBtn = CreateFrame("Button", nil, pf)
                 saveBtn:SetSize(SAVE_W, ROW_H - 4)

@@ -1175,6 +1175,7 @@ cache.GetResolvedCooldownIDFromSpell = GetResolvedCooldownIDFromSpell
 --  Action Button Lookup (supports Blizzard and popular bar addons)
 -------------------------------------------------------------------------------
 local blizzBarNames = {
+    [1] = "ActionButton",
     [2] = "MultiBarBottomLeftButton",
     [3] = "MultiBarBottomRightButton",
     [4] = "MultiBarRightButton",
@@ -1184,18 +1185,9 @@ local blizzBarNames = {
     [8] = "MultiBar7Button",
 }
 
--- todo: move to Utils
--------------------------------------------------------------------------------
---- Returns the first element that appears in the global variable _G
---- @param ... any              The elements to check
---- @return any firstExisting
--------------------------------------------------------------------------------
-local function FirstExisting(...)
-    for i = 1, select("#", ...) do
-        local f = _G[select(i, ...)]
-        if f then return f end
-    end
-end
+-- EAB slot offsets match BAR_SLOT_OFFSETS in EllesmereUIActionBars.lua
+local eabSlotOffsets = { 0, 60, 48, 24, 36, 144, 156, 168 }
+
 
 ---@type {[number]: string}
 local actionButtonCache = {}
@@ -1210,19 +1202,14 @@ local function GetActionButton(bar, i)
     bar = bar or 1
     local cacheKey = bar * 100 + i
     if actionButtonCache[cacheKey] then return actionButtonCache[cacheKey] end
-    local btn
-    if bar == 1 then
-        btn = FirstExisting(
-            "BT4Button" .. i, "ElvUI_Bar1Button" .. i,
-            "DominosActionButton" .. i, "ActionButton" .. i)
-    else
-        local offset = (bar - 1) * 12
-        local blizz = blizzBarNames[bar]
-        btn = FirstExisting(
-            "BT4Button" .. (offset + i),
-            "ElvUI_Bar" .. bar .. "Button" .. i,
-            "DominosActionButton" .. (offset + i),
-            blizz and (blizz .. i) or nil)
+    -- Try EABButton first (EllesmereUIActionBars creates these when Blizzard
+    -- buttons are unavailable, e.g. when Dominos hides ActionButton1-12)
+    local eabSlot = (eabSlotOffsets[bar] or 0) + i
+    local btn = _G["EABButton" .. eabSlot]
+    -- Fall back to standard Blizzard button names
+    if not btn then
+        local prefix = blizzBarNames[bar]
+        btn = prefix and _G[prefix .. i]
     end
     if btn then actionButtonCache[cacheKey] = btn end
     return btn

@@ -309,27 +309,24 @@ local function SetupOverlays()
             if barIdx and btnIdx then
                 for i, entry in ipairs(buffList) do
                     local key = assignKey .. "_" .. i
-                    local existing = overlayFrames[key]
-                    if existing then
-                        local expectedBtn = GetTargetButton(barIdx, btnIdx)
-                        if expectedBtn and existing:GetParent() ~= expectedBtn then
-                            StopNativeGlow(existing)
-                            existing:Hide()
-                            existing:SetParent(nil)
-                            overlayFrames[key] = nil
-                            lastSourceStates[key] = nil
-                        end
-                    end
-
                     local btn = GetTargetButton(barIdx, btnIdx)
                     if btn then
-                        if not overlayFrames[key] then
+                        local existing = overlayFrames[key]
+                        if existing then
+                            -- If the button was reparented, follow it
+                            if existing:GetParent() ~= btn then
+                                existing:SetParent(btn)
+                                existing:SetAllPoints(btn)
+                                lastSourceStates[key] = nil
+                            end
+                        else
                             local overlay = CreateFrame("Frame", "ECME_GlowV2_" .. key, btn)
                             overlay:SetAllPoints(btn)
-                            overlay:SetFrameLevel(btn:GetFrameLevel() + 10)
                             overlayFrames[key] = overlay
                         end
                         local overlay = overlayFrames[key]
+                        overlay:SetFrameLevel(btn:GetFrameLevel() + 10)
+                        overlay:SetAlpha(1)
                         overlay._assignEntry = entry
                         overlay:Show()
                         activeKeys[key] = true
@@ -348,6 +345,9 @@ local function SetupOverlays()
         end
     end
 
+    -- Reset all state so UpdateOverlayVisuals re-evaluates glows from scratch
+    wipe(lastSourceStates)
+
     hasActiveOverlays = anyActive
     hasHiddenSlots = false
 end
@@ -359,9 +359,6 @@ UpdateOverlayVisuals = function()
             local spellID = entry.spellID
             local mode = entry.mode or "ACTIVE"
 
-            -- Use the exact same data source as CDM bars: _tickBlizzActiveCache
-            -- This cache is rebuilt every tick in UpdateAllCDMBars from the
-            -- Blizzard CDM viewer children, keyed by both resolvedSid and baseSpellID.
             local auraActive = false
             if spellID and spellID > 0 then
                 local blizzCache = ns._tickBlizzActiveCache
