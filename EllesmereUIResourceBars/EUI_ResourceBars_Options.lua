@@ -2559,7 +2559,18 @@ initFrame:SetScript("OnEvent", function(self)
         local hasIcon = cb.showIcon ~= false
         local iconW = hasIcon and Snap(h) or 0
         pf.container:SetSize(w + iconW, h)
-        pf.container:ClearAllPoints(); pf.container:SetPoint("CENTER", pf.container:GetParent(), "CENTER", 0, 0)
+
+        -- Scale down to fit when the cast bar is wider than the panel
+        local PAD = EllesmereUI.CONTENT_PAD or 10
+        local hdr = pf.container:GetParent()
+        local availW = (hdr:GetWidth() - PAD * 2) / _castBarPreviewScale
+        local fitScale = 1
+        if (w + iconW) > availW and (w + iconW) > 0 and availW > 0 then
+            fitScale = availW / (w + iconW)
+        end
+        pf.container:SetScale(_castBarPreviewScale * fitScale)
+
+        pf.container:ClearAllPoints(); pf.container:SetPoint("CENTER", hdr, "CENTER", 0, 0)
         -- Bar frame
         pf.barFrame:SetSize(w, h)
         pf.barFrame:ClearAllPoints()
@@ -2673,10 +2684,10 @@ initFrame:SetScript("OnEvent", function(self)
 
         local container = CreateFrame("Frame", nil, hdr)
         container:SetPoint("CENTER", hdr, "CENTER", 0, 0)
-        container:SetScale(previewScale)
 
         -- Snap helper: round to the preview container's physical pixel grid
-        local cScale = container:GetEffectiveScale()
+        -- (use previewScale for initial snap; adjusted below if we scale-to-fit)
+        local cScale = UIParent:GetEffectiveScale()
         if cScale <= 0 then cScale = 1 end
         local function Snap(val)
             return math.floor(val * cScale + 0.5) / cScale
@@ -2685,6 +2696,16 @@ initFrame:SetScript("OnEvent", function(self)
         local w, h = Snap(cb.width), Snap(cb.height)
         local hasIcon = cb.showIcon ~= false
         local iconW = hasIcon and Snap(h) or 0
+
+        -- Scale down to fit when the cast bar is wider than the panel
+        local PAD = EllesmereUI.CONTENT_PAD or 10
+        local availW = (hdrW - PAD * 2) / previewScale
+        local fitScale = 1
+        if (w + iconW) > availW and (w + iconW) > 0 and availW > 0 then
+            fitScale = availW / (w + iconW)
+        end
+        container:SetScale(previewScale * fitScale)
+
         container:SetSize(w + iconW, h)
 
         -- Bar frame (holds bg, status bar)

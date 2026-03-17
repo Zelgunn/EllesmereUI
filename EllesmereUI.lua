@@ -3873,6 +3873,7 @@ local function CreateMainFrame()
     contentHeaderFrame:SetScript("OnMouseWheel", function(_, delta)
         if scrollFrame then scrollFrame:GetScript("OnMouseWheel")(scrollFrame, delta) end
     end)
+    contentHeaderFrame:SetClipsChildren(true)
     contentHeaderFrame:Hide()
     EllesmereUI._contentHeader = contentHeaderFrame
     local contentHeaderH = 0   -- current header height
@@ -6258,15 +6259,19 @@ do
             statsText = statsFrame:CreateFontString(nil, "OVERLAY")
             local font = EllesmereUI.ResolveFontName(EllesmereUI.GetFontsDB().global)
             statsText:SetFont(font, 12, EllesmereUI.GetFontOutlineFlag())
+            if EllesmereUI.GetFontUseShadow() then statsText:SetShadowOffset(1, -1) else statsText:SetShadowOffset(0, 0) end
             statsText:SetPoint("TOPLEFT")
             statsText:SetJustifyH("LEFT")
         end
-        -- Apply saved position
+        -- Apply saved position and scale
         local pos = EllesmereUIDB and EllesmereUIDB.secondaryStatsPos
         if pos then
             if pos.point then
                 statsFrame:ClearAllPoints()
                 statsFrame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
+            end
+            if pos.scale then
+                statsFrame:SetScale(pos.scale)
             end
         end
         statsFrame:RegisterUnitEvent("UNIT_STATS", "player")

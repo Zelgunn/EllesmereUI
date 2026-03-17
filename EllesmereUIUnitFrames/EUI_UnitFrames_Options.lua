@@ -2283,8 +2283,17 @@ initFrame:SetScript("OnEvent", function(self)
             local th = bh2 + btbExtra + (ch > 0 and ch or 0)
             pf:SetSize(tw, th)
 
-            -- Apply preview scale (no per-frame scale, just preview ratio)
-            local combinedScale = (pf._previewScale or 1)
+            -- Apply preview scale; shrink to fit when the frame is wider than the panel
+            local baseScale = pf._previewScale or 1
+            local fitScale = 1
+            do
+                local PAD = EllesmereUI.CONTENT_PAD or 10
+                local availW = (pf:GetParent():GetWidth() - PAD * 2) / baseScale
+                if tw > availW and tw > 0 and availW > 0 then
+                    fitScale = availW / tw
+                end
+            end
+            local combinedScale = baseScale * fitScale
             pf:SetScale(combinedScale)
 
             -- Recalculate border sizes after scale change so they stay pixel-perfect

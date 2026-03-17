@@ -340,6 +340,36 @@ function MatchH.ApplyHeightMatch(sourceKey, targetKey)
     end
 end
 
+function EllesmereUI.PropagateWidthMatch(key)
+    local db = MatchH.GetWidthMatchDB()
+    if not db then return end
+    -- Re-apply this element's own match (e.g. CDM follows Power Bar)
+    local ownTarget = db[key]
+    if ownTarget then
+        MatchH.ApplyWidthMatch(key, ownTarget)
+    end
+    -- Push to any elements that follow this one
+    for childKey, tKey in pairs(db) do
+        if tKey == key then
+            MatchH.ApplyWidthMatch(childKey, key)
+        end
+    end
+end
+
+function EllesmereUI.PropagateHeightMatch(key)
+    local db = MatchH.GetHeightMatchDB()
+    if not db then return end
+    local ownTarget = db[key]
+    if ownTarget then
+        MatchH.ApplyHeightMatch(key, ownTarget)
+    end
+    for childKey, tKey in pairs(db) do
+        if tKey == key then
+            MatchH.ApplyHeightMatch(childKey, key)
+        end
+    end
+end
+
 -- Smoothly fade the background overlay between normal and select-element alpha
 local function FadeOverlayForSelectElement(entering)
     if not unlockFrame or not unlockFrame._overlay then return end

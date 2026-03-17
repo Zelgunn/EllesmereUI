@@ -6570,7 +6570,7 @@ local function SetupBlizzardMovableFrame(barKey)
         -- Hook AddFrame so newly added ability buttons stay clickable.
         if ExtraAbilityContainer.AddFrame then
             hooksecurefunc(ExtraAbilityContainer, "AddFrame", function(_, frame)
-                if frame and frame.EnableMouse then
+                if frame and frame.EnableMouse and not InCombatLockdown() then
                     frame:EnableMouse(true)
                 end
             end)
@@ -6898,10 +6898,6 @@ local function SetupExtraBarHolder(barKey, frameName, barInfo)
         SafeEnableMouse(holder, false)
 
         blizzFrame.ignoreInLayout = true
-        if blizzFrame.SetIsLayoutFrame then
-            blizzFrame:SetIsLayoutFrame(false)
-        end
-        blizzFrame.IsLayoutFrame = nil
 
         SafeEnableMouse(blizzFrame, true)
         blizzFrame:SetFrameStrata("MEDIUM")
@@ -6917,7 +6913,17 @@ local function SetupExtraBarHolder(barKey, frameName, barInfo)
             blizzFrame:SetPoint("CENTER", holder, "CENTER", 0, 0)
             _recentering = false
         end
-        AnchorToHolder()
+
+        if blizzFrame:IsShown() then
+            AnchorToHolder()
+        end
+
+        blizzFrame:HookScript("OnShow", function()
+            C_Timer_After(0, function()
+                if _recentering or InCombatLockdown() then return end
+                AnchorToHolder()
+            end)
+        end)
 
         hooksecurefunc(blizzFrame, "SetPoint", function(self)
             if _recentering then return end

@@ -364,13 +364,22 @@ initFrame:SetScript("OnEvent", function(self)
                 else
                     -- Add with defaults
                     assignedSet[sp.spellID] = true
-                    buffList[#buffList + 1] = {
+                    local newEntry = {
                         spellID = sp.spellID,
                         glowStyle = 1,
                         glowColor = { r = 1, g = 0.82, b = 0.1 },
                         classColor = false,
                         mode = "ACTIVE",
                     }
+                    local prefix = BAR_BUTTON_PREFIXES[barIdx]
+                    local realBtn = prefix and _G[prefix .. btnIdx]
+                    if realBtn and realBtn.action then
+                        local aType, aID = GetActionInfo(realBtn.action)
+                        if aType == "spell" and aID then
+                            newEntry.actionSpellID = aID
+                        end
+                    end
+                    buffList[#buffList + 1] = newEntry
                     UpdateCB()
                     bg.assignments[assignKey] = buffList
                     Refresh()
@@ -5228,6 +5237,8 @@ initFrame:SetScript("OnEvent", function(self)
                 totalH = (numRows * iconH) + ((numRows - 1) * spacing)
             end
 
+            -- CDM preview: no scale-to-fit — SetClipsChildren on the content
+            -- header clips any overflow so icon scale remains accurate.
             local curParentW = (parent:GetWidth() - PAD * 2) / previewScale
             if curParentW > 0 then
                 self:SetWidth(curParentW)
