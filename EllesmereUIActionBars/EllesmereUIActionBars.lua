@@ -3368,6 +3368,8 @@ local function BuildVisibilityString(info, s)
         local petShow
         if vis == "in_combat" then
             petShow = "[combat] show; hide"
+        elseif vis == "out_of_combat" then
+            petShow = "[nocombat] show; hide"
         elseif s.combatShowEnabled then
             petShow = "[combat] show; hide"
         elseif s.combatHideEnabled then
@@ -3396,6 +3398,8 @@ local function BuildVisibilityString(info, s)
         return hidePrefix .. "hide"
     elseif vis == "in_combat" then
         return hidePrefix .. "[combat] show; hide"
+    elseif vis == "out_of_combat" then
+        return hidePrefix .. "[nocombat] show; hide"
     elseif vis == "in_raid" then
         return hidePrefix .. "[group:raid] show; hide"
     elseif vis == "in_party" then
@@ -3530,7 +3534,7 @@ function EAB:ApplyAlwaysHidden()
                     RegisterAttributeDriver(frame, "state-visibility", BuildVisibilityString(info, s))
                 end
                 if not InCombatLockdown() then
-                    if vis ~= "in_combat" and not s.combatShowEnabled then
+                    if vis ~= "in_combat" and vis ~= "out_of_combat" and not s.combatShowEnabled then
                         -- ExtraActionButton and EncounterBar holders manage
                         -- their own visibility based on active content.
                         if not info.isBlizzardMovable and not info.blizzOwnedVisibility then
@@ -5235,9 +5239,7 @@ function EAB:OnFirstLogin()
                     s.barVisibility = "in_combat"
                 elseif data.visibility == 2 then
                     s.combatHideEnabled = true
-                    -- No dropdown equivalent for "hide in combat";
-                    -- boolean flag handles the state driver behavior.
-                    s.barVisibility = "always"
+                    s.barVisibility = "out_of_combat"
                 end
             end
             if data.point then

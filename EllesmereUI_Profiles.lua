@@ -1331,8 +1331,9 @@ function EllesmereUI.SaveCurrentAsProfile(name)
     if not found then
         table.insert(db.profileOrder, 1, name)
     end
-    db.activeProfile = name
-    RepointAllDBs(name)
+    -- Switch to the new profile using the standard path so the outgoing
+    -- profile's state is properly saved before repointing.
+    EllesmereUI.SwitchProfile(name)
 end
 
 --- Create a new profile as a copy of the current live state.

@@ -1495,7 +1495,12 @@ initFrame:SetScript("OnEvent", function(self)
             mH = mH + ITEM_H
         end
 
-        for _, entry in ipairs(popular) do MakePopularItem(entry) end
+        local _, _tbbPClass = UnitClass("player")
+        for _, entry in ipairs(popular) do
+            if not entry.class or entry.class == _tbbPClass then
+                MakePopularItem(entry)
+            end
+        end
 
         -- Divider before CDM-tracked buffs (only if there are any)
         if #tracked > 0 or #untracked > 0 then
@@ -3941,6 +3946,9 @@ initFrame:SetScript("OnEvent", function(self)
                 if bd and bd.customSpells then
                     for _, sid in ipairs(bd.customSpells) do alreadyTracked[sid] = true end
                 end
+                if bd and bd.extraSpells then
+                    for _, sid in ipairs(bd.extraSpells) do alreadyTracked[sid] = true end
+                end
 
                 if not _presetsSub then
                     _presetsSub = CreateFrame("Frame", nil, UIParent)
@@ -3975,8 +3983,10 @@ initFrame:SetScript("OnEvent", function(self)
                 subInner:SetPoint("TOPLEFT")
 
                 local subH = 4
+                local _, _pClass = UnitClass("player")
 
                 for _, preset in ipairs(ns.BUFF_BAR_PRESETS) do
+                    if not preset.class or preset.class == _pClass then
                     local primaryID = preset.spellIDs[1]
                     local isAdded = alreadyTracked[primaryID]
 
@@ -4033,6 +4043,7 @@ initFrame:SetScript("OnEvent", function(self)
                     end
 
                     subH = subH + SUB_ITEM_H
+                    end -- class filter
                 end
 
                 local totalSubH = subH + 4

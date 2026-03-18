@@ -133,6 +133,7 @@ local TBB_POPULAR_BUFFS = {
         icon           = 1378282,
         spellIDs       = { 104316 },
         customDuration = 12,
+        class          = "WARLOCK",
     },
     {
         key            = "demonic_tyrant",
@@ -140,6 +141,7 @@ local TBB_POPULAR_BUFFS = {
         icon           = 2065628,
         spellIDs       = { 265187 },
         customDuration = 15,
+        class          = "WARLOCK",
     },
     {
         key            = "summon_vilefiend",
@@ -147,6 +149,7 @@ local TBB_POPULAR_BUFFS = {
         icon           = 1616211,
         spellIDs       = { 264119 },
         customDuration = 15,
+        class          = "WARLOCK",
     },
     {
         key            = "grimoire_felguard",
@@ -154,6 +157,7 @@ local TBB_POPULAR_BUFFS = {
         icon           = 136216,
         spellIDs       = { 111898 },
         customDuration = 17,
+        class          = "WARLOCK",
     },
 }
 ns.TBB_POPULAR_BUFFS = TBB_POPULAR_BUFFS

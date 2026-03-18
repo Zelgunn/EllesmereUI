@@ -149,14 +149,23 @@ local _customBarTimers = {}
 -- customSpellDurations; the first active timer wins for display.
 -- { name, icon, duration, spellIDs }
 ns.BUFF_BAR_PRESETS = {
-    { name = "Bloodlust / Heroism", icon = 132131,  duration = 40,
+    { name = UnitFactionGroup("player") == "Horde" and "Bloodlust" or "Heroism",
+      icon = 132313, duration = 40,
       spellIDs = { 2825, 32182, 80353, 264667, 390386, 381301, 444062, 444257 } },
-    { name = "Light's Potential",   icon = 754891,  duration = 30,
+    { name = "Light's Potential",   icon = 7548911, duration = 30,
       spellIDs = { 1236616, 431932 } },
-    { name = "Potion of Recklessness", icon = 754891, duration = 30,
+    { name = "Potion of Recklessness", icon = 7548916, duration = 30,
       spellIDs = { 1236994 } },
-    { name = "Invisibility Potion", icon = 241302,  duration = 18,
-      spellIDs = { 1236551, 431424, 371134, 371125, 371133 } },
+    { name = "Invisibility Potion", icon = 134764,  duration = 18,
+      spellIDs = { 371125, 431424, 371133, 371134, 1236551 } },
+    { name = "Call Dreadstalkers",   icon = 1378282, duration = 12,
+      spellIDs = { 104316 }, class = "WARLOCK" },
+    { name = "Summon Demonic Tyrant", icon = 2065628, duration = 15,
+      spellIDs = { 265187 }, class = "WARLOCK" },
+    { name = "Summon Vilefiend",    icon = 1616211, duration = 15,
+      spellIDs = { 264119 }, class = "WARLOCK" },
+    { name = "Grimoire: Felguard",  icon = 136216,  duration = 17,
+      spellIDs = { 111898 }, class = "WARLOCK" },
 }
 
 -- Reusable children buffer for the per-tick viewer scan -- avoids GetChildren vararg allocation
@@ -2504,7 +2513,7 @@ LayoutCDMBar = function(barKey)
     local vis = barData.barVisibility or "always"
     if _cdmInVehicle or EllesmereUI.CheckVisibilityOptions(barData) then
         -- Vehicle or visibility options say hide -- don't override
-    elseif vis == "always" or (vis == "in_combat" and _inCombat) then
+    elseif vis == "always" or (vis == "in_combat" and _inCombat) or (vis == "out_of_combat" and not _inCombat) then
         frame:SetAlpha(barData.barBgAlpha or 1)
     elseif vis == "mouseover" then
         local state = _cdmHoverStates[barKey]
@@ -4455,6 +4464,15 @@ local function _CDMApplyVisibility()
                     frame:SetAlpha(0)
                     if frame.EnableMouseMotion then frame:EnableMouseMotion(false) end
                 end
+            elseif vis == "out_of_combat" then
+                _CDMStopFade(frame)
+                if not inCombat then
+                    frame:SetAlpha(barData.barBgAlpha or 1)
+                    if frame.EnableMouseMotion then frame:EnableMouseMotion(true) end
+                else
+                    frame:SetAlpha(0)
+                    if frame.EnableMouseMotion then frame:EnableMouseMotion(false) end
+                end
             elseif vis == "in_raid" then
                 _CDMStopFade(frame)
                 if inRaid then
@@ -5148,14 +5166,21 @@ function ns.AddPresetToBar(barKey, preset)
     local p = ECME.db.profile
     for _, b in ipairs(p.cdmBars.bars) do
         if b.key == barKey then
-            if not b.customSpells then return false end
             local primaryID = preset.spellIDs[1]
+            -- Determine which spell list to use
+            local spellList
+            if b.customSpells then
+                spellList = b.customSpells
+            else
+                if not b.extraSpells then b.extraSpells = {} end
+                spellList = b.extraSpells
+            end
             -- Check not already tracked
-            for _, existing in ipairs(b.customSpells) do
+            for _, existing in ipairs(spellList) do
                 if existing == primaryID then return false, "exists" end
             end
             -- Add primary ID as the icon slot
-            b.customSpells[#b.customSpells + 1] = primaryID
+            spellList[#spellList + 1] = primaryID
             -- Store duration for primary
             if not b.customSpellDurations then b.customSpellDurations = {} end
             b.customSpellDurations[primaryID] = preset.duration

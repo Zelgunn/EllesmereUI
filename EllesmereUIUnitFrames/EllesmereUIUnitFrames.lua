@@ -6035,6 +6035,8 @@ function InitializeFrames()
                         shouldShow = false
                     elseif vis == "in_combat" then
                         shouldShow = _ufInCombat
+                    elseif vis == "out_of_combat" then
+                        shouldShow = not _ufInCombat
                     elseif vis == "in_raid" then
                         shouldShow = inRaid
                     elseif vis == "in_party" then

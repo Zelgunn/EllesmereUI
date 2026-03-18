@@ -3854,6 +3854,7 @@ initFrame:SetScript("OnEvent", function(self)
                     onConfirm   = function(name)
                         if not name or name == "" then return end
                         EllesmereUI.SaveCurrentAsProfile(name)
+                        EllesmereUI.RefreshAllAddons()
                         ddLabel:SetText(name)
                         EllesmereUI:RefreshPage()
                     end,
