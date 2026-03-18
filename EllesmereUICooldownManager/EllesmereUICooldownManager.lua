@@ -1050,7 +1050,7 @@ local function BuildKnownSpellIDSet()
     -- includes ALL spells for the class regardless of talent selection.
     -- Spells that exist in the full set AND pass IsPlayerSpell are known
     -- even if the viewer hasn't updated yet after a talent swap.
-    local _IsPlayerSpell = IsPlayerSpell
+    local _IsPlayerSpell = C_SpellBook.IsPlayerSpell
     if _IsPlayerSpell then
         for cat = 0, 3 do
             local allIDs = C_CooldownViewer.GetCooldownViewerCategorySet(cat, true)
@@ -1058,7 +1058,7 @@ local function BuildKnownSpellIDSet()
                 for _, cdID in ipairs(allIDs) do
                     local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
                     if info then
-                        local sid = ResolveInfoSpellID(info)
+                        local sid = EUtils.ResolveInfoSpellID(info)
                         if sid and sid > 0 and not known[sid] and _IsPlayerSpell(sid) then
                             known[sid] = true
                         end
