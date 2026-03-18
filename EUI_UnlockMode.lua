@@ -19,8 +19,21 @@ if not EllesmereUI._unlockRegisteredElements then
 end
 
 if not EllesmereUI.RegisterUnlockElements then
+    -- Normalize short field names (savePos, loadPos, etc.) to the long
+    -- names used throughout unlock mode (savePosition, loadPosition, etc.)
+    local FIELD_ALIASES = {
+        savePos      = "savePosition",
+        loadPos      = "loadPosition",
+        clearPos     = "clearPosition",
+        applyPos     = "applyPosition",
+    }
     function EllesmereUI:RegisterUnlockElements(elements)
         for _, elem in ipairs(elements) do
+            for short, long in pairs(FIELD_ALIASES) do
+                if elem[short] and not elem[long] then
+                    elem[long] = elem[short]
+                end
+            end
             self._unlockRegisteredElements[elem.key] = elem
         end
         self._unlockRegistrationDirty = true
@@ -847,6 +860,16 @@ EllesmereUI.PropagateAnchorChain = function(key)
     ScheduleAnchorBatch()
 end
 
+-- Check if a given element key has an anchor relationship.
+-- Used by ReloadFrames to skip positioning anchored frames (the anchor
+-- system is the sole authority for their position).
+EllesmereUI.IsAnchored = function(key)
+    local adb = GetAnchorDB()
+    if not adb then return false end
+    local info = adb[key]
+    return info and info.target and true or false
+end
+
 -- Synchronous self-anchor reapply: if this element is anchored to something,
 -- reposition it immediately (no deferred frame). Eliminates the one-frame
 -- blink when a bar resizes and needs to snap back to its anchor edge.
@@ -863,16 +886,39 @@ EllesmereUI.ReapplyOwnAnchor = function(key)
     end
 end
 
--- Reapply ALL unlock-mode anchors. Called after a full profile import/switch
--- so that every anchored element repositions against its (now-rebuilt) target.
+-- Reapply ALL unlock-mode anchors. Called when a target frame moves so
+-- anchored children follow. Computes positions from anchor offsets.
 EllesmereUI.ReapplyAllUnlockAnchors = function()
-    local db = GetAnchorDB()
-    if not db then return end
-    for childKey, info in pairs(db) do
+    local adb = GetAnchorDB()
+    if not adb then return end
+    for childKey, info in pairs(adb) do
         if info.target and GetBarFrame(childKey) and GetBarFrame(info.target) then
             ApplyAnchorPosition(childKey, info.target, info.side)
         end
     end
+    -- Flush pending positions so db.profile.positions stays in sync
+    for childKey, pos in pairs(pendingPositions) do
+        if type(pos) == "table" and pos.point then
+            SaveBarPosition(childKey, pos.point, pos.relPoint, pos.x, pos.y)
+        end
+    end
+    wipe(pendingPositions)
+end
+
+-- Resync anchor offsets from actual frame positions. Called AFTER a profile
+-- import/switch once all frames are at their correct absolute positions
+-- (from db.profile.positions). This does NOT move any frames -- it reads
+-- their current screen positions and recomputes the anchor offsets so the
+-- anchor relationships stay correct for future drag operations.
+EllesmereUI.ResyncAnchorOffsets = function()
+    local adb = GetAnchorDB()
+    if not adb then return end
+    for childKey, info in pairs(adb) do
+        if info.target and GetBarFrame(childKey) and GetBarFrame(info.target) then
+            ApplyAnchorPosition(childKey, info.target, info.side, true, true)
+        end
+    end
+    wipe(pendingPositions)
 end
 
 -------------------------------------------------------------------------------
@@ -1975,9 +2021,6 @@ local function NudgeMover(dx, dy)
 
     -- Anchor chain: propagate recursively down the chain
     PropagateAnchorChain(m._barKey)
-
-    -- Re-anchor mover to bar for pixel-perfect alignment
-    if m.ReanchorToBar then m:ReanchorToBar() end
 end
 
 -- Arrow key nudge: single press only, no hold-to-repeat

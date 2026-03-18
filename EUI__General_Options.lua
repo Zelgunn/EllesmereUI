@@ -3087,6 +3087,25 @@ initFrame:SetScript("OnEvent", function(self)
             PP.Point(exportBtn, "TOPLEFT", rowFrame, "TOPLEFT", startX, -math.floor((ROW_H - ITEM_H) / 2))
             exportBtn:SetFrameLevel(rowFrame:GetFrameLevel() + 2)
             EllesmereUI.MakeStyledButton(exportBtn, "Export Profile", 13, PROF_BTN_COLOURS, function()
+                -- If CDM is loaded, show spec picker before exporting
+                if C_AddOns.IsAddOnLoaded("EllesmereUICooldownManager") then
+                    local specInfo = EllesmereUI.GetCDMSpecInfo()
+                    if #specInfo > 0 then
+                        for _, sp in ipairs(specInfo) do sp.checked = sp.hasData end
+                        EllesmereUI:ShowCDMSpecPickerPopup({
+                            title       = "Choose Your Included CDM Spell Assignments",
+                            subtitle    = "Select all specs you want included with your exported profile",
+                            confirmText = "Export",
+                            specs       = specInfo,
+                            onConfirm   = function(sel)
+                                local str = EllesmereUI.ExportCurrentProfile(sel)
+                                if str then EllesmereUI:ShowExportPopup(str) end
+                            end,
+                            onCancel    = function() end,
+                        })
+                        return
+                    end
+                end
                 local str = EllesmereUI.ExportCurrentProfile()
                 if str then EllesmereUI:ShowExportPopup(str) end
             end)
@@ -3125,26 +3144,94 @@ initFrame:SetScript("OnEvent", function(self)
                         scaleWarning = scaleWarnText,
                         onConfirm   = function(name)
                             if not name or name == "" then return end
+                            -- Grab the imported CDM data for the spec picker
+                            local importedCDMSnap
+                            if C_AddOns.IsAddOnLoaded("EllesmereUICooldownManager") then
+                                if payload and payload.data and payload.data.addons then
+                                    importedCDMSnap = payload.data.addons["EllesmereUICooldownManager"]
+                                end
+                            end
+
                             local ok, err, status = EllesmereUI.ImportProfile(importStr, name)
+
                             if ok and status == "spec_locked" then
                                 EllesmereUI:ShowInfoPopup({
                                     title   = "Profile Imported",
                                     content = "\"" .. name .. "\" was saved but cannot be loaded because this spec has an assigned profile. Switch specs or remove the spec assignment to use it.",
                                 })
                             elseif ok then
-                                local fontWillChange = EllesmereUI.ProfileChangesFont(payload and payload.data)
-                                EllesmereUI.RefreshAllAddons()
-                                ddLabel:SetText(EllesmereUI.GetActiveProfileName())
-                                if fontWillChange then
-                                    EllesmereUI:ShowConfirmPopup({
-                                        title       = "Reload Required",
-                                        message     = "Font changed. A UI reload is needed to apply the new font.",
-                                        confirmText = "Reload Now",
-                                        cancelText  = "Later",
-                                        onConfirm   = function() ReloadUI() end,
+                                -- Show spec picker if imported data has CDM specProfiles
+                                local importedSpecInfo = importedCDMSnap
+                                    and EllesmereUI.GetImportedCDMSpecInfo(importedCDMSnap)
+                                if importedSpecInfo and #importedSpecInfo > 0 then
+                                    for _, sp in ipairs(importedSpecInfo) do sp.checked = true end
+                                    local fontWillChange = EllesmereUI.ProfileChangesFont(payload and payload.data)
+                                    EllesmereUI:ShowCDMSpecPickerPopup({
+                                        title       = "Choose Your Included CDM Spell Assignments",
+                                        subtitle    = "Select all specs you want included with your imported profile",
+                                        confirmText = "Apply",
+                                        specs       = importedSpecInfo,
+                                        onConfirm   = function(sel)
+                                            EllesmereUI.ApplyImportedSpecProfiles(importedCDMSnap, sel)
+                                            -- Reload current spec to restore spell assignments;
+                                            -- ApplyImportedSpecProfiles already handles overwriting
+                                            -- selected specs, and LoadSpecProfile will load the
+                                            -- (now-updated) data for the current spec.
+                                            if _G._ECME_LoadSpecProfile and _G._ECME_GetCurrentSpecKey then
+                                                local curKey = _G._ECME_GetCurrentSpecKey()
+                                                if curKey then _G._ECME_LoadSpecProfile(curKey) end
+                                            end
+                                            EllesmereUI.RefreshAllAddons()
+                                            ddLabel:SetText(EllesmereUI.GetActiveProfileName())
+                                            if fontWillChange then
+                                                EllesmereUI:ShowConfirmPopup({
+                                                    title       = "Reload Required",
+                                                    message     = "Font changed. A UI reload is needed to apply the new font.",
+                                                    confirmText = "Reload Now",
+                                                    cancelText  = "Later",
+                                                    onConfirm   = function() ReloadUI() end,
+                                                })
+                                            else
+                                                EllesmereUI:RefreshPage()
+                                            end
+                                        end,
+                                        onCancel = function()
+                                            -- User cancelled spec picker: reload current spec profile
+                                            -- to restore spell assignments that ApplyProfileData overwrote
+                                            if _G._ECME_LoadSpecProfile and _G._ECME_GetCurrentSpecKey then
+                                                local curKey = _G._ECME_GetCurrentSpecKey()
+                                                if curKey then _G._ECME_LoadSpecProfile(curKey) end
+                                            end
+                                            EllesmereUI.RefreshAllAddons()
+                                            ddLabel:SetText(EllesmereUI.GetActiveProfileName())
+                                            if fontWillChange then
+                                                EllesmereUI:ShowConfirmPopup({
+                                                    title       = "Reload Required",
+                                                    message     = "Font changed. A UI reload is needed to apply the new font.",
+                                                    confirmText = "Reload Now",
+                                                    cancelText  = "Later",
+                                                    onConfirm   = function() ReloadUI() end,
+                                                })
+                                            else
+                                                EllesmereUI:RefreshPage()
+                                            end
+                                        end,
                                     })
                                 else
-                                    EllesmereUI:RefreshPage()
+                                    local fontWillChange = EllesmereUI.ProfileChangesFont(payload and payload.data)
+                                    EllesmereUI.RefreshAllAddons()
+                                    ddLabel:SetText(EllesmereUI.GetActiveProfileName())
+                                    if fontWillChange then
+                                        EllesmereUI:ShowConfirmPopup({
+                                            title       = "Reload Required",
+                                            message     = "Font changed. A UI reload is needed to apply the new font.",
+                                            confirmText = "Reload Now",
+                                            cancelText  = "Later",
+                                            onConfirm   = function() ReloadUI() end,
+                                        })
+                                    else
+                                        EllesmereUI:RefreshPage()
+                                    end
                                 end
                             else
                                 EllesmereUI:ShowInfoPopup({ title = "Import Failed", content = err or "Unknown error" })
@@ -3683,7 +3770,7 @@ initFrame:SetScript("OnEvent", function(self)
                             itm._kbBtn:Hide()
                             itm:SetScript("OnClick", nil)
                             itm:SetScript("OnEnter", function()
-                                EllesmereUI.ShowWidgetTooltip(itm, "This spec has an assigned profile")
+                                EllesmereUI.ShowWidgetTooltip(itm, "Your current spec has an assigned profile so you cannot switch to another. Please unassign to switch.")
                             end)
                             itm:SetScript("OnLeave", function()
                                 EllesmereUI.HideWidgetTooltip()
@@ -3854,44 +3941,9 @@ initFrame:SetScript("OnEvent", function(self)
                     onConfirm   = function(name)
                         if not name or name == "" then return end
                         EllesmereUI.SaveCurrentAsProfile(name)
-                        ddLabel:SetText(name)
-                        EllesmereUI:RefreshPage()
-                    end,
-                })
-            end)
-
-            -- Create New button (creates a profile from default settings)
-            local createNewBtn = CreateFrame("Button", nil, rowFrame)
-            PP.Size(createNewBtn, BTN_W, ITEM_H)
-            PP.Point(createNewBtn, "LEFT", saveAsBtn, "RIGHT", GAP, 0)
-            createNewBtn:SetFrameLevel(rowFrame:GetFrameLevel() + 2)
-            EllesmereUI.MakeStyledButton(createNewBtn, "Create New", 11, PROF_BTN_COLOURS, function()
-                EllesmereUI:ShowInputPopup({
-                    title       = "New Profile",
-                    message     = "Enter a name for the new profile:",
-                    placeholder = "My Profile",
-                    confirmText = "Create",
-                    cancelText  = "Cancel",
-                    onConfirm   = function(name)
-                        if not name or name == "" then return end
-                        local _, profiles = EllesmereUI.GetProfileList()
-                        if profiles[name] then
-                            EllesmereUI:ShowConfirmPopup({
-                                title   = "Name Taken",
-                                message = "A profile named \"" .. name .. "\" already exists.",
-                                confirmText = "OK",
-                            })
-                            return
-                        end
-                        EllesmereUI.CreateDefaultProfile(name)
-                        EllesmereUI.SwitchProfile(name)
                         EllesmereUI.RefreshAllAddons()
                         ddLabel:SetText(name)
                         EllesmereUI:RefreshPage()
-                        C_Timer.After(0, function()
-                            local btn = EllesmereUI._profileDDBtn
-                            if btn then EllesmereUI.PlaySyncFlash(btn) end
-                        end)
                     end,
                 })
             end)
@@ -4143,229 +4195,6 @@ initFrame:SetScript("OnEvent", function(self)
             end)
             exportAddonBtn._flashError = BuildErrorFlash(exportAddonBtn, eaBrd)
             y = y - ROW_H_E
-        end
-
-        -------------------------------------------------------------------
-        --  CDM SPELL PROFILE section
-        -------------------------------------------------------------------
-        if C_AddOns.IsAddOnLoaded("EllesmereUICooldownManager") then
-            local cdmHeader
-            cdmHeader, h = W:SectionHeader(parent, "CDM SPELL PROFILE", y);  y = y - h
-
-            -- Per-spec checkbox grid
-            local selectedSpecs = {}
-            local cdmGridVisuals = {}
-            do
-                local specProfiles = EllesmereUI.GetCDMSpecProfiles()
-                local GRID_COLS  = 4
-                local GRID_ROW_H = 50
-                local GRID_BOX_SZ = 18
-                local GRID_PAD   = EllesmereUI.CONTENT_PAD or 16
-                local GRID_SIDE  = 20
-                local ICON_SZ    = 22
-
-                local gridItems = {}
-                for _, sp in ipairs(specProfiles) do
-                    local key = sp.key
-                    gridItems[#gridItems + 1] = {
-                        label   = sp.name,
-                        icon    = sp.icon,
-                        enabled = true,
-                        getVal  = function() return selectedSpecs[key] or false end,
-                        setVal  = function(v) selectedSpecs[key] = v or nil end,
-                    }
-                end
-
-                local function RefreshCDMGrid()
-                    for _, fn in ipairs(cdmGridVisuals) do fn() end
-                end
-                BuildCheckLinks(cdmHeader, gridItems, RefreshCDMGrid)
-
-                local totalW = parent:GetWidth() - GRID_PAD * 2
-                local colW   = math.floor(totalW / GRID_COLS)
-                local totalRows = math.ceil(#gridItems / GRID_COLS)
-
-                if #gridItems == 0 then
-                    -- No saved spec profiles: show a hint
-                    local hintRow = CreateFrame("Frame", nil, parent)
-                    PP.Size(hintRow, totalW, 40)
-                    PP.Point(hintRow, "TOPLEFT", parent, "TOPLEFT", GRID_PAD, y)
-                    hintRow._skipRowDivider = true
-                    EllesmereUI.RowBg(hintRow, parent)
-                    local hintLbl = EllesmereUI.MakeFont(hintRow, 13, nil, 1, 1, 1)
-                    hintLbl:SetPoint("CENTER")
-                    hintLbl:SetAlpha(0.4)
-                    hintLbl:SetText("No saved spec profiles found. Play each spec once to generate them.")
-                    y = y - 40
-                end
-
-                for row = 0, totalRows - 1 do
-                    local rowFrame = CreateFrame("Frame", nil, parent)
-                    PP.Size(rowFrame, totalW, GRID_ROW_H)
-                    PP.Point(rowFrame, "TOPLEFT", parent, "TOPLEFT", GRID_PAD, y - row * GRID_ROW_H)
-                    rowFrame._skipRowDivider = true
-                    EllesmereUI.RowBg(rowFrame, parent)
-
-                    for d = 1, GRID_COLS - 1 do
-                        local div = rowFrame:CreateTexture(nil, "ARTWORK")
-                        div:SetColorTexture(1, 1, 1, 0.06)
-                        if div.SetSnapToPixelGrid then div:SetSnapToPixelGrid(false); div:SetTexelSnappingBias(0) end
-                        div:SetWidth(1)
-                        PP.Point(div, "TOP",    rowFrame, "TOPLEFT", d * colW, 0)
-                        PP.Point(div, "BOTTOM", rowFrame, "BOTTOMLEFT", d * colW, 0)
-                    end
-
-                    for col = 0, GRID_COLS - 1 do
-                        local idx = row * GRID_COLS + col + 1
-                        local item = gridItems[idx]
-                        if not item then break end
-
-                        local cell = CreateFrame("Frame", nil, rowFrame)
-                        cell:SetSize(colW, GRID_ROW_H)
-                        cell:SetPoint("TOPLEFT", rowFrame, "TOPLEFT", col * colW, 0)
-
-                        -- Spec icon
-                        if item.icon then
-                            local ico = cell:CreateTexture(nil, "ARTWORK")
-                            ico:SetSize(ICON_SZ, ICON_SZ)
-                            ico:SetPoint("LEFT", cell, "LEFT", GRID_SIDE, 0)
-                            ico:SetTexture(item.icon)
-                            ico:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-
-                            local label = EllesmereUI.MakeFont(cell, 13, nil, 1, 1, 1)
-                            label:SetPoint("LEFT", ico, "RIGHT", 6, 0)
-                            label:SetText(item.label)
-                            item._label = label
-                            item._icon  = ico
-                        else
-                            local label = EllesmereUI.MakeFont(cell, 13, nil, 1, 1, 1)
-                            label:SetPoint("LEFT", cell, "LEFT", GRID_SIDE, 0)
-                            label:SetText(item.label)
-                            item._label = label
-                        end
-
-                        local box = CreateFrame("Frame", nil, cell)
-                        box:SetSize(GRID_BOX_SZ, GRID_BOX_SZ)
-                        box:SetPoint("RIGHT", cell, "RIGHT", -GRID_SIDE, 0)
-
-                        local boxBg = box:CreateTexture(nil, "BACKGROUND")
-                        boxBg:SetAllPoints()
-                        boxBg:SetColorTexture(0.12, 0.12, 0.14, 1)
-                        if boxBg.SetSnapToPixelGrid then boxBg:SetSnapToPixelGrid(false); boxBg:SetTexelSnappingBias(0) end
-
-                        local boxBrd = EllesmereUI.MakeBorder(box, 0.25, 0.25, 0.28, 0.6, EllesmereUI.PanelPP)
-
-                        local check = box:CreateTexture(nil, "ARTWORK")
-                        check:SetPoint("TOPLEFT", box, "TOPLEFT", 3, -3)
-                        check:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", -3, 3)
-                        check:SetColorTexture(EG.r, EG.g, EG.b, 1)
-                        if check.SetSnapToPixelGrid then check:SetSnapToPixelGrid(false); check:SetTexelSnappingBias(0) end
-
-                        local btn = CreateFrame("Button", nil, cell)
-                        btn:SetAllPoints(cell)
-                        btn:SetFrameLevel(cell:GetFrameLevel() + 2)
-
-                        local function ApplyVisual()
-                            local on = item.getVal()
-                            if on then
-                                check:Show()
-                                item._label:SetAlpha(1)
-                                if item._icon then item._icon:SetAlpha(1) end
-                                boxBrd:SetColor(EG.r, EG.g, EG.b, 0.15)
-                            else
-                                check:Hide()
-                                item._label:SetAlpha(0.5)
-                                if item._icon then item._icon:SetAlpha(0.5) end
-                                boxBrd:SetColor(0.25, 0.25, 0.28, 0.6)
-                            end
-                        end
-                        ApplyVisual()
-                        cdmGridVisuals[#cdmGridVisuals + 1] = ApplyVisual
-
-                        btn:SetScript("OnClick", function()
-                            item.setVal(not item.getVal())
-                            ApplyVisual()
-                        end)
-                        btn:SetScript("OnEnter", function()
-                            if not item.getVal() then
-                                item._label:SetAlpha(0.8)
-                                if item._icon then item._icon:SetAlpha(0.8) end
-                            end
-                        end)
-                        btn:SetScript("OnLeave", function()
-                            if not item.getVal() then
-                                item._label:SetAlpha(0.5)
-                                if item._icon then item._icon:SetAlpha(0.5) end
-                            end
-                        end)
-                    end
-                end
-
-                if totalRows > 0 then y = y - totalRows * GRID_ROW_H end
-            end
-
-            -- Spacing before buttons
-            _, h = W:Spacer(parent, y, 10);  y = y - h
-
-            -- Export / Import CDM Spell Profile buttons (side-by-side)
-            do
-                local ROW_H  = 70
-                local ITEM_H = 36
-                local GAP    = 35
-                local ITEM_W = 220
-
-                local totalW = parent:GetWidth() - EllesmereUI.CONTENT_PAD * 2
-                local rowFrame = CreateFrame("Frame", nil, parent)
-                PP.Size(rowFrame, totalW, ROW_H)
-                PP.Point(rowFrame, "TOPLEFT", parent, "TOPLEFT", EllesmereUI.CONTENT_PAD, y)
-
-                local groupW = ITEM_W * 2 + GAP
-                local startX = math.floor((totalW - groupW) / 2)
-
-                -- Export CDM Spell Profile
-                local exportCDMBtn = CreateFrame("Button", nil, rowFrame)
-                PP.Size(exportCDMBtn, ITEM_W, ITEM_H)
-                PP.Point(exportCDMBtn, "TOPLEFT", rowFrame, "TOPLEFT", startX, -math.floor((ROW_H - ITEM_H) / 2))
-                exportCDMBtn:SetFrameLevel(rowFrame:GetFrameLevel() + 2)
-                EllesmereUI.MakeStyledButton(exportCDMBtn, "Export CDM Spell Profile", 13, EllesmereUI.WB_COLOURS, function()
-                    local keys = {}
-                    for k in pairs(selectedSpecs) do keys[#keys + 1] = k end
-                    if #keys == 0 then
-                        EllesmereUI:ShowInfoPopup({ title = "No Specs Selected", content = "Select at least one spec to export." })
-                        return
-                    end
-                    local str = EllesmereUI.ExportCDMSpellLayouts(keys)
-                    if str then
-                        EllesmereUI:ShowExportPopup(str)
-                    else
-                        EllesmereUI:ShowInfoPopup({ title = "Export Failed", content = "No spell data found for the selected specs." })
-                    end
-                end)
-
-                -- Import CDM Spell Profile
-                local importCDMBtn = CreateFrame("Button", nil, rowFrame)
-                PP.Size(importCDMBtn, ITEM_W, ITEM_H)
-                PP.Point(importCDMBtn, "TOPLEFT", exportCDMBtn, "TOPRIGHT", GAP, 0)
-                importCDMBtn:SetFrameLevel(rowFrame:GetFrameLevel() + 2)
-                EllesmereUI.MakeStyledButton(importCDMBtn, "Import CDM Spell Profile", 13, EllesmereUI.WB_COLOURS, function()
-                    EllesmereUI:ShowImportPopup(function(importStr)
-                        local ok, err, count = EllesmereUI.ImportCDMSpellLayouts(importStr)
-                        if ok then
-                            EllesmereUI:ShowConfirmPopup({
-                                title       = "Import Successful",
-                                message     = (count or 0) .. " spec profile(s) imported. Reload to apply changes.",
-                                confirmText = "Reload Now",
-                                cancelText  = "Cancel",
-                                onConfirm   = function() ReloadUI() end,
-                            })
-                        else
-                            EllesmereUI:ShowInfoPopup({ title = "Import Failed", content = err or "Unknown error" })
-                        end
-                    end)
-                end)
-
-                y = y - ROW_H
-            end
         end
 
         return math.abs(y)

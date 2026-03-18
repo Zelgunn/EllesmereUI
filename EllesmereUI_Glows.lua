@@ -21,17 +21,17 @@ local sin   = math.sin
 -------------------------------------------------------------------------------
 local GLOW_STYLES = {
     { name = "Pixel Glow",         procedural = true },
-    { name = "Action Button Glow", buttonGlow = true, scale = 1.36, previewScale = 1.28 },
+    { name = "Action Button Glow", buttonGlow = true },
     { name = "Auto-Cast Shine",    autocast   = true },
-    { name = "Shape Glow",         shapeGlow  = true, scale = 1.20, previewScale = 1.20 },
+    { name = "Shape Glow",         shapeGlow  = true },
     { name = "GCD",
-      atlas = "RotationHelper_Ants_Flipbook", scale = 1.12, previewScale = 1.47 },
+      atlas = "RotationHelper_Ants_Flipbook", texPadding = 1.6 },
     { name = "Modern WoW Glow",
-      atlas = "UI-HUD-ActionBar-Proc-Loop-Flipbook", scale = 1.02, previewScale = 1.34 },
+      atlas = "UI-HUD-ActionBar-Proc-Loop-Flipbook", texPadding = 1.4 },
     { name = "Classic WoW Glow",
       texture = "Interface\\SpellActivationOverlay\\IconAlertAnts",
       rows = 5, columns = 5, frames = 25, duration = 0.3,
-      frameW = 48, frameH = 48, scale = 1.09, previewScale = 1.47 },
+      frameW = 48, frameH = 48, texPadding = 1.25 },
 }
 
 -------------------------------------------------------------------------------
@@ -194,9 +194,10 @@ local function StartButtonGlow(wrapper, sz, cr, cg, cb, scale)
         wrapper._euiBgData = { glow = glow, ants = ants }
     end
     local d = wrapper._euiBgData
-    local frameSz = sz * scale
-    local glowSz  = frameSz * 1.3
-    local antsSz   = frameSz * 1.0
+    -- The ants texture has transparent padding baked into its frames,
+    -- so we scale up to compensate and match the button edge visually.
+    local antsSz = sz * 1.35
+    local glowSz = antsSz * 1.3
     d.glow:SetSize(glowSz, glowSz)
     d.glow:SetDesaturated(true); d.glow:SetVertexColor(cr, cg, cb, 1)
     d.glow:SetAlpha(1); d.glow:Show()
@@ -358,11 +359,11 @@ local function StartShapeGlow(wrapper, sz, cr, cg, cb, scale, opts)
     local d = wrapper._euiSgData
     d.timer = 0
 
-    local glowSz = sz * scale
-    local offset  = (glowSz - sz) / 2
+    -- Glow extends slightly past the button edge for the pulsing effect
+    local extend = sz * 0.10
     d.glow:ClearAllPoints()
-    d.glow:SetPoint("TOPLEFT",     btn, "TOPLEFT",     -offset,  offset)
-    d.glow:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT",  offset, -offset)
+    d.glow:SetPoint("TOPLEFT",     btn, "TOPLEFT",     -extend,  extend)
+    d.glow:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT",  extend, -extend)
     local maskPath   = opts.maskPath
     local borderPath = opts.borderPath
     if maskPath then
@@ -423,8 +424,10 @@ end
 --  Glow, Classic WoW Glow, and any future FlipBook styles).
 -------------------------------------------------------------------------------
 local function StartFlipBookGlow(wrapper, sz, entry, cr, cg, cb)
-    local glowScale = entry.scale or 1
-    local texSz = sz * glowScale
+    -- FlipBook frames have transparent padding baked in. Each atlas
+    -- has a different amount, so the style entry carries a texPadding
+    -- multiplier (defaults to 1 = no compensation).
+    local texSz = sz * (entry.texPadding or 1)
 
     if not wrapper._euiFlipData then
         local tex = wrapper:CreateTexture(nil, "OVERLAY", nil, 7)
@@ -452,6 +455,37 @@ local function StartFlipBookGlow(wrapper, sz, entry, cr, cg, cb)
     d.anim:SetFlipBookFrameHeight(entry.frameH or 0)
     if d.ag:IsPlaying() then d.ag:Stop() end
     d.ag:Play()
+
+    -- Ants overlay: a non-desaturated duplicate at low alpha for atlas styles
+    if entry.atlas then
+        if not d.ants then
+            local aTex = wrapper:CreateTexture(nil, "OVERLAY", nil, 7)
+            aTex:SetPoint("CENTER")
+            aTex:SetBlendMode("ADD")
+            local aAg = aTex:CreateAnimationGroup()
+            aAg:SetLooping("REPEAT")
+            local aAnim = aAg:CreateAnimation("FlipBook")
+            d.ants = aTex; d.antsAg = aAg; d.antsAnim = aAnim
+        end
+        d.ants:SetSize(texSz, texSz)
+        d.ants:SetAtlas(entry.atlas)
+        d.ants:SetDesaturated(false)
+        d.ants:SetVertexColor(1, 1, 1)
+        d.ants:SetAlpha(0.35)
+        d.antsAnim:SetFlipBookRows(entry.rows or 6)
+        d.antsAnim:SetFlipBookColumns(entry.columns or 5)
+        d.antsAnim:SetFlipBookFrames(entry.frames or 30)
+        d.antsAnim:SetDuration(entry.duration or 1.0)
+        d.antsAnim:SetFlipBookFrameWidth(entry.frameW or 0)
+        d.antsAnim:SetFlipBookFrameHeight(entry.frameH or 0)
+        d.ants:Show()
+        if d.antsAg:IsPlaying() then d.antsAg:Stop() end
+        d.antsAg:Play()
+    elseif d.ants then
+        d.ants:Hide()
+        if d.antsAg then d.antsAg:Stop() end
+    end
+
     wrapper:SetScript("OnUpdate", nil)
 end
 
@@ -459,6 +493,8 @@ local function StopFlipBookGlow(wrapper)
     if wrapper._euiFlipData then
         wrapper._euiFlipData.tex:Hide()
         if wrapper._euiFlipData.ag then wrapper._euiFlipData.ag:Stop() end
+        if wrapper._euiFlipData.ants then wrapper._euiFlipData.ants:Hide() end
+        if wrapper._euiFlipData.antsAg then wrapper._euiFlipData.antsAg:Stop() end
     end
 end
 
@@ -508,15 +544,13 @@ local function StartGlow(wrapper, styleIdx, sz, cr, cg, cb, opts)
         StartProceduralAnts(wrapper, N, th, period, lineLen, cr, cg, cb, sz)
 
     elseif entry.buttonGlow then
-        local scale = opts.scale or entry.scale or 1.36
-        StartButtonGlow(wrapper, sz, cr, cg, cb, scale)
+        StartButtonGlow(wrapper, sz, cr, cg, cb)
 
     elseif entry.autocast then
-        StartAutoCastShine(wrapper, sz, cr, cg, cb, opts.scale or 1.0)
+        StartAutoCastShine(wrapper, sz, cr, cg, cb, 1.0)
 
     elseif entry.shapeGlow then
-        local scale = opts.scale or entry.scale or 1.20
-        StartShapeGlow(wrapper, sz, cr, cg, cb, scale, opts)
+        StartShapeGlow(wrapper, sz, cr, cg, cb, 1.20, opts)
 
     else
         -- FlipBook mode (GCD, Modern WoW Glow, Classic WoW Glow, etc.)

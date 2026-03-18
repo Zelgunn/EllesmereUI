@@ -1495,7 +1495,12 @@ initFrame:SetScript("OnEvent", function(self)
             mH = mH + ITEM_H
         end
 
-        for _, entry in ipairs(popular) do MakePopularItem(entry) end
+        local _, _tbbPClass = UnitClass("player")
+        for _, entry in ipairs(popular) do
+            if not entry.class or entry.class == _tbbPClass then
+                MakePopularItem(entry)
+            end
+        end
 
         -- Divider before CDM-tracked buffs (only if there are any)
         if #tracked > 0 or #untracked > 0 then
@@ -2797,6 +2802,7 @@ initFrame:SetScript("OnEvent", function(self)
     -- Active state preview on first icon
     local _cdmActivePreviewOn = false
     local _cdmActivePreviewOverlay = nil  -- glow overlay frame on first preview slot
+    local _cdmActivePreviewToken = 0     -- incremented each start to invalidate stale timers
 
     local function StopActiveStatePreview()
         if _cdmActivePreviewOverlay then
@@ -2814,6 +2820,8 @@ initFrame:SetScript("OnEvent", function(self)
 
     local function StartActiveStatePreview()
         if not _cdmActivePreviewOn then return end
+        _cdmActivePreviewToken = _cdmActivePreviewToken + 1
+        local myToken = _cdmActivePreviewToken
         local bd = SelectedCDMBar()
         if not bd then return end
         local anim = bd.activeStateAnim or "blizzard"
@@ -2849,12 +2857,10 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end)
 
-        -- Ensure glow overlay exists (extended 3px like real icons)
+        -- Ensure glow overlay exists
         if not slot._glowOverlay then
             local ov = CreateFrame("Frame", nil, slot)
-            ov:ClearAllPoints()
-            ov:SetPoint("TOPLEFT",     slot, "TOPLEFT",     -3,  3)
-            ov:SetPoint("BOTTOMRIGHT", slot, "BOTTOMRIGHT",  3, -3)
+            ov:SetAllPoints(slot)
             ov:SetFrameLevel(slot:GetFrameLevel() + 3)
             ov:SetAlpha(0)
             slot._glowOverlay = ov
@@ -2895,6 +2901,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         -- Auto-stop glow after preview duration ends
         C_Timer.After(PREVIEW_DURATION, function()
+            if myToken ~= _cdmActivePreviewToken then return end
             if _cdmActivePreviewOverlay then
                 ns.StopNativeGlow(_cdmActivePreviewOverlay)
             end
@@ -3941,6 +3948,9 @@ initFrame:SetScript("OnEvent", function(self)
                 if bd and bd.customSpells then
                     for _, sid in ipairs(bd.customSpells) do alreadyTracked[sid] = true end
                 end
+                if bd and bd.extraSpells then
+                    for _, sid in ipairs(bd.extraSpells) do alreadyTracked[sid] = true end
+                end
 
                 if not _presetsSub then
                     _presetsSub = CreateFrame("Frame", nil, UIParent)
@@ -3975,8 +3985,10 @@ initFrame:SetScript("OnEvent", function(self)
                 subInner:SetPoint("TOPLEFT")
 
                 local subH = 4
+                local _, _pClass = UnitClass("player")
 
                 for _, preset in ipairs(ns.BUFF_BAR_PRESETS) do
+                    if not preset.class or preset.class == _pClass then
                     local primaryID = preset.spellIDs[1]
                     local isAdded = alreadyTracked[primaryID]
 
@@ -4033,6 +4045,7 @@ initFrame:SetScript("OnEvent", function(self)
                     end
 
                     subH = subH + SUB_ITEM_H
+                    end -- class filter
                 end
 
                 local totalSubH = subH + 4
@@ -5433,8 +5446,60 @@ initFrame:SetScript("OnEvent", function(self)
                 end
 
                 if i <= count then
+                    -- Untracked overlay for preview: show red tint + "Click to Track"
+                    local sid = slot._previewSpellID
+                    local isUntracked = sid and sid > 0 and not ns.IsSpellInBlizzCDM(sid)
+                    if isUntracked then
+                        if not slot._untrackedOverlay then
+                            local ov = CreateFrame("Button", nil, slot)
+                            ov:SetAllPoints(slot._icon)
+                            ov:SetFrameLevel(slot:GetFrameLevel() + 4)
+                            local ovTex = ov:CreateTexture(nil, "OVERLAY", nil, 6)
+                            ovTex:SetAllPoints()
+                            ovTex:SetColorTexture(0.6, 0.075, 0.075, 0.8)
+                            local label = ov:CreateFontString(nil, "OVERLAY")
+                            local outFlag = EllesmereUI.GetFontOutlineFlag and EllesmereUI.GetFontOutlineFlag() or "OUTLINE"
+                            label:SetFont(FONT_PATH, 10, outFlag)
+                            if EllesmereUI.GetFontUseShadow and EllesmereUI.GetFontUseShadow() then
+                                label:SetShadowOffset(1, -1)
+                            else
+                                label:SetShadowOffset(0, 0)
+                            end
+                            label:SetPoint("CENTER")
+                            label:SetText("Click to\nTrack")
+                            label:SetTextColor(1, 1, 1, 0.9)
+                            label:SetJustifyH("CENTER")
+                            ov._label = label
+                            ov:SetScript("OnClick", function()
+                                if CooldownViewerSettings and CooldownViewerSettings.Show then
+                                    CooldownViewerSettings:Show()
+                                end
+                            end)
+                            ov:SetScript("OnEnter", function(self)
+                                local ovSid = self._displaySpellID
+                                local name = ovSid and C_Spell.GetSpellName and C_Spell.GetSpellName(ovSid)
+                                local coloredName = "|cff0cd29d" .. (name or "this spell") .. "|r"
+                                local msg = "Click to enable tracking by adding " .. coloredName .. " to your Blizzard CDM"
+                                local swt = EllesmereUI and EllesmereUI.ShowWidgetTooltip
+                                if not swt then swt = EllesmereUI and rawget(EllesmereUI, "ShowWidgetTooltip") end
+                                if swt then swt(self, msg) end
+                            end)
+                            ov:SetScript("OnLeave", function()
+                                local hwt = EllesmereUI and EllesmereUI.HideWidgetTooltip
+                                if not hwt then hwt = EllesmereUI and rawget(EllesmereUI, "HideWidgetTooltip") end
+                                if hwt then hwt() end
+                            end)
+                            slot._untrackedOverlay = ov
+                        end
+                        slot._untrackedOverlay._displaySpellID = sid
+                        slot._untrackedOverlay:EnableMouse(true)
+                        slot._untrackedOverlay:Show()
+                    elseif slot._untrackedOverlay then
+                        slot._untrackedOverlay:Hide()
+                    end
                     slot:Show()
                 else
+                    if slot._untrackedOverlay then slot._untrackedOverlay:Hide() end
                     slot:Hide()
                 end
             end
@@ -5866,6 +5931,7 @@ initFrame:SetScript("OnEvent", function(self)
         parent._showRowDivider = true
 
         if barData.key == "buffs" then
+            --[[ DISABLED: Use Blizzard Buff Bar feature temporarily removed
             _, h = W:Toggle(parent, "Use Blizzard Buff Bar", y,
                 function() return DB().cdmBars.useBlizzardBuffBars == true end,
                 function(v)
@@ -5878,6 +5944,7 @@ initFrame:SetScript("OnEvent", function(self)
             if DB().cdmBars.useBlizzardBuffBars then
                 return math.abs(y)
             end
+            --]]
         end
 
         -------------------------------------------------------------------
@@ -5975,7 +6042,51 @@ initFrame:SetScript("OnEvent", function(self)
             })
         end
 
-        -- Row 2: Bar Opacity | Show Tooltip on Hover
+        -- Row 2: Anchor to Cursor | Cursor Position (cog: X + Y)
+        local cursorRow
+        cursorRow, h = W:DualRow(parent, y,
+            { type="toggle", text="Anchor to Cursor",
+              getValue=function() return BD().anchorTo == "mouse" end,
+              setValue=function(v)
+                  BD().anchorTo = v and "mouse" or "none"
+                  ns.BuildAllCDMBars(); ns.RegisterCDMUnlockElements()
+                  Refresh(); EllesmereUI:RefreshPage(true)
+              end },
+            { type="dropdown", text="Cursor Position",
+              values={ left="Left", right="Right", top="Top", bottom="Bottom" },
+              order={ "left", "right", "top", "bottom" },
+              disabled=function() return BD().anchorTo ~= "mouse" end,
+              disabledTooltip=EllesmereUI.DisabledTooltip("Anchor to Cursor"),
+              getValue=function() return BD().anchorPosition or "right" end,
+              setValue=function(v)
+                  BD().anchorPosition = v
+                  ns.BuildAllCDMBars(); Refresh()
+              end });  y = y - h
+
+        -- Inline cog on Cursor Position (right) — X + Y offsets
+        do
+            local rightRgn = cursorRow._rightRegion
+            local _, cursorCogShow = EllesmereUI.BuildCogPopup({
+                title = "Cursor Offset",
+                rows = {
+                    { type="slider", label="X Offset", min=-125, max=125, step=1,
+                      get=function() return BD().anchorOffsetX or 0 end,
+                      set=function(v)
+                          BD().anchorOffsetX = v
+                          ns.BuildAllCDMBars(); Refresh()
+                      end },
+                    { type="slider", label="Y Offset", min=-125, max=125, step=1,
+                      get=function() return BD().anchorOffsetY or 0 end,
+                      set=function(v)
+                          BD().anchorOffsetY = v
+                          ns.BuildAllCDMBars(); Refresh()
+                      end },
+                },
+            })
+            MakeCogBtn(rightRgn, cursorCogShow)
+        end
+
+        -- Row 3: Bar Opacity | Show Tooltip on Hover
         local opacityRow
         opacityRow, h = W:DualRow(parent, y,
             { type="slider", text="Bar Opacity",

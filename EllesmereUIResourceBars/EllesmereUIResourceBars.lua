@@ -2404,6 +2404,7 @@ local function ShouldShowSecondary()
     if vis == "always" then return true end
     if vis == "never" then return false end
     if vis == "combat" or vis == "in_combat" then return isInCombat end
+    if vis == "out_of_combat" then return not isInCombat end
     if vis == "target" then return UnitExists("target") and UnitCanAttack("player", "target") end
     if vis == "in_raid" then return IsInRaid and IsInRaid() or false end
     if vis == "in_party" then
@@ -2423,6 +2424,7 @@ local function ShouldShowBar(barProfile)
     if vis == "always" then return true end
     if vis == "never" then return false end
     if vis == "combat" or vis == "in_combat" then return isInCombat end
+    if vis == "out_of_combat" then return not isInCombat end
     if vis == "target" then return UnitExists("target") and UnitCanAttack("player", "target") end
     if vis == "in_raid" then return IsInRaid and IsInRaid() or false end
     if vis == "in_party" then

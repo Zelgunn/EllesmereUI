@@ -6351,6 +6351,7 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     local _displayHeaderBuilder
     local displayHeaderFixedH = 0
+    local BuildFoTToTOptions, BuildPetOptions, BuildBossOptions
 
     local function BuildFrameDisplayPage(pageName, parent, yOffset)
         -- Consume any pending unit selection from Element Options navigation
@@ -6709,7 +6710,7 @@ initFrame:SetScript("OnEvent", function(self)
         return y, displayHeader, sizeRow, textHeader, textRow, enableRowFrame
     end
 
-    local function BuildFoTToTOptions(W, parent, y)
+    BuildFoTToTOptions = function(W, parent, y)
         local _, h
 
         local function enableRow(Ww, pp, yy)
@@ -6741,7 +6742,7 @@ initFrame:SetScript("OnEvent", function(self)
         return abs(y)
     end
 
-    local function BuildPetOptions(W, parent, y)
+    BuildPetOptions = function(W, parent, y)
         local _, h
 
         local portraitRow
@@ -6776,7 +6777,7 @@ initFrame:SetScript("OnEvent", function(self)
         return abs(y)
     end
 
-    local function BuildBossOptions(W, parent, y)
+    BuildBossOptions = function(W, parent, y)
         local _, h
 
         local portraitRow

@@ -149,14 +149,23 @@ local _customBarTimers = {}
 -- customSpellDurations; the first active timer wins for display.
 -- { name, icon, duration, spellIDs }
 ns.BUFF_BAR_PRESETS = {
-    { name = "Bloodlust / Heroism", icon = 132131,  duration = 40,
+    { name = UnitFactionGroup("player") == "Horde" and "Bloodlust" or "Heroism",
+      icon = 132313, duration = 40,
       spellIDs = { 2825, 32182, 80353, 264667, 390386, 381301, 444062, 444257 } },
-    { name = "Light's Potential",   icon = 754891,  duration = 30,
+    { name = "Light's Potential",   icon = 7548911, duration = 30,
       spellIDs = { 1236616, 431932 } },
-    { name = "Potion of Recklessness", icon = 754891, duration = 30,
+    { name = "Potion of Recklessness", icon = 7548916, duration = 30,
       spellIDs = { 1236994 } },
-    { name = "Invisibility Potion", icon = 241302,  duration = 18,
-      spellIDs = { 1236551, 431424, 371134, 371125, 371133 } },
+    { name = "Invisibility Potion", icon = 134764,  duration = 18,
+      spellIDs = { 371125, 431424, 371133, 371134, 1236551 } },
+    { name = "Call Dreadstalkers",   icon = 1378282, duration = 12,
+      spellIDs = { 104316 }, class = "WARLOCK" },
+    { name = "Summon Demonic Tyrant", icon = 2065628, duration = 15,
+      spellIDs = { 265187 }, class = "WARLOCK" },
+    { name = "Summon Vilefiend",    icon = 1616211, duration = 15,
+      spellIDs = { 264119 }, class = "WARLOCK" },
+    { name = "Grimoire: Felguard",  icon = 136216,  duration = 17,
+      spellIDs = { 111898 }, class = "WARLOCK" },
 }
 
 -- Reusable children buffer for the per-tick viewer scan -- avoids GetChildren vararg allocation
@@ -1205,7 +1214,7 @@ local function SwitchSpecProfile(newSpecKey)
                 EllesmereUI:InvalidateContentHeaderCache()
             end
             if EllesmereUI.RefreshPage then
-                EllesmereUI:RefreshPage()
+                EllesmereUI:RefreshPage(true)
             end
         end
     end)
@@ -1430,13 +1439,13 @@ ns.UpdateAllCDMBorders = UpdateAllCDMBorders
 local _G_Glows = EllesmereUI.Glows
 local GLOW_STYLES = {
     { name = "Pixel Glow",           procedural = true },
-    { name = "Custom Shape Glow",    shapeGlow = true, scale = 1.20 },
-    { name = "Action Button Glow",   buttonGlow = true, scale = 1.16 },
+    { name = "Custom Shape Glow",    shapeGlow = true },
+    { name = "Action Button Glow",   buttonGlow = true },
     { name = "Auto-Cast Shine",      autocast = true },
-    { name = "GCD",                  atlas = "RotationHelper_Ants_Flipbook",  scale = 1.41 },
-    { name = "Modern WoW Glow",      atlas = "UI-HUD-ActionBar-Proc-Loop-Flipbook",  scale = 1.53 },
+    { name = "GCD",                  atlas = "RotationHelper_Ants_Flipbook", texPadding = 1.6 },
+    { name = "Modern WoW Glow",      atlas = "UI-HUD-ActionBar-Proc-Loop-Flipbook", texPadding = 1.4 },
     { name = "Classic WoW Glow",     texture = "Interface\\SpellActivationOverlay\\IconAlertAnts",
-      rows = 5, columns = 5, frames = 25, duration = 0.3, frameW = 48, frameH = 48, scale = 1.03 },
+      rows = 5, columns = 5, frames = 25, duration = 0.3, frameW = 48, frameH = 48, texPadding = 1.25 },
 }
 ns.GLOW_STYLES = GLOW_STYLES
 
@@ -1461,7 +1470,7 @@ StartNativeGlow = function(overlay, style, cr, cg, cb)
         local shape = icon._shapeApplied and icon._shapeName or nil
         local maskPath   = shape and CDM_SHAPES.masks[shape]
         local borderPath = shape and CDM_SHAPES.borders[shape]
-        _G_Glows.StartShapeGlow(overlay, sz, cr, cg, cb, entry.scale or 1.20, {
+        _G_Glows.StartShapeGlow(overlay, sz, cr, cg, cb, 1.20, {
             maskPath   = maskPath,
             borderPath = borderPath,
             shapeMask  = icon._shapeMask,
@@ -1473,7 +1482,7 @@ StartNativeGlow = function(overlay, style, cr, cg, cb)
         if lineLen < 1 then lineLen = 1 end
         _G_Glows.StartProceduralAnts(overlay, N, th, period, lineLen, cr, cg, cb, sz)
     elseif entry.buttonGlow then
-        _G_Glows.StartButtonGlow(overlay, sz, cr, cg, cb, entry.scale or 1.16)
+        _G_Glows.StartButtonGlow(overlay, sz, cr, cg, cb)
     elseif entry.autocast then
         _G_Glows.StartAutoCastShine(overlay, sz, cr, cg, cb, 1.0)
     else
@@ -2504,7 +2513,7 @@ LayoutCDMBar = function(barKey)
     local vis = barData.barVisibility or "always"
     if _cdmInVehicle or EllesmereUI.CheckVisibilityOptions(barData) then
         -- Vehicle or visibility options say hide -- don't override
-    elseif vis == "always" or (vis == "in_combat" and _inCombat) then
+    elseif vis == "always" or (vis == "in_combat" and _inCombat) or (vis == "out_of_combat" and not _inCombat) then
         frame:SetAlpha(barData.barBgAlpha or 1)
     elseif vis == "mouseover" then
         local state = _cdmHoverStates[barKey]
@@ -2539,12 +2548,6 @@ LayoutCDMBar = function(barKey)
     -- top row gets the remainder. Centering only on top row when partial.
     for i, icon in ipairs(visibleIcons) do
         icon:SetSize(iconW, iconH)
-        if icon._glowOverlay then
-            -- Keep glow overlay square (based on full icon width) so glow
-            -- engines render correctly even when the icon is cropped.
-            local glowSz = iconW + SnapForScale(6, 1)
-            icon._glowOverlay:SetSize(glowSz, glowSz)
-        end
         icon:ClearAllPoints()
 
         -- Map sequential index to bottom-up grid position.
@@ -2656,8 +2659,7 @@ local function CreateCDMIcon(barKey, index)
 
     -- Glow overlay: above cooldown swipe, below text so numbers stay readable
     local glowOverlay = CreateFrame("Frame", nil, icon)
-    glowOverlay:SetPoint("CENTER", icon, "CENTER")
-    glowOverlay:SetSize(1, 1)  -- sized properly during layout
+    glowOverlay:SetAllPoints(icon)
     glowOverlay:SetFrameLevel(icon:GetFrameLevel() + 2)
     glowOverlay:SetAlpha(0)
     glowOverlay:EnableMouse(false)
@@ -2719,6 +2721,106 @@ local function CreateCDMIcon(barKey, index)
 
     icon:Hide()
     return icon
+end
+
+-------------------------------------------------------------------------------
+--  Lazily create or update the red "untracked" overlay on a CDM icon.
+--  Shows a 60% red tint and, when the options panel is open, a clickable
+--  button that opens the Blizzard CDM settings.
+-------------------------------------------------------------------------------
+-- Styled tooltip for untracked overlay (self-contained, no widget dependency)
+local _untrackedTooltip
+local function ShowUntrackedTooltip(anchor, text)
+    if not _untrackedTooltip then
+        local tt = CreateFrame("Frame", nil, UIParent)
+        tt:SetFrameStrata("TOOLTIP")
+        tt:SetSize(250, 40)
+        local bg = tt:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(0.067, 0.067, 0.067, 0.90)
+        local PP2 = EllesmereUI and EllesmereUI.PP
+        if PP2 then PP2.CreateBorder(tt, 1, 1, 1, 0.15, 1) end
+        local fs = tt:CreateFontString(nil, "OVERLAY")
+        fs:SetFont(GetCDMFont(), 11, "")
+        fs:SetShadowOffset(1, -1)
+        fs:SetTextColor(1, 1, 1, 0.80)
+        fs:SetPoint("TOPLEFT", 8, -8)
+        fs:SetPoint("TOPRIGHT", -8, -8)
+        fs:SetWordWrap(true)
+        fs:SetSpacing(3)
+        tt.text = fs
+        tt:Hide()
+        _untrackedTooltip = tt
+    end
+    local tt = _untrackedTooltip
+    tt:SetWidth(250)
+    tt.text:SetText(text)
+    tt:ClearAllPoints()
+    tt:SetPoint("BOTTOM", anchor, "TOP", 0, 4)
+    tt:SetAlpha(0)
+    tt:Show()
+    local naturalW = tt.text:GetStringWidth() + 16
+    tt:SetWidth(math.min(naturalW, 250))
+    tt:SetHeight(tt.text:GetStringHeight() + 16)
+    tt:SetAlpha(1)
+end
+local function HideUntrackedTooltip()
+    if _untrackedTooltip then _untrackedTooltip:Hide() end
+end
+
+local _UNTRACKED_OV_VER = 2
+local function ApplyUntrackedOverlay(ourIcon, spellID, isUntracked)
+    if isUntracked then
+        if ourIcon._untrackedOverlay and not ourIcon._untrackedOverlay._ver3 then
+            ourIcon._untrackedOverlay:ClearAllPoints()
+            ourIcon._untrackedOverlay:Hide()
+            ourIcon._untrackedOverlay = nil
+        end
+        if not ourIcon._untrackedOverlay then
+            local ov = CreateFrame("Button", nil, ourIcon)
+            ov:SetAllPoints(ourIcon._tex)
+            ov:SetFrameLevel(ourIcon:GetFrameLevel() + 4)
+            local ovTex = ov:CreateTexture(nil, "OVERLAY", nil, 6)
+            ovTex:SetAllPoints()
+            ovTex:SetColorTexture(0.6, 0.075, 0.075, 0.8)
+            -- "Click to Track" label
+            local label = ov:CreateFontString(nil, "OVERLAY")
+            local outFlag = EllesmereUI.GetFontOutlineFlag and EllesmereUI.GetFontOutlineFlag() or "OUTLINE"
+            label:SetFont(GetCDMFont(), 10, outFlag)
+            if EllesmereUI.GetFontUseShadow and EllesmereUI.GetFontUseShadow() then
+                label:SetShadowOffset(1, -1)
+            else
+                label:SetShadowOffset(0, 0)
+            end
+            label:SetPoint("CENTER", ov, "CENTER", 0, 0)
+            label:SetText("Click to\nTrack")
+            label:SetTextColor(1, 1, 1, 0.9)
+            label:SetJustifyH("CENTER")
+            ov._label = label
+            ov:SetScript("OnClick", function()
+                if CooldownViewerSettings and CooldownViewerSettings.Show then
+                    CooldownViewerSettings:Show()
+                end
+            end)
+            ov:SetScript("OnEnter", function(self)
+                local sid = self._displaySpellID
+                local name = sid and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
+                local coloredName = "|cff0cd29d" .. (name or "this spell") .. "|r"
+                ShowUntrackedTooltip(self,
+                    "Click to enable tracking by adding " .. coloredName .. " to your Blizzard CDM")
+            end)
+            ov:SetScript("OnLeave", function() HideUntrackedTooltip() end)
+            ourIcon._untrackedOverlay = ov
+            ov._ver3 = true
+        end
+        ourIcon._untrackedOverlay._displaySpellID = spellID
+        ourIcon._untrackedOverlay:EnableMouse(true)
+        ourIcon._untrackedOverlay:Show()
+        ourIcon._isUntracked = true
+    elseif ourIcon._untrackedOverlay then
+        ourIcon._untrackedOverlay:Hide()
+        ourIcon._isUntracked = false
+    end
 end
 
 -------------------------------------------------------------------------------
@@ -3164,8 +3266,12 @@ local function UpdateCustomBarIcons(barKey)
                             ourIcon._oorTinted = false
                         end
 
-                        ourIcon:Show()
-                        visibleCount = visibleCount + 1
+                ourIcon:Show()
+                visibleCount = visibleCount + 1
+
+                -- Untracked overlay for custom bars
+                local isUntrackedC = ECache.IsBlizzardChildUntracked(spellID, resolvedID)
+                ApplyUntrackedOverlay(ourIcon, spellID, isUntrackedC)
 
                         -- Hide buff icons when inactive (aura not active on player) — buff bars only
                         -- Skip during unlock mode so the bar is fully visible for repositioning
@@ -3201,6 +3307,8 @@ local function UpdateCustomBarIcons(barKey)
                         end
                     else
                         ourIcon:Hide()
+                        if ourIcon._untrackedOverlay then ourIcon._untrackedOverlay:Hide() end
+                        ourIcon._isUntracked = false
                     end
                 end -- healthItem else
             end -- spellID < 0 else
@@ -3210,6 +3318,8 @@ local function UpdateCustomBarIcons(barKey)
     -- Hide excess
     for i = #spells + 1, #icons do
         local ic = icons[i]
+        if ic._untrackedOverlay then ic._untrackedOverlay:Hide() end
+        ic._isUntracked = false
         if ic._procGlowActive then
             StopNativeGlow(ic._glowOverlay)
             ic._procGlowActive = false
@@ -3990,6 +4100,9 @@ local function UpdateTrackedBarIcons(barKey)
                     -- Store Blizzard child mapping so proc glow hooks can find our icon
                     ourIcon._blizzChild = blizzChild
 
+                    local isUntracked = ECache.IsBlizzardChildUntracked(spellID, resolvedID)
+                    ApplyUntrackedOverlay(ourIcon, spellID, isUntracked)
+
                     ourIcon:Show()
 
                     -- Hide buff icons when inactive
@@ -4013,6 +4126,8 @@ local function UpdateTrackedBarIcons(barKey)
                 else
                     -- No texture available yet (spell not in spellbook?)
                     ourIcon:Hide()
+                    if ourIcon._untrackedOverlay then ourIcon._untrackedOverlay:Hide() end
+                    ourIcon._isUntracked = false
                 end
             end -- healthItem else
         end
@@ -4026,6 +4141,8 @@ local function UpdateTrackedBarIcons(barKey)
             StopNativeGlow(ic._glowOverlay)
             ic._procGlowActive = false
         end
+        if ic._untrackedOverlay then ic._untrackedOverlay:Hide() end
+        ic._isUntracked = false
         ic:Hide()
     end
 
@@ -4307,7 +4424,10 @@ local function UpdateAllCDMBars(dt)
 
     ECache.ClearInactivePlacedUnitStart()
 
+    --[[ DISABLED: useBlizzardBuffBars feature temporarily removed
     local useBlizzBuffs = p.cdmBars.useBlizzardBuffBars
+    --]]
+    local useBlizzBuffs = false
     for _, barData in ipairs(p.cdmBars.bars) do
         if barData.enabled and not (useBlizzBuffs and barData.key == "buffs") then
             if BLIZZ_CDM_FRAMES[barData.key] then
@@ -4455,6 +4575,15 @@ local function _CDMApplyVisibility()
                     frame:SetAlpha(0)
                     if frame.EnableMouseMotion then frame:EnableMouseMotion(false) end
                 end
+            elseif vis == "out_of_combat" then
+                _CDMStopFade(frame)
+                if not inCombat then
+                    frame:SetAlpha(barData.barBgAlpha or 1)
+                    if frame.EnableMouseMotion then frame:EnableMouseMotion(true) end
+                else
+                    frame:SetAlpha(0)
+                    if frame.EnableMouseMotion then frame:EnableMouseMotion(false) end
+                end
             elseif vis == "in_raid" then
                 _CDMStopFade(frame)
                 if inRaid then
@@ -4579,10 +4708,13 @@ BuildAllCDMBars = function()
         HideBlizzardCDM()
     end
 
+    --[[ DISABLED: useBlizzardBuffBars feature temporarily removed
     local useBlizzBuffs = p.cdmBars.useBlizzardBuffBars
     if useBlizzBuffs and p.cdmBars.hideBlizzard then
         RestoreBlizzardBuffFrame()
     end
+    --]]
+    local useBlizzBuffs = false
 
     -- Build each bar and populate fast lookup
     wipe(barDataByKey)
@@ -5148,14 +5280,21 @@ function ns.AddPresetToBar(barKey, preset)
     local p = ECME.db.profile
     for _, b in ipairs(p.cdmBars.bars) do
         if b.key == barKey then
-            if not b.customSpells then return false end
             local primaryID = preset.spellIDs[1]
+            -- Determine which spell list to use
+            local spellList
+            if b.customSpells then
+                spellList = b.customSpells
+            else
+                if not b.extraSpells then b.extraSpells = {} end
+                spellList = b.extraSpells
+            end
             -- Check not already tracked
-            for _, existing in ipairs(b.customSpells) do
+            for _, existing in ipairs(spellList) do
                 if existing == primaryID then return false, "exists" end
             end
             -- Add primary ID as the icon slot
-            b.customSpells[#b.customSpells + 1] = primaryID
+            spellList[#spellList + 1] = primaryID
             -- Store duration for primary
             if not b.customSpellDurations then b.customSpellDurations = {} end
             b.customSpellDurations[primaryID] = preset.duration
@@ -6447,9 +6586,11 @@ eventFrame:SetScript("OnEvent", function(_, event, unit, updateInfo, arg3)
         if p and p.cdmBars and p.cdmBars.hideBlizzard then
             C_Timer.After(0, function()
                 HideBlizzardCDM()
+                --[[ DISABLED: useBlizzardBuffBars feature temporarily removed
                 if p.cdmBars.useBlizzardBuffBars then
                     RestoreBlizzardBuffFrame()
                 end
+                --]]
             end)
         end
         return

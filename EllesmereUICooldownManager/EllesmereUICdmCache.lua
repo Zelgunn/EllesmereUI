@@ -308,6 +308,35 @@ end
 cache.FindCDMChildByCooldownID = FindCDMChildByCooldownID
 
 -------------------------------------------------------------------------------
+--- Check whether a spellID has a Blizzard CDM child (i.e. is "Displayed").
+--- Used by the options preview to show the untracked overlay.
+-------------------------------------------------------------------------------
+local function IsSpellInBlizzCDM(spellID)
+    if not spellID then return false end
+    -- Fast path: check the per-tick all-child cache first
+    if cache._tickBlizzAllChild[spellID] then return true end
+    -- Slow path: resolve via cooldownID
+    local cdID = cache._spellToCooldownID[spellID]
+    if cdID and FindCDMChildByCooldownID(cdID) then return true end
+    return false
+end
+cache.IsSpellInBlizzCDM = IsSpellInBlizzCDM
+ns.IsSpellInBlizzCDM = IsSpellInBlizzCDM
+
+-------------------------------------------------------------------------------
+---
+---
+-------------------------------------------------------------------------------
+local function IsBlizzardChildUntracked(spellID, resolvedID)
+    return not cache._tickBlizzAllChild[resolvedID]
+           and not cache._tickBlizzAllChild[spellID]
+           and not cache._tickBlizzChild[resolvedID]
+           and not cache._tickBlizzChild[spellID]
+
+end
+cache.IsBlizzardChildUntracked = IsBlizzardChildUntracked
+
+-------------------------------------------------------------------------------
 --- Stores in the `_tickBlizzAllChild` cache the `blizzardChild` for `spellID`
 --- @param spellID number           The spell ID to override
 --- @param blizzardChild Frame      The blizzard child for spellID

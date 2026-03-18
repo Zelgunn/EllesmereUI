@@ -996,8 +996,15 @@ initFrame:SetScript("OnEvent", function(self)
         local function ApplyVisKey(s, v)
             s.barVisibility = v
             s.alwaysHidden      = (v == "never")
+            local wasMO = s.mouseoverEnabled
             s.mouseoverEnabled  = (v == "mouseover")
-            s.mouseoverAlpha    = (v == "mouseover") and 0 or 1
+            if v == "mouseover" then
+                s._savedBarAlpha = s.mouseoverAlpha or 1
+                s.mouseoverAlpha = 0
+            elseif wasMO and s._savedBarAlpha then
+                s.mouseoverAlpha = s._savedBarAlpha
+                s._savedBarAlpha = nil
+            end
             s.combatHideEnabled = false
             s.combatShowEnabled = (v == "in_combat")
         end
@@ -1083,8 +1090,15 @@ initFrame:SetScript("OnEvent", function(self)
         local function ApplyVisKey(s, v)
             s.barVisibility = v
             s.alwaysHidden      = (v == "never")
+            local wasMO = s.mouseoverEnabled
             s.mouseoverEnabled  = (v == "mouseover")
-            s.mouseoverAlpha    = (v == "mouseover") and 0 or 1
+            if v == "mouseover" then
+                s._savedBarAlpha = s.mouseoverAlpha or 1
+                s.mouseoverAlpha = 0
+            elseif wasMO and s._savedBarAlpha then
+                s.mouseoverAlpha = s._savedBarAlpha
+                s._savedBarAlpha = nil
+            end
             s.combatHideEnabled = false
             s.combatShowEnabled = (v == "in_combat")
         end
@@ -1333,8 +1347,15 @@ initFrame:SetScript("OnEvent", function(self)
                 s.barVisibility = v
                 -- Keep boolean flags in sync
                 s.alwaysHidden     = (v == "never")
+                local wasMO = s.mouseoverEnabled
                 s.mouseoverEnabled = (v == "mouseover")
-                s.mouseoverAlpha   = (v == "mouseover") and 0 or 1
+                if v == "mouseover" then
+                    s._savedBarAlpha = s.mouseoverAlpha or 1
+                    s.mouseoverAlpha = 0
+                elseif wasMO and s._savedBarAlpha then
+                    s.mouseoverAlpha = s._savedBarAlpha
+                    s._savedBarAlpha = nil
+                end
                 s.combatHideEnabled = false
                 s.combatShowEnabled = (v == "in_combat")
             end
@@ -1422,9 +1443,12 @@ initFrame:SetScript("OnEvent", function(self)
                     EllesmereUI:RefreshPage()
                 end,
                 isSynced = function()
-                    local v = SB().mouseoverAlpha or 1
+                    local cur = SB()
+                    local v = cur.mouseoverEnabled and 1 or (cur.mouseoverAlpha or 1)
                     for _, key in ipairs(GROUP_BAR_ORDER) do
-                        if (EAB.db.profile.bars[key].mouseoverAlpha or 1) ~= v then return false end
+                        local bs = EAB.db.profile.bars[key]
+                        local bv = bs.mouseoverEnabled and 1 or (bs.mouseoverAlpha or 1)
+                        if bv ~= v then return false end
                     end
                     return true
                 end,
@@ -3208,14 +3232,11 @@ initFrame:SetScript("OnEvent", function(self)
             if lineLen < 1 then lineLen = 1 end
             ns.Glows.StartProceduralAnts(f, N, th, period, lineLen, cr, cg, cb)
         elseif loopEntry.buttonGlow then
-            -- Custom Proc Glow preview
-            local baseScale = loopEntry.previewScale or 1.0
-            ns.Glows.StartButtonGlow(f, iconSize, cr, cg, cb, baseScale * (p.procGlowScale or 1.0))
+            ns.Glows.StartButtonGlow(f, iconSize, cr, cg, cb)
         elseif loopEntry.autocast then
-            -- Auto-Cast Shine preview
-            ns.Glows.StartAutoCastShine(f, iconSize, cr, cg, cb, p.procGlowScale or 1.0)
+            ns.Glows.StartAutoCastShine(f, iconSize, cr, cg, cb, 1.0)
         elseif loopEntry.shapeGlow then
-            -- Shape Glow preview — use first bar's shape mask
+            -- Shape Glow preview -- use first bar's shape mask
             local maskPath
             for k, bs in pairs(EAB.db.profile.bars) do
                 if bs then
@@ -3223,12 +3244,11 @@ initFrame:SetScript("OnEvent", function(self)
                     if ns.SHAPE_MASKS[shape] then maskPath = ns.SHAPE_MASKS[shape]; break end
                 end
             end
-            local baseScale = loopEntry.previewScale or 1.20
-            ns.Glows.StartShapeGlow(f, iconSize, cr, cg, cb, baseScale * (p.procGlowScale or 1.0), { maskPath = maskPath })
+            ns.Glows.StartShapeGlow(f, iconSize, cr, cg, cb, 1.20, { maskPath = maskPath })
         else
             -- FlipBook preview
-            local texSz = iconSize * (loopEntry.previewScale or loopEntry.scale or 1) * (p.procGlowScale or 1.0)
-            f._loopTex:SetSize(texSz, texSz)
+            local previewSz = iconSize * (loopEntry.texPadding or 1)
+            f._loopTex:SetSize(previewSz, previewSz)
             if loopEntry.atlas then
                 f._loopTex:SetAtlas(loopEntry.atlas)
             elseif loopEntry.texture then

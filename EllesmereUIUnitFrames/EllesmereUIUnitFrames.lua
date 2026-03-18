@@ -4072,9 +4072,6 @@ local function ReloadFrames()
                 if bossPos and bossIdx then
                     frame:ClearAllPoints()
                     frame:SetPoint(bossPos.point, UIParent, bossPos.relPoint or bossPos.point, bossPos.x, bossPos.y - ((bossIdx - 1) * bossSpacing))
-                end            if bossPos and bossIdx then
-                    frame:ClearAllPoints()
-                    frame:SetPoint(bossPos.point, UIParent, bossPos.relPoint or bossPos.point, bossPos.x, bossPos.y - ((bossIdx - 1) * bossSpacing))
                 end
             else
                 ApplyFramePosition(frame, unit)
@@ -6035,6 +6032,8 @@ function InitializeFrames()
                         shouldShow = false
                     elseif vis == "in_combat" then
                         shouldShow = _ufInCombat
+                    elseif vis == "out_of_combat" then
+                        shouldShow = not _ufInCombat
                     elseif vis == "in_raid" then
                         shouldShow = inRaid
                     elseif vis == "in_party" then

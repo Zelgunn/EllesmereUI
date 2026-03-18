@@ -2030,8 +2030,13 @@ local function LayoutBar(key)
                 btn.AutoCastOverlay:SetAllPoints(btn)
             end
 
-            -- Blizzard creates SpellActivationAlert proportional to the
-            -- button's current size, so no manual scaling is needed.
+            -- Resize the spell activation alert (proc glow / assisted highlight)
+            -- to match the button size; Blizzard sizes it for default 45px buttons.
+            -- Only resize when using custom proc glows; the default Blizzard
+            -- glow intentionally extends past the button edges.
+            if btn.SpellActivationAlert and p and p.procGlowEnabled ~= false then
+                btn.SpellActivationAlert:SetAllPoints(btn)
+            end
 
             if not showEmpty and not _gridState.shown and not ButtonHasAction(btn, info.blizzBtnPrefix) then
                 btn:SetAlpha(0)
@@ -3368,6 +3373,8 @@ local function BuildVisibilityString(info, s)
         local petShow
         if vis == "in_combat" then
             petShow = "[combat] show; hide"
+        elseif vis == "out_of_combat" then
+            petShow = "[nocombat] show; hide"
         elseif s.combatShowEnabled then
             petShow = "[combat] show; hide"
         elseif s.combatHideEnabled then
@@ -3396,6 +3403,8 @@ local function BuildVisibilityString(info, s)
         return hidePrefix .. "hide"
     elseif vis == "in_combat" then
         return hidePrefix .. "[combat] show; hide"
+    elseif vis == "out_of_combat" then
+        return hidePrefix .. "[nocombat] show; hide"
     elseif vis == "in_raid" then
         return hidePrefix .. "[group:raid] show; hide"
     elseif vis == "in_party" then
@@ -3530,7 +3539,7 @@ function EAB:ApplyAlwaysHidden()
                     RegisterAttributeDriver(frame, "state-visibility", BuildVisibilityString(info, s))
                 end
                 if not InCombatLockdown() then
-                    if vis ~= "in_combat" and not s.combatShowEnabled then
+                    if vis ~= "in_combat" and vis ~= "out_of_combat" and not s.combatShowEnabled then
                         -- ExtraActionButton and EncounterBar holders manage
                         -- their own visibility based on active content.
                         if not info.isBlizzardMovable and not info.blizzOwnedVisibility then
@@ -3800,13 +3809,13 @@ end
 -- Loop glow types: atlas-based Blizzard FlipBook styles + procedural engines
 local LOOP_GLOW_TYPES = {
     { name = "Pixel Glow",           procedural = true },
-    { name = "Custom Proc Glow",     buttonGlow = true, scale = 1.36, previewScale = 1.28 },
+    { name = "Custom Proc Glow",     buttonGlow = true },
     { name = "Auto-Cast Shine",      autocast = true },
-    { name = "Shape Glow",           shapeGlow = true, scale = 1.20, previewScale = 1.20 },
-    { name = "GCD",                  atlas = "RotationHelper_Ants_Flipbook",  scale = 1.12, previewScale = 1.47 },
-    { name = "Modern WoW Glow",      atlas = "UI-HUD-ActionBar-Proc-Loop-Flipbook",  scale = 1.02, previewScale = 1.34 },
+    { name = "Shape Glow",           shapeGlow = true },
+    { name = "GCD",                  atlas = "RotationHelper_Ants_Flipbook", texPadding = 1.6 },
+    { name = "Modern WoW Glow",      atlas = "UI-HUD-ActionBar-Proc-Loop-Flipbook", texPadding = 1.4 },
     { name = "Classic WoW Glow",     texture = "Interface\\SpellActivationOverlay\\IconAlertAnts",
-      rows = 5, columns = 5, frames = 25, duration = 0.3, frameW = 48, frameH = 48, scale = 1.09, previewScale = 1.47 },
+      rows = 5, columns = 5, frames = 25, duration = 0.3, frameW = 48, frameH = 48, texPadding = 1.25 },
 }
 ns.LOOP_GLOW_TYPES = LOOP_GLOW_TYPES
 
@@ -3895,34 +3904,39 @@ local function UpdateFlipbook(btn)
     if p.procGlowEnabled == false then
         -- Custom shapes always use Shape Glow even if custom proc glow is "off"
         if not (btn._eabShapeMask and btn._eabShapeApplied) then
+            -- Clean up our custom glow layers; leave Blizzard's
+            -- SpellActivationAlert completely untouched so the native
+            -- start-burst -> loop transition plays at its original size.
             if btn._eabGlowWrapper then
                 StopAllProceduralGlows(btn._eabGlowWrapper)
                 btn._eabGlowWrapper:Hide()
             end
-            -- Blizzard sizes the overlay proportional to the button, so
-            -- no manual scaling is needed for the default glow.
-            if region.ProcLoopFlipbook then
-                region.ProcLoopFlipbook:Show()
-                region.ProcLoopFlipbook:SetDesaturated(false)
-                region.ProcLoopFlipbook:SetVertexColor(1, 1, 1)
-                region.ProcLoopFlipbook:SetScale(1)
+            -- If we previously customized Blizzard's flipbooks, reset them
+            -- so the native glow plays correctly.
+            if btn._eabCustomizedFlipbook then
+                btn._eabCustomizedFlipbook = nil
+                if region.ProcLoopFlipbook then
+                    region.ProcLoopFlipbook:SetDesaturated(false)
+                    region.ProcLoopFlipbook:SetVertexColor(1, 1, 1)
+                    region.ProcLoopFlipbook:SetScale(1)
+                    region.ProcLoopFlipbook:Show()
+                end
+                if region.ProcStartFlipbook then
+                    region.ProcStartFlipbook:SetDesaturated(false)
+                    region.ProcStartFlipbook:SetVertexColor(1, 1, 1)
+                    region.ProcStartFlipbook:SetScale(1)
+                    region.ProcStartFlipbook:Show()
+                end
+                if region.ProcLoop then
+                    local loopFlip = GetFlipBookAnim(region.ProcLoop)
+                    if loopFlip then loopFlip:SetDuration(1.0) end
+                end
+                if region.ProcStartAnim then
+                    local startFlip = GetFlipBookAnim(region.ProcStartAnim)
+                    if startFlip then startFlip:SetDuration(0.702) end
+                end
+                region:SetScale(1)
             end
-            if region.ProcStartFlipbook then
-                region.ProcStartFlipbook:Show()
-                region.ProcStartFlipbook:SetDesaturated(false)
-                region.ProcStartFlipbook:SetVertexColor(1, 1, 1)
-                region.ProcStartFlipbook:SetScale(1)
-            end
-            if region.ProcLoop then
-                local loopFlip = GetFlipBookAnim(region.ProcLoop)
-                if loopFlip then loopFlip:SetDuration(1.0) end
-            end
-            if region.ProcStartAnim then
-                local startFlip = GetFlipBookAnim(region.ProcStartAnim)
-                if startFlip then startFlip:SetDuration(0.702) end
-            end
-            if btn._eabAntsGroup then btn._eabAntsGroup:Stop() end
-            if btn._eabAntsOverlay then btn._eabAntsOverlay:Hide() end
             return
         end
     end
@@ -3971,6 +3985,7 @@ local function UpdateFlipbook(btn)
     end
 
     if loopEntry.procedural or loopEntry.buttonGlow or loopEntry.autocast or loopEntry.shapeGlow then
+        btn._eabCustomizedFlipbook = true
         if region.ProcStartFlipbook then region.ProcStartFlipbook:Hide() end
         if region.ProcStartAnim then
             local startFlip = GetFlipBookAnim(region.ProcStartAnim)
@@ -3986,9 +4001,7 @@ local function UpdateFlipbook(btn)
             region.ProcStartAnim:HookScript("OnFinished", function()
                 if _procState.active[btn] then
                     local pp = EAB.db and EAB.db.profile
-                    local idx = pp and pp.procGlowType or 1
-                    local entry = LOOP_GLOW_TYPES[idx]
-                    if entry and (entry.procedural or entry.buttonGlow or entry.autocast or entry.shapeGlow) then
+                    if pp and pp.procGlowEnabled ~= false then
                         if region.ProcLoopFlipbook then region.ProcLoopFlipbook:Hide() end
                         if region.ProcLoop then
                             local lf = GetFlipBookAnim(region.ProcLoop)
@@ -4004,9 +4017,7 @@ local function UpdateFlipbook(btn)
             region.ProcLoop:HookScript("OnPlay", function()
                 if _procState.active[btn] then
                     local pp = EAB.db and EAB.db.profile
-                    local idx = pp and pp.procGlowType or 1
-                    local entry = LOOP_GLOW_TYPES[idx]
-                    if entry and (entry.procedural or entry.buttonGlow or entry.autocast or entry.shapeGlow) then
+                    if pp and pp.procGlowEnabled ~= false then
                         if region.ProcLoopFlipbook then region.ProcLoopFlipbook:Hide() end
                     end
                 end
@@ -4018,11 +4029,8 @@ local function UpdateFlipbook(btn)
         wrapper:Show()
         if region.ProcLoopFlipbook then region.ProcLoopFlipbook:Hide() end
         if region.ProcStartFlipbook then region.ProcStartFlipbook:Hide() end
-        if btn._eabAntsGroup then btn._eabAntsGroup:Stop() end
-        if btn._eabAntsOverlay then btn._eabAntsOverlay:Hide() end
 
         local sz = min(_ufBtnW, _ufBtnH)
-        local userScale = p.procGlowScale or 1.0
 
         if loopEntry.procedural then
             local N = 8
@@ -4033,17 +4041,13 @@ local function UpdateFlipbook(btn)
             if lineLen < 1 then lineLen = 1 end
             _G_Glows.StartProceduralAnts(wrapper, N, th, period, lineLen, cr, cg, cb)
         elseif loopEntry.buttonGlow then
-            local baseScale = loopEntry.scale or 1
-            local finalScale = baseScale * userScale
-            _G_Glows.StartButtonGlow(wrapper, sz, cr, cg, cb, finalScale)
+            _G_Glows.StartButtonGlow(wrapper, sz, cr, cg, cb)
         elseif loopEntry.autocast then
-            _G_Glows.StartAutoCastShine(wrapper, sz, cr, cg, cb, userScale)
+            _G_Glows.StartAutoCastShine(wrapper, sz, cr, cg, cb, 1.0)
         elseif loopEntry.shapeGlow then
-            local baseScale = loopEntry.scale or 1.20
-            local finalScale = baseScale * userScale
             local maskPath = btn._eabShapeMaskPath or SHAPE_MASKS[btn._eabShapeName or ""]
             local borderPath = SHAPE_BORDERS[btn._eabShapeName or ""]
-            _G_Glows.StartShapeGlow(wrapper, sz, cr, cg, cb, finalScale, {
+            _G_Glows.StartShapeGlow(wrapper, sz, cr, cg, cb, 1.20, {
                 maskPath   = maskPath,
                 borderPath = borderPath,
                 shapeMask  = btn._eabShapeMask,
@@ -4053,90 +4057,28 @@ local function UpdateFlipbook(btn)
             MaskFrameTextures(wrapper, wrapper._eabOwnMask)
         end
     else
-        StopAllProceduralGlows(wrapper)
-        wrapper:Hide()
-
-        if region.ProcLoopFlipbook then region.ProcLoopFlipbook:Show() end
-        if region.ProcStartFlipbook then region.ProcStartFlipbook:Show() end
-
-        if region.ProcLoopFlipbook and region.ProcLoop then
-            local flipAnim = GetFlipBookAnim(region.ProcLoop)
-            if loopEntry.atlas then
-                region.ProcLoopFlipbook:SetAtlas(loopEntry.atlas)
-            elseif loopEntry.texture then
-                region.ProcLoopFlipbook:SetTexture(loopEntry.texture)
-            end
-            if flipAnim then
-                flipAnim:SetFlipBookRows(loopEntry.rows or 6)
-                flipAnim:SetFlipBookColumns(loopEntry.columns or 5)
-                flipAnim:SetFlipBookFrames(loopEntry.frames or 30)
-                flipAnim:SetDuration(loopEntry.duration or 1.0)
-                flipAnim:SetFlipBookFrameWidth(loopEntry.frameW or 0.0)
-                flipAnim:SetFlipBookFrameHeight(loopEntry.frameH or 0.0)
-            end
-            local baseScale = loopEntry.scale or 1
-            local userScale = p.procGlowScale or 1.0
-            local finalScale = baseScale * userScale
-            region:SetScale(finalScale)
-            region.ProcLoopFlipbook:SetDesaturated(true)
-            region.ProcLoopFlipbook:SetVertexColor(cr, cg, cb)
-
-            if loopEntry.atlas then
-                if not btn._eabAntsOverlay then
-                    local antsTex = region:CreateTexture(nil, "OVERLAY", nil, 2)
-                    antsTex:SetBlendMode("ADD")
-                    local antsGroup = antsTex:CreateAnimationGroup()
-                    antsGroup:SetLooping("REPEAT")
-                    local antsAnim = antsGroup:CreateAnimation("FlipBook")
-                    btn._eabAntsOverlay = antsTex
-                    btn._eabAntsGroup = antsGroup
-                    btn._eabAntsAnim = antsAnim
-                end
-                local antsTex = btn._eabAntsOverlay
-                local antsAnim = btn._eabAntsAnim
-                antsTex:ClearAllPoints()
-                antsTex:SetAllPoints(region.ProcLoopFlipbook)
-                antsTex:SetAtlas(loopEntry.atlas)
-                antsAnim:SetFlipBookRows(loopEntry.rows or 6)
-                antsAnim:SetFlipBookColumns(loopEntry.columns or 5)
-                antsAnim:SetFlipBookFrames(loopEntry.frames or 30)
-                antsAnim:SetDuration(loopEntry.duration or 1.0)
-                antsAnim:SetFlipBookFrameWidth(loopEntry.frameW or 0.0)
-                antsAnim:SetFlipBookFrameHeight(loopEntry.frameH or 0.0)
-                antsTex:SetDesaturated(false)
-                antsTex:SetVertexColor(1, 1, 1)
-                antsTex:SetAlpha(0.35)
-                antsTex:Show()
-                btn._eabAntsGroup:Play()
-            else
-                if btn._eabAntsOverlay then
-                    if btn._eabAntsGroup then btn._eabAntsGroup:Stop() end
-                    btn._eabAntsOverlay:Hide()
-                end
-            end
+        -- FlipBook styles: render on our own wrapper (SetAllPoints on btn)
+        -- so the glow matches the button size with no scale math.
+        -- Hide Blizzard's flipbooks entirely.
+        btn._eabCustomizedFlipbook = true
+        if region.ProcStartFlipbook then region.ProcStartFlipbook:Hide() end
+        if region.ProcLoopFlipbook then region.ProcLoopFlipbook:Hide() end
+        if region.ProcStartAnim then
+            local sf = GetFlipBookAnim(region.ProcStartAnim)
+            if sf then sf:SetDuration(0) end
         end
-    end
+        if region.ProcLoop then
+            local lf = GetFlipBookAnim(region.ProcLoop)
+            if lf then lf:SetDuration(0) end
+        end
 
-    -- Proc start burst
-    local startAnim = PROC_START_TYPES[1]
-    if region.ProcStartFlipbook and region.ProcStartAnim then
-        local flipAnim = GetFlipBookAnim(region.ProcStartAnim)
-        if startAnim.atlas then
-            region.ProcStartFlipbook:SetAtlas(startAnim.atlas)
-        elseif startAnim.texture then
-            region.ProcStartFlipbook:SetTexture(startAnim.texture)
+        local sz = min(_ufBtnW, _ufBtnH)
+        _G_Glows.StopAllGlows(wrapper)
+        wrapper:Show()
+        _G_Glows.StartFlipBookGlow(wrapper, sz, loopEntry, cr, cg, cb)
+        if wrapper._eabOwnMask then
+            MaskFrameTextures(wrapper, wrapper._eabOwnMask)
         end
-        if flipAnim then
-            flipAnim:SetFlipBookRows(startAnim.rows or 6)
-            flipAnim:SetFlipBookColumns(startAnim.columns or 5)
-            flipAnim:SetFlipBookFrames(startAnim.frames or 30)
-            flipAnim:SetDuration(startAnim.duration or 0.702)
-            flipAnim:SetFlipBookFrameWidth(startAnim.frameW or 0.0)
-            flipAnim:SetFlipBookFrameHeight(startAnim.frameH or 0.0)
-        end
-        region.ProcStartFlipbook:SetScale(startAnim.scale or 1)
-        region.ProcStartFlipbook:SetDesaturated(true)
-        region.ProcStartFlipbook:SetVertexColor(cr, cg, cb)
     end
 
     if btn._eabShapeMask and btn._eabShapeApplied then
@@ -4148,6 +4090,7 @@ end
 function EAB:HookProcGlow()
     if _procState.hooked then return end
     _procState.hooked = true
+
     if ActionButtonSpellAlertManager then
         if ActionButtonSpellAlertManager.ShowAlert then
             hooksecurefunc(ActionButtonSpellAlertManager, "ShowAlert", function(_, btn)
@@ -4173,8 +4116,6 @@ function EAB:HookProcGlow()
                             StopAllProceduralGlows(btn._eabGlowWrapper)
                             btn._eabGlowWrapper:Hide()
                         end
-                        if btn._eabAntsGroup then btn._eabAntsGroup:Stop() end
-                        if btn._eabAntsOverlay then btn._eabAntsOverlay:Hide() end
                     end
                 end
                 C_Timer_After(0, btn._eabHideAlertFn)
@@ -5235,9 +5176,7 @@ function EAB:OnFirstLogin()
                     s.barVisibility = "in_combat"
                 elseif data.visibility == 2 then
                     s.combatHideEnabled = true
-                    -- No dropdown equivalent for "hide in combat";
-                    -- boolean flag handles the state driver behavior.
-                    s.barVisibility = "always"
+                    s.barVisibility = "out_of_combat"
                 end
             end
             if data.point then
@@ -7225,9 +7164,12 @@ local function EAB_QuickKeybindClose()
         end
         mab:Hide()
         mab:SetParent(hiddenParent)
-        -- Restore our bar frame to UIParent.
+        -- Restore our bar frame to UIParent and reapply its saved position.
         local mainFrame = barFrames["MainBar"]
-        if mainFrame then mainFrame:SetParent(UIParent) end
+        if mainFrame then
+            mainFrame:SetParent(UIParent)
+            RestoreBarPositions()
+        end
     end)
 end
 

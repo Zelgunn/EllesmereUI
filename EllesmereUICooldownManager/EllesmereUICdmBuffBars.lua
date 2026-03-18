@@ -133,6 +133,7 @@ local TBB_POPULAR_BUFFS = {
         icon           = 1378282,
         spellIDs       = { 104316 },
         customDuration = 12,
+        class          = "WARLOCK",
     },
     {
         key            = "demonic_tyrant",
@@ -140,6 +141,7 @@ local TBB_POPULAR_BUFFS = {
         icon           = 2065628,
         spellIDs       = { 265187 },
         customDuration = 15,
+        class          = "WARLOCK",
     },
     {
         key            = "summon_vilefiend",
@@ -147,6 +149,7 @@ local TBB_POPULAR_BUFFS = {
         icon           = 1616211,
         spellIDs       = { 264119 },
         customDuration = 15,
+        class          = "WARLOCK",
     },
     {
         key            = "grimoire_felguard",
@@ -154,6 +157,7 @@ local TBB_POPULAR_BUFFS = {
         icon           = 136216,
         spellIDs       = { 111898 },
         customDuration = 17,
+        class          = "WARLOCK",
     },
 }
 ns.TBB_POPULAR_BUFFS = TBB_POPULAR_BUFFS
@@ -550,6 +554,7 @@ local function SetupTBBThresholdOverlay(bar, cfg)
     local texPath = EllesmereUI.ResolveTexturePath(TBB_TEXTURES, cfg.texture or "none", "Interface\\Buttons\\WHITE8x8")
     overlay:SetStatusBarTexture(texPath)
     overlay:SetOrientation(cfg.verticalOrientation and "VERTICAL" or "HORIZONTAL")
+    overlay:SetFillStyle(Enum.StatusBarFillStyle.Center)
     overlay:GetStatusBarTexture():SetVertexColor(
         cfg.stackThresholdR or 0.8,
         cfg.stackThresholdG or 0.1,
@@ -690,6 +695,7 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
 
     -- Orientation
     sb:SetOrientation(isVert and "VERTICAL" or "HORIZONTAL")
+    sb:SetFillStyle(Enum.StatusBarFillStyle.Center)
 
     -- Texture (only re-set if changed to avoid fill flash)
     local texPath = EllesmereUI.ResolveTexturePath(TBB_TEXTURES, cfg.texture or "none", "Interface\\Buttons\\WHITE8x8")
