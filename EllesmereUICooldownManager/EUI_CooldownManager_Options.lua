@@ -5202,7 +5202,7 @@ initFrame:SetScript("OnEvent", function(self)
             end
             local spacing  = bd.spacing or 2
             local zoom     = bd.iconZoom or 0.08
-            local grow     = bd.growDirection or "RIGHT"
+            local grow     = "RIGHT"  -- preview always horizontal to save space
             local numRows  = bd.numRows or 1
             if numRows < 1 then numRows = 1 end
 
