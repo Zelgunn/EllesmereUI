@@ -2890,10 +2890,8 @@ function EAB:ApplyCooldownFontsForBar(barKey)
                         region:SetFont(fontPath, cdSize, "OUTLINE")
                         region:SetShadowOffset(0, 0)
                         region:SetTextColor(cdColor.r, cdColor.g, cdColor.b)
-                        if cdOX ~= 0 or cdOY ~= 0 then
-                            region:ClearAllPoints()
-                            region:SetPoint("CENTER", cd, "CENTER", cdOX, cdOY)
-                        end
+                        region:ClearAllPoints()
+                        region:SetPoint("CENTER", cd, "CENTER", cdOX, cdOY)
                         break
                     end
                 end
@@ -5847,8 +5845,39 @@ function EAB:FinishSetup()
                 end
                 return
             end
+            if InCombatLockdown() then
+                -- Combat-safe path: update textures and usability per-button
+                -- without touching protected frame operations (Show/Hide/SetParent).
+                -- This allows pet abilities to appear when summoning a pet mid-combat.
+                local hasPetBar = PetHasActionBar()
+                for i = 1, NUM_PET_ACTION_SLOTS do
+                    local btn = _G["PetActionButton" .. i]
+                    if btn then
+                        local name, texture, isToken, isActive, autoCast, autoCastEnabled = GetPetActionInfo(i)
+                        if hasPetBar and texture then
+                            if isToken then btn.icon:SetTexture(_G[texture])
+                            else btn.icon:SetTexture(texture) end
+                            btn.icon:Show()
+                            if btn.AutoCastShine then
+                                if autoCastEnabled then
+                                    AutoCastShine_AutoCastStart(btn.AutoCastShine)
+                                else
+                                    AutoCastShine_AutoCastStop(btn.AutoCastShine)
+                                end
+                            end
+                        else
+                            btn.icon:Hide()
+                        end
+                        -- Update cooldown
+                        if btn.cooldown then
+                            local start, duration, enable = GetPetActionCooldown(i)
+                            CooldownFrame_Set(btn.cooldown, start, duration, enable)
+                        end
+                    end
+                end
+                return
+            end
             -- Full update path: only safe out of combat.
-            if InCombatLockdown() then return end
             if _gridState.shown then
                 -- During a spell drag, skip PetActionBar:Update() which
                 -- hides empty slots. Just refresh textures per-button so

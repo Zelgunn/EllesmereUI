@@ -1479,6 +1479,15 @@ initFrame:SetScript("OnEvent", function(self)
         -- Inline cog on Rested Indicator (right) for X/Y offsets
         do
             local rightRgn = crosshairRow._rightRegion
+            local function ApplyRestIndicatorPos()
+                local pf = _G["EllesmereUIUnitFrames_Player"]
+                if pf and pf._restIndicator then
+                    pf._restIndicator:ClearAllPoints()
+                    local rx = (EllesmereUIDB and EllesmereUIDB.restedIndicatorXOffset) or 0
+                    local ry = (EllesmereUIDB and EllesmereUIDB.restedIndicatorYOffset) or 0
+                    pf._restIndicator:SetPoint("TOPLEFT", pf.Health, "TOPLEFT", 3 + rx, -2 + ry)
+                end
+            end
             local _, restCogShow = EllesmereUI.BuildCogPopup({
                 title = "Rested Indicator Position",
                 rows = {
@@ -1487,26 +1496,14 @@ initFrame:SetScript("OnEvent", function(self)
                       set=function(v)
                           if not EllesmereUIDB then EllesmereUIDB = {} end
                           EllesmereUIDB.restedIndicatorXOffset = v
-                          local pf = _G["EllesmereUIUnitFrames_Player"]
-                          if pf and pf._restIndicator then
-                              pf._restIndicator:ClearAllPoints()
-                              local rx = EllesmereUIDB.restedIndicatorXOffset or 0
-                              local ry = EllesmereUIDB.restedIndicatorYOffset or 0
-                              pf._restIndicator:SetPoint("TOPLEFT", pf.Health, "TOPLEFT", 3 + rx, -2 + ry)
-                          end
+                          ApplyRestIndicatorPos()
                       end },
                     { type="slider", label="Y Offset", min=-50, max=50, step=1,
                       get=function() return (EllesmereUIDB and EllesmereUIDB.restedIndicatorYOffset) or 0 end,
                       set=function(v)
                           if not EllesmereUIDB then EllesmereUIDB = {} end
                           EllesmereUIDB.restedIndicatorYOffset = v
-                          local pf = _G["EllesmereUIUnitFrames_Player"]
-                          if pf and pf._restIndicator then
-                              pf._restIndicator:ClearAllPoints()
-                              local rx = EllesmereUIDB.restedIndicatorXOffset or 0
-                              local ry = EllesmereUIDB.restedIndicatorYOffset or 0
-                              pf._restIndicator:SetPoint("TOPLEFT", pf.Health, "TOPLEFT", 3 + rx, -2 + ry)
-                          end
+                          ApplyRestIndicatorPos()
                       end },
                 },
             })
@@ -1536,7 +1533,13 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUI.ShowWidgetTooltip(restCogBtn, EllesmereUI.DisabledTooltip("Rested Indicator"))
             end)
             restCogBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-            if restOff() then restCogBlock:Show() else restCogBlock:Hide() end
+            local function UpdateRestCogState()
+                local off = restOff()
+                restCogBtn:SetAlpha(off and 0.15 or 0.4)
+                if off then restCogBlock:Show() else restCogBlock:Hide() end
+            end
+            EllesmereUI.RegisterWidgetRefresh(UpdateRestCogState)
+            UpdateRestCogState()
         end
 
         -- Inline color swatch on the crosshair dropdown (left region)
@@ -3304,6 +3307,127 @@ initFrame:SetScript("OnEvent", function(self)
                 end)
             end)
 
+            -- Shared helper: runs the same flow as Import (name popup + CDM spec picker)
+            -- but skips the paste step since we already have the export string.
+            local function DoPresetImportFlow(exportString, defaultName)
+                if not exportString then return end
+                local payload = EllesmereUI.DecodeImportString(exportString)
+
+                -- Build missing-addon warning (same as import)
+                local warnText
+                if payload and payload.type == "full" and payload.data and payload.data.addons then
+                    local missing = {}
+                    local isLoaded = C_AddOns and C_AddOns.IsAddOnLoaded or _G.IsAddOnLoaded
+                    for _, entry in ipairs(EllesmereUI._ADDON_DB_MAP) do
+                        if isLoaded and isLoaded(entry.folder) and not payload.data.addons[entry.folder] then
+                            missing[#missing + 1] = entry.display
+                        end
+                    end
+                    if #missing > 0 then
+                        warnText = "Not included: " .. table.concat(missing, ", ")
+                    end
+                end
+                local scaleWarnText = BuildScaleWarning(payload)
+
+                EllesmereUI:ShowInputPopup({
+                    title        = "Name This Profile",
+                    message      = "Enter a name for the preset profile:",
+                    placeholder  = defaultName or "Preset Profile",
+                    confirmText  = "Import",
+                    cancelText   = "Cancel",
+                    warning      = warnText,
+                    scaleWarning = scaleWarnText,
+                    onConfirm    = function(name)
+                        if not name or name == "" then return end
+
+                        local importedCDMSnap
+                        if C_AddOns.IsAddOnLoaded("EllesmereUICooldownManager") then
+                            if payload and payload.data and payload.data.addons then
+                                importedCDMSnap = payload.data.addons["EllesmereUICooldownManager"]
+                            end
+                        end
+
+                        local ok, err, status = EllesmereUI.ImportProfile(exportString, name)
+
+                        if ok and status == "spec_locked" then
+                            EllesmereUI:ShowInfoPopup({
+                                title   = "Profile Imported",
+                                content = "\"" .. name .. "\" was saved but cannot be loaded because this spec has an assigned profile. Switch specs or remove the spec assignment to use it.",
+                            })
+                        elseif ok then
+                            local importedSpecInfo = importedCDMSnap
+                                and EllesmereUI.GetImportedCDMSpecInfo(importedCDMSnap)
+                            if importedSpecInfo and #importedSpecInfo > 0 then
+                                for _, sp in ipairs(importedSpecInfo) do sp.checked = true end
+                                local fontWillChange = EllesmereUI.ProfileChangesFont(payload and payload.data)
+                                EllesmereUI:ShowCDMSpecPickerPopup({
+                                    title       = "Choose Your Included CDM Spell Assignments",
+                                    subtitle    = "Select all specs you want included with your imported profile",
+                                    confirmText = "Apply",
+                                    specs       = importedSpecInfo,
+                                    onConfirm   = function(sel)
+                                        EllesmereUI.ApplyImportedSpecProfiles(importedCDMSnap, sel)
+                                        if _G._ECME_LoadSpecProfile and _G._ECME_GetCurrentSpecKey then
+                                            local curKey = _G._ECME_GetCurrentSpecKey()
+                                            if curKey then _G._ECME_LoadSpecProfile(curKey) end
+                                        end
+                                        EllesmereUI.RefreshAllAddons()
+                                        ddLabel:SetText(EllesmereUI.GetActiveProfileName())
+                                        if fontWillChange then
+                                            EllesmereUI:ShowConfirmPopup({
+                                                title       = "Reload Required",
+                                                message     = "Font changed. A UI reload is needed to apply the new font.",
+                                                confirmText = "Reload Now",
+                                                cancelText  = "Later",
+                                                onConfirm   = function() ReloadUI() end,
+                                            })
+                                        else
+                                            EllesmereUI:RefreshPage()
+                                        end
+                                    end,
+                                    onCancel = function()
+                                        if _G._ECME_LoadSpecProfile and _G._ECME_GetCurrentSpecKey then
+                                            local curKey = _G._ECME_GetCurrentSpecKey()
+                                            if curKey then _G._ECME_LoadSpecProfile(curKey) end
+                                        end
+                                        EllesmereUI.RefreshAllAddons()
+                                        ddLabel:SetText(EllesmereUI.GetActiveProfileName())
+                                        if fontWillChange then
+                                            EllesmereUI:ShowConfirmPopup({
+                                                title       = "Reload Required",
+                                                message     = "Font changed. A UI reload is needed to apply the new font.",
+                                                confirmText = "Reload Now",
+                                                cancelText  = "Later",
+                                                onConfirm   = function() ReloadUI() end,
+                                            })
+                                        else
+                                            EllesmereUI:RefreshPage()
+                                        end
+                                    end,
+                                })
+                            else
+                                local fontWillChange = EllesmereUI.ProfileChangesFont(payload and payload.data)
+                                EllesmereUI.RefreshAllAddons()
+                                ddLabel:SetText(EllesmereUI.GetActiveProfileName())
+                                if fontWillChange then
+                                    EllesmereUI:ShowConfirmPopup({
+                                        title       = "Reload Required",
+                                        message     = "Font changed. A UI reload is needed to apply the new font.",
+                                        confirmText = "Reload Now",
+                                        cancelText  = "Later",
+                                        onConfirm   = function() ReloadUI() end,
+                                    })
+                                else
+                                    EllesmereUI:RefreshPage()
+                                end
+                            end
+                        else
+                            EllesmereUI:ShowInfoPopup({ title = "Import Failed", content = err or "Unknown error" })
+                        end
+                    end,
+                })
+            end
+
             -- Popular Presets dropdown (label always stays "Popular Presets")
             do
                 local presetEntries = {}
@@ -3335,40 +3459,7 @@ initFrame:SetScript("OnEvent", function(self)
                     presetEntries[#presetEntries + 1] = {
                         label = "Weekly Spotlight: " .. spot.name,
                         onApply = function()
-                            if not spot.exportString then return end
-                            local spotPayload = EllesmereUI.DecodeImportString(spot.exportString)
-                            local spotScaleWarn = BuildScaleWarning(spotPayload)
-                            local ok, err, status = EllesmereUI.ImportProfile(spot.exportString, UniquePresetName("Weekly: " .. spot.name))
-                            if ok and status == "spec_locked" then
-                                EllesmereUI:ShowInfoPopup({
-                                    title   = "Profile Imported",
-                                    content = "Profile was saved but cannot be loaded because this spec has an assigned profile.",
-                                })
-                            elseif ok then
-                                local fontWillChange = EllesmereUI.ProfileChangesFont(spotPayload and spotPayload.data)
-                                EllesmereUI.RefreshAllAddons()
-                                ddLabel:SetText(EllesmereUI.GetActiveProfileName())
-                                if fontWillChange then
-                                    EllesmereUI:ShowConfirmPopup({
-                                        title        = "Reload Required",
-                                        message      = "Font changed. A UI reload is needed to apply the new font.",
-                                        confirmText  = "Reload Now",
-                                        cancelText   = "Later",
-                                        scaleWarning = spotScaleWarn,
-                                        onConfirm    = function() ReloadUI() end,
-                                    })
-                                elseif spotScaleWarn then
-                                    EllesmereUI:ShowConfirmPopup({
-                                        title        = "Preset Applied",
-                                        message      = "\"Weekly: " .. spot.name .. "\" has been applied.",
-                                        confirmText  = "OK",
-                                        cancelText   = "Close",
-                                        scaleWarning = spotScaleWarn,
-                                    })
-                                else
-                                    EllesmereUI:RefreshPage()
-                                end
-                            else EllesmereUI:ShowInfoPopup({ title = "Spotlight Error", content = err or "Unknown error" }) end
+                            DoPresetImportFlow(spot.exportString, "Weekly: " .. spot.name)
                         end,
                     }
                 end
@@ -3378,39 +3469,7 @@ initFrame:SetScript("OnEvent", function(self)
                         presetEntries[#presetEntries + 1] = {
                             label = p.name,
                             onApply = function()
-                                local pPayload = EllesmereUI.DecodeImportString(p.exportString)
-                                local pScaleWarn = BuildScaleWarning(pPayload)
-                                local ok, err, status = EllesmereUI.ImportProfile(p.exportString, UniquePresetName(p.name))
-                                if ok and status == "spec_locked" then
-                                    EllesmereUI:ShowInfoPopup({
-                                        title   = "Profile Imported",
-                                        content = "Profile was saved but cannot be loaded because this spec has an assigned profile.",
-                                    })
-                                elseif ok then
-                                    local fontWillChange = EllesmereUI.ProfileChangesFont(pPayload and pPayload.data)
-                                    EllesmereUI.RefreshAllAddons()
-                                    ddLabel:SetText(EllesmereUI.GetActiveProfileName())
-                                    if fontWillChange then
-                                        EllesmereUI:ShowConfirmPopup({
-                                            title        = "Reload Required",
-                                            message      = "Font changed. A UI reload is needed to apply the new font.",
-                                            confirmText  = "Reload Now",
-                                            cancelText   = "Later",
-                                            scaleWarning = pScaleWarn,
-                                            onConfirm    = function() ReloadUI() end,
-                                        })
-                                    elseif pScaleWarn then
-                                        EllesmereUI:ShowConfirmPopup({
-                                            title        = "Preset Applied",
-                                            message      = "\"" .. p.name .. "\" has been applied.",
-                                            confirmText  = "OK",
-                                            cancelText   = "Close",
-                                            scaleWarning = pScaleWarn,
-                                        })
-                                    else
-                                        EllesmereUI:RefreshPage()
-                                    end
-                                else EllesmereUI:ShowInfoPopup({ title = "Preset Error", content = err or "Unknown error" }) end
+                                DoPresetImportFlow(p.exportString, p.name)
                             end,
                         }
                     end

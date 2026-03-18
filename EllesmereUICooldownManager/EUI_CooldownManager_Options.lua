@@ -5446,55 +5446,9 @@ initFrame:SetScript("OnEvent", function(self)
                 end
 
                 if i <= count then
-                    -- Untracked overlay for preview: show red tint + "Click to Track"
-                    local sid = slot._previewSpellID
-                    local isUntracked = sid and sid > 0 and not ns.IsSpellInBlizzCDM(sid)
-                    if isUntracked then
-                        if not slot._untrackedOverlay then
-                            local ov = CreateFrame("Button", nil, slot)
-                            ov:SetAllPoints(slot._icon)
-                            ov:SetFrameLevel(slot:GetFrameLevel() + 4)
-                            local ovTex = ov:CreateTexture(nil, "OVERLAY", nil, 6)
-                            ovTex:SetAllPoints()
-                            ovTex:SetColorTexture(0.6, 0.075, 0.075, 0.8)
-                            local label = ov:CreateFontString(nil, "OVERLAY")
-                            local outFlag = EllesmereUI.GetFontOutlineFlag and EllesmereUI.GetFontOutlineFlag() or "OUTLINE"
-                            label:SetFont(FONT_PATH, 10, outFlag)
-                            if EllesmereUI.GetFontUseShadow and EllesmereUI.GetFontUseShadow() then
-                                label:SetShadowOffset(1, -1)
-                            else
-                                label:SetShadowOffset(0, 0)
-                            end
-                            label:SetPoint("CENTER")
-                            label:SetText("Click to\nTrack")
-                            label:SetTextColor(1, 1, 1, 0.9)
-                            label:SetJustifyH("CENTER")
-                            ov._label = label
-                            ov:SetScript("OnClick", function()
-                                if CooldownViewerSettings and CooldownViewerSettings.Show then
-                                    CooldownViewerSettings:Show()
-                                end
-                            end)
-                            ov:SetScript("OnEnter", function(self)
-                                local ovSid = self._displaySpellID
-                                local name = ovSid and C_Spell.GetSpellName and C_Spell.GetSpellName(ovSid)
-                                local coloredName = "|cff0cd29d" .. (name or "this spell") .. "|r"
-                                local msg = "Click to enable tracking by adding " .. coloredName .. " to your Blizzard CDM"
-                                local swt = EllesmereUI and EllesmereUI.ShowWidgetTooltip
-                                if not swt then swt = EllesmereUI and rawget(EllesmereUI, "ShowWidgetTooltip") end
-                                if swt then swt(self, msg) end
-                            end)
-                            ov:SetScript("OnLeave", function()
-                                local hwt = EllesmereUI and EllesmereUI.HideWidgetTooltip
-                                if not hwt then hwt = EllesmereUI and rawget(EllesmereUI, "HideWidgetTooltip") end
-                                if hwt then hwt() end
-                            end)
-                            slot._untrackedOverlay = ov
-                        end
-                        slot._untrackedOverlay._displaySpellID = sid
-                        slot._untrackedOverlay:EnableMouse(true)
-                        slot._untrackedOverlay:Show()
-                    elseif slot._untrackedOverlay then
+                    -- DISABLED: click-to-track feature temporarily disabled
+                    -- Untracked overlay for preview
+                    if slot._untrackedOverlay then
                         slot._untrackedOverlay:Hide()
                     end
                     slot:Show()
@@ -6278,6 +6232,47 @@ initFrame:SetScript("OnEvent", function(self)
                     kbSwatch:SetAlpha(on and 1 or 0.3)
                     if on then swatchBlock:Hide() else swatchBlock:Show() end
                 end)
+            end
+        end
+
+        -- Pandemic Glow (buff bars only)
+        if barData.barType == "buffs" or barData.key == "buffs" then
+            local panRow
+            panRow, h = W:DualRow(parent, y,
+                { type="toggle", text="Pandemic Glow",
+                  getValue=function() return BD().pandemicGlow ~= false end,
+                  setValue=function(v) BD().pandemicGlow = v; Refresh(); EllesmereUI:RefreshPage() end,
+                  tooltip="Show a glow on buff icons when the remaining duration is in the pandemic window (refreshable)" },
+                { type="label", text="" });  y = y - h
+            do
+                local rgn = panRow._leftRegion
+                local ctrl = rgn and rgn._control
+                if ctrl and EllesmereUI.BuildColorSwatch then
+                    local panSwatch, updatePanSwatch = EllesmereUI.BuildColorSwatch(
+                        rgn, panRow:GetFrameLevel() + 3,
+                        function() return BD().pandemicR or 1, BD().pandemicG or 1, BD().pandemicB or 0 end,
+                        function(r, g, b)
+                            BD().pandemicR = r; BD().pandemicG = g; BD().pandemicB = b
+                            Refresh(); EllesmereUI:RefreshPage()
+                        end,
+                        false, 20)
+                    PP.Point(panSwatch, "RIGHT", ctrl, "LEFT", -8, 0)
+                    -- Blocking overlay when Pandemic Glow is off
+                    local panBlock = CreateFrame("Frame", nil, panSwatch)
+                    panBlock:SetAllPoints()
+                    panBlock:SetFrameLevel(panSwatch:GetFrameLevel() + 10)
+                    panBlock:EnableMouse(true)
+                    panBlock:SetScript("OnEnter", function()
+                        EllesmereUI.ShowWidgetTooltip(panSwatch, EllesmereUI.DisabledTooltip("Pandemic Glow"))
+                    end)
+                    panBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+                    EllesmereUI.RegisterWidgetRefresh(function()
+                        if updatePanSwatch then updatePanSwatch() end
+                        local on = BD().pandemicGlow ~= false
+                        panSwatch:SetAlpha(on and 1 or 0.3)
+                        if on then panBlock:Hide() else panBlock:Show() end
+                    end)
+                end
             end
         end
 

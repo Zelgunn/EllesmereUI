@@ -1598,7 +1598,9 @@ local function BuildBars()
                 secondaryBar._bg:SetColorTexture(DARK_BG_R, DARK_BG_G, DARK_BG_B, DARK_BG_A)
             elseif sp.classColored ~= false then
                 -- classColored is true (default) -- use class color, or power color if no class color
-                local cc = CLASS_COLORS[cachedClass]
+                -- BM/MM hunter Focus bar: always use power color (not class color)
+                local usePower = (cachedSecondary.power == "FOCUS_BAR")
+                local cc = not usePower and CLASS_COLORS[cachedClass] or nil
                 if cc then
                     secondaryBar:GetStatusBarTexture():SetVertexColor(cc[1], cc[2], cc[3], sp.fillA or 1)
                 elseif pc then
@@ -1954,8 +1956,11 @@ local function UpdateSecondaryResource()
         r, g, b = DARK_FILL_R, DARK_FILL_G, DARK_FILL_B
     elseif sp.classColored ~= false then
         -- classColored is true (default) -- use class color
-        local cc = CLASS_COLORS[cachedClass]
-        if cc then r, g, b = cc[1], cc[2], cc[3] end
+        -- BM/MM hunter Focus bar: always use power color (not class color)
+        local usePower = (powerType == "FOCUS_BAR")
+        local cc = not usePower and CLASS_COLORS[cachedClass] or nil
+        if cc then r, g, b = cc[1], cc[2], cc[3]
+        elseif pc then r, g, b = pc[1], pc[2], pc[3] end
         a = sp.fillA or 1
     else
         -- classColored explicitly false -- custom fill
