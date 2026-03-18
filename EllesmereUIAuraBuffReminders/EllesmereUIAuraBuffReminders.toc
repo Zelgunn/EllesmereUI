@@ -1,10 +1,10 @@
-﻿## Interface: 120000, 120001
+## Interface: 120000, 120001
 ## Title: |cff0cd29fEllesmereUI|r AuraBuff Reminders
 ## Category: |cff0cd29fEllesmere|rUI
 ## Group: EllesmereUI
 ## Notes: Reminders for upkeeping Auras, Buffs and Consumables
 ## Author: Ellesmere
-## Version: 5.0
+## Version: 5.0.9
 ## Dependencies: EllesmereUI
 ## SavedVariables: EllesmereUIAuraBuffRemindersDB
 ## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga

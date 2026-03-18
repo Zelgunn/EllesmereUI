@@ -67,7 +67,7 @@ initFrame:SetScript("OnEvent", function(self)
     end
 
     local function SB()
-        return EAB.db.profile.bars[SelectedKey()]
+        return EAB.db.profile.bars[SelectedKey()] or {}
     end
 
     local function IsVisOnly()
@@ -254,7 +254,7 @@ initFrame:SetScript("OnEvent", function(self)
         local specChangeFrame = CreateFrame("Frame")
         specChangeFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
         specChangeFrame:SetScript("OnEvent", function(self, event)
-            if event == "ACTIVE_TALENT_GROUP_CHANGED" then
+            if event == "ACTIVE_TALENT_GROUP_CHANGED" and _barsHeaderBuilder then
                 -- Force a full rebuild of the preview and header on spec change
                 activePreview = nil
                 EllesmereUI:SetContentHeader(_barsHeaderBuilder)

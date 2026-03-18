@@ -122,6 +122,39 @@ local TBB_POPULAR_BUFFS = {
         },
         customDuration = 10,
     },
+    ---------------------------------------------------------------------------
+    --  Demonology Warlock Guardians
+    --  These summons have no player aura; detection relies on the Blizzard CDM
+    --  active-state / buff-viewer fallback (see EllesmereUICooldownManager.lua).
+    ---------------------------------------------------------------------------
+    {
+        key            = "call_dreadstalkers",
+        name           = "Call Dreadstalkers",
+        icon           = 1378282,
+        spellIDs       = { 104316 },
+        customDuration = 12,
+    },
+    {
+        key            = "demonic_tyrant",
+        name           = "Summon Demonic Tyrant",
+        icon           = 2065628,
+        spellIDs       = { 265187 },
+        customDuration = 15,
+    },
+    {
+        key            = "summon_vilefiend",
+        name           = "Summon Vilefiend",
+        icon           = 1616211,
+        spellIDs       = { 264119 },
+        customDuration = 15,
+    },
+    {
+        key            = "grimoire_felguard",
+        name           = "Grimoire: Felguard",
+        icon           = 136216,
+        spellIDs       = { 111898 },
+        customDuration = 17,
+    },
 }
 ns.TBB_POPULAR_BUFFS = TBB_POPULAR_BUFFS
 
@@ -156,17 +189,26 @@ function ns.HasBuffBars()
 end
 
 -- Listen for spell casts to start duration timers for popular buffs that
--- don't leave a detectable aura (e.g. potions). Sets bar._customStart so
--- the fill animation runs for customDuration seconds.
+-- don't leave a detectable aura (e.g. potions), and to reset placed-unit
+-- timers for effects like Consecration on successful recast.
 local tbbCastListener = CreateFrame("Frame")
 tbbCastListener:SetScript("OnEvent", function(_, _, _, _, spellID)
     if not spellID then return end
+    if not ECME or not ECME.db then return end
+    local now = GetTime()
+
+    -- Reset placed-unit timers on recast (e.g. Consecration, efflo)
+    if ns.PLACED_UNIT_DURATIONS and ns.PLACED_UNIT_DURATIONS[spellID] then
+        ns._placedUnitStartCache = ns._placedUnitStartCache or {}
+        ns._placedUnitStartCache[spellID] = now
+    end
+
+    -- Start custom-duration timers for popular tracked buffs that do not
+    -- leave a detectable aura duration object. (e.g Consecration, Efflo etc)
     local entry = _popularSpellIDMap[spellID]
     if not entry or not entry.customDuration then return end
-    if not ECME or not ECME.db then return end
     local tbb = ns.GetTrackedBuffBars()
     if not tbb or not tbb.bars then return end
-    local now = GetTime()
     for i, cfg in ipairs(tbb.bars) do
         if cfg.popularKey == entry.key then
             local bar = tbbFrames[i]
@@ -1524,7 +1566,8 @@ function ns.UpdateTrackedBuffBarTimers()
                 -- reflected each tick instead of staying on the static config icon.
                 if blzChild and bar._icon and bar._icon._tex and blzChild.Icon and blzChild.Icon.GetTexture then
                     local liveIconTex = blzChild.Icon:GetTexture()
-                    if liveIconTex and liveIconTex ~= bar._lastLiveIcon then
+                    local isSecret = issecretvalue and issecretvalue(liveIconTex)
+                    if not isSecret and liveIconTex and liveIconTex ~= bar._lastLiveIcon then
                         bar._icon._tex:SetTexture(liveIconTex)
                         bar._lastLiveIcon = liveIconTex
                     end
@@ -1862,5 +1905,6 @@ function ns.RegisterTBBUnlockElements()
         EllesmereUI:RegisterUnlockElements(elements)
     end
 end
+_G._ECME_RegisterTBBUnlock = ns.RegisterTBBUnlockElements
 
 

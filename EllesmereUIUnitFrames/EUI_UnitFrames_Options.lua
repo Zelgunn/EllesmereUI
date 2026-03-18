@@ -90,6 +90,17 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     local selectedUnit = "player"
 
+    -- Allow external code to pre-select a unit before page rebuild.
+    -- Two mechanisms: direct setter + pending override consumed at page build time.
+    EllesmereUI._setUnitFrameUnit = function(unit) selectedUnit = unit end
+    EllesmereUI._consumePendingUnitSelect = function()
+        local pending = EllesmereUI._pendingUnitSelect
+        if pending then
+            selectedUnit = pending
+            EllesmereUI._pendingUnitSelect = nil
+        end
+    end
+
     local unitLabels = {
         ["player"]       = "Player",
         ["target"]       = "Target",
@@ -6342,6 +6353,9 @@ initFrame:SetScript("OnEvent", function(self)
     local displayHeaderFixedH = 0
 
     local function BuildFrameDisplayPage(pageName, parent, yOffset)
+        -- Consume any pending unit selection from Element Options navigation
+        if EllesmereUI._consumePendingUnitSelect then EllesmereUI._consumePendingUnitSelect() end
+
         local W = EllesmereUI.Widgets
         local y = yOffset
         local _, h

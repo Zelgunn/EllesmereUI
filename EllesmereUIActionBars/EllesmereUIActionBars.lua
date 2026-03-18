@@ -2030,6 +2030,9 @@ local function LayoutBar(key)
                 btn.AutoCastOverlay:SetAllPoints(btn)
             end
 
+            -- Blizzard creates SpellActivationAlert proportional to the
+            -- button's current size, so no manual scaling is needed.
+
             if not showEmpty and not _gridState.shown and not ButtonHasAction(btn, info.blizzBtnPrefix) then
                 btn:SetAlpha(0)
             else
@@ -3054,48 +3057,8 @@ end
 
 -- Refresh range state for all bars (called from ApplyAll and on setting change)
 function EAB:ApplyRangeColoring()
-    for _, info in ipairs(BAR_CONFIG) do
-        local key = info.key
-        local s = self.db.profile.bars[key]
-        if s and s.outOfRangeColoring then
-            EnableRangeCheckForBar(key)
-        else
-            DisableRangeCheckForBar(key)
-        end
-    end
-
-    -- Hook Blizzard's usability update so our range tint is re-applied
-    -- after Blizzard resets the icon vertex color.
-    for _, info in ipairs(BAR_CONFIG) do
-        local btns = barButtons[info.key]
-        if btns then
-            for _, btn in ipairs(btns) do
-                if not btn._eabRangeHooked and btn.UpdateUsable then
-                    btn._eabRangeHooked = true
-                    hooksecurefunc(btn, "UpdateUsable", function(self)
-                        if not self._eabRangeTinted then return end
-                        local slot = GetButtonActionSlot(self)
-                        if slot and _range.outOfRange[slot] then
-                            local s
-                            for _, inf in ipairs(BAR_CONFIG) do
-                                local bs = barButtons[inf.key]
-                                if bs then
-                                    for _, b in ipairs(bs) do
-                                        if b == self then s = EAB.db.profile.bars[inf.key]; break end
-                                    end
-                                end
-                                if s then break end
-                            end
-                            if s and s.outOfRangeColoring then
-                                ApplyRangeTint(self, true, s)
-                            end
-                        end
-                    end)
-                end
-            end
-        end
-    end
-    -- Set up the event listener if not already created
+    -- Set up the event listener BEFORE enabling range checks so any
+    -- immediate ACTION_RANGE_CHECK_UPDATE events are caught.
     if not _range.eventFrame then
         -- Snapshot the current MainBar page offset so GetButtonActionSlot
         -- returns correct slots before the first ACTIONBAR_PAGE_CHANGED fires.
@@ -3155,11 +3118,6 @@ function EAB:ApplyRangeColoring()
                     end)
                 end
             elseif event == "ACTIONBAR_PAGE_CHANGED" then
-                -- Update cached MainBar offset from the frame attribute.
-                -- Outside combat this is safe; during combat the secure
-                -- snippet already set the attribute so it reflects the
-                -- current page. We read it here (out of the hot path)
-                -- rather than on every GetButtonActionSlot call.
                 local mainFrame = barFrames["MainBar"]
                 if mainFrame then
                     _range.mainBarOffset = mainFrame:GetAttribute("actionOffset") or 0
@@ -3199,6 +3157,48 @@ function EAB:ApplyRangeColoring()
                 end
             end
         end)
+    end
+
+    for _, info in ipairs(BAR_CONFIG) do
+        local key = info.key
+        local s = self.db.profile.bars[key]
+        if s and s.outOfRangeColoring then
+            EnableRangeCheckForBar(key)
+        else
+            DisableRangeCheckForBar(key)
+        end
+    end
+
+    -- Hook Blizzard's usability update so our range tint is re-applied
+    -- after Blizzard resets the icon vertex color.
+    for _, info in ipairs(BAR_CONFIG) do
+        local btns = barButtons[info.key]
+        if btns then
+            for _, btn in ipairs(btns) do
+                if not btn._eabRangeHooked and btn.UpdateUsable then
+                    btn._eabRangeHooked = true
+                    hooksecurefunc(btn, "UpdateUsable", function(self)
+                        if not self._eabRangeTinted then return end
+                        local slot = GetButtonActionSlot(self)
+                        if slot and _range.outOfRange[slot] then
+                            local s
+                            for _, inf in ipairs(BAR_CONFIG) do
+                                local bs = barButtons[inf.key]
+                                if bs then
+                                    for _, b in ipairs(bs) do
+                                        if b == self then s = EAB.db.profile.bars[inf.key]; break end
+                                    end
+                                end
+                                if s then break end
+                            end
+                            if s and s.outOfRangeColoring then
+                                ApplyRangeTint(self, true, s)
+                            end
+                        end
+                    end)
+                end
+            end
+        end
     end
 end
 
@@ -3855,6 +3855,43 @@ local function UpdateFlipbook(btn)
     local p = EAB.db and EAB.db.profile
     if not p then return end
 
+    -- Resolve button size from profile settings rather than btn:GetWidth().
+    -- On initial login the button frame may not have been sized yet by
+    -- LayoutBar, so GetWidth returns the default 45.  Profile values are
+    -- always correct.  Replicates LayoutBar's shape expansion / cropped
+    -- logic so the ratio matches the actual rendered size.
+    local _ufBtnW, _ufBtnH
+    do
+        local bk = btn._eabBarKey
+        if not bk then
+            local bi = buttonToBar[btn]
+            if bi then bk = bi.barKey end
+        end
+        local resolved
+        if bk and p.bars and p.bars[bk] then
+            local s = p.bars[bk]
+            local base = barBaseSize[bk]
+            local bW = base and base.w or 45
+            local bH = base and base.h or 45
+            local w = (s.buttonWidth and s.buttonWidth > 0) and s.buttonWidth or bW
+            local h = (s.buttonHeight and s.buttonHeight > 0) and s.buttonHeight or bH
+            local shape = s.buttonShape or "none"
+            if shape ~= "none" and shape ~= "cropped" then
+                w = w + SHAPE_BTN_EXPAND
+                h = h + SHAPE_BTN_EXPAND
+            end
+            if shape == "cropped" then
+                h = h * 0.80
+            end
+            _ufBtnW, _ufBtnH = w, h
+            resolved = true
+        end
+        if not resolved then
+            _ufBtnW = btn:GetWidth() or 45
+            _ufBtnH = btn:GetHeight() or 45
+        end
+    end
+
     if p.procGlowEnabled == false then
         -- Custom shapes always use Shape Glow even if custom proc glow is "off"
         if not (btn._eabShapeMask and btn._eabShapeApplied) then
@@ -3862,6 +3899,8 @@ local function UpdateFlipbook(btn)
                 StopAllProceduralGlows(btn._eabGlowWrapper)
                 btn._eabGlowWrapper:Hide()
             end
+            -- Blizzard sizes the overlay proportional to the button, so
+            -- no manual scaling is needed for the default glow.
             if region.ProcLoopFlipbook then
                 region.ProcLoopFlipbook:Show()
                 region.ProcLoopFlipbook:SetDesaturated(false)
@@ -3874,7 +3913,6 @@ local function UpdateFlipbook(btn)
                 region.ProcStartFlipbook:SetVertexColor(1, 1, 1)
                 region.ProcStartFlipbook:SetScale(1)
             end
-            region:SetScale(1)
             if region.ProcLoop then
                 local loopFlip = GetFlipBookAnim(region.ProcLoop)
                 if loopFlip then loopFlip:SetDuration(1.0) end
@@ -3978,13 +4016,12 @@ local function UpdateFlipbook(btn)
 
         StopAllProceduralGlows(wrapper)
         wrapper:Show()
-        region:SetScale(1)
         if region.ProcLoopFlipbook then region.ProcLoopFlipbook:Hide() end
         if region.ProcStartFlipbook then region.ProcStartFlipbook:Hide() end
         if btn._eabAntsGroup then btn._eabAntsGroup:Stop() end
         if btn._eabAntsOverlay then btn._eabAntsOverlay:Hide() end
 
-        local sz = min(btn:GetWidth(), btn:GetHeight()) or 36
+        local sz = min(_ufBtnW, _ufBtnH)
         local userScale = p.procGlowScale or 1.0
 
         if loopEntry.procedural then

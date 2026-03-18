@@ -158,41 +158,41 @@ local dbRegistry = {}  -- all db objects, for logout cleanup
 -- Expose so the profile system can update db.profile in-place after injection
 EUILite._dbRegistry = dbRegistry
 
---- Create or open a database. Replaces AceDB:New(svName, defaults, true).
--- Returns a db object with .profile pointing to the active profile table.
--- @param svName  Global SavedVariables name (string)
+--- Create or open a database backed by the central EllesmereUIDB store.
+-- Returns a db object with .profile pointing to the active profile table
+-- inside EllesmereUIDB.profiles[name].addons[folder].
+-- @param svName  Global SavedVariables name (string), e.g. "EllesmereUIActionBarsDB"
 -- @param defaults  Table with a .profile sub-table of default values
--- @param defaultToCharKey  When true, new characters default to their own profile
+-- @param defaultToCharKey  (ignored, kept for call-site compat)
 function EUILite.NewDB(svName, defaults, defaultToCharKey)
-    -- Get or create the global SV table
-    local sv = _G[svName]
-    if type(sv) ~= "table" then
-        sv = {}
-        _G[svName] = sv
+    -- Derive the addon folder name from the SV name (strip trailing "DB")
+    local folder = svName:match("^(.+)DB$") or svName
+
+    -- Resolve the active profile name from the central DB
+    local profileName = "Default"
+    if EllesmereUIDB and EllesmereUIDB.activeProfile then
+        profileName = EllesmereUIDB.activeProfile
     end
 
-    -- Determine profile key.
-    -- The profile system's ADDON_LOADED handler pre-populates profileKeys
-    -- with the correct profile name before NewDB runs. If no entry exists
-    -- (e.g. fresh install), fall back to "Default" -- never create a
-    -- per-character profile name.
-    local charKey = UnitName("player") .. " - " .. GetRealmName()
-    if type(sv.profileKeys) ~= "table" then sv.profileKeys = {} end
-    local profileName = sv.profileKeys[charKey] or "Default"
-    sv.profileKeys[charKey] = profileName
-
-    -- Get or create the profile table
-    if type(sv.profiles) ~= "table" then sv.profiles = {} end
-    if type(sv.profiles[profileName]) ~= "table" then sv.profiles[profileName] = {} end
-    local profile = sv.profiles[profileName]
+    -- Ensure the profile and addons tables exist in the central DB
+    if not EllesmereUIDB then EllesmereUIDB = {} end
+    if not EllesmereUIDB.profiles then EllesmereUIDB.profiles = {} end
+    if type(EllesmereUIDB.profiles[profileName]) ~= "table" then
+        EllesmereUIDB.profiles[profileName] = {}
+    end
+    local profileData = EllesmereUIDB.profiles[profileName]
+    if not profileData.addons then profileData.addons = {} end
+    if type(profileData.addons[folder]) ~= "table" then
+        profileData.addons[folder] = {}
+    end
+    local profile = profileData.addons[folder]
 
     -- Merge defaults into profile (fills missing keys only)
     local profileDefaults = defaults and defaults.profile
     if profileDefaults then
         DeepMergeDefaults(profile, profileDefaults)
         -- Validate: if any top-level default sub-table is missing or wrong
-        -- type after merge, the profile is corrupt (e.g. AceDB migration
-        -- leftovers).  Wipe and re-merge from scratch.
+        -- type after merge, the profile is corrupt. Wipe and re-merge.
         local corrupt = false
         for k, v in pairs(profileDefaults) do
             if type(v) == "table" and type(profile[k]) ~= "table" then
@@ -206,14 +206,11 @@ function EUILite.NewDB(svName, defaults, defaultToCharKey)
         end
     end
 
-    -- Store defaults on the SV table so the profile system can re-apply
-    -- them after loading an old snapshot that may be missing newer keys.
-    sv._defaults = defaults
-
     -- Build the db object
     local db = {
-        sv = sv,
+        sv = EllesmereUIDB,
         svName = svName,
+        folder = folder,
         profile = profile,
         _profileName = profileName,
         _defaults = defaults,
@@ -250,23 +247,15 @@ end
 local logoutFrame = CreateFrame("Frame")
 logoutFrame:RegisterEvent("PLAYER_LOGOUT")
 logoutFrame:SetScript("OnEvent", function()
-    -- Fire pre-logout callbacks (profile save, etc.) while data is still intact
+    -- Fire pre-logout callbacks while data is still intact
     for _, fn in ipairs(preLogoutCallbacks) do
         safecall(fn)
     end
 
+    -- Strip defaults from all db.profile tables (which live in EllesmereUIDB)
     for _, db in pairs(dbRegistry) do
         if db._profileDefaults and db.profile then
             StripDefaults(db.profile, db._profileDefaults)
-        end
-        -- Clean up empty profile tables
-        local sv = db.sv
-        if sv and sv.profiles then
-            for key, tbl in pairs(sv.profiles) do
-                if type(tbl) == "table" and not next(tbl) then
-                    sv.profiles[key] = nil
-                end
-            end
         end
     end
 end)

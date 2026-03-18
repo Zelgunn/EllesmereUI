@@ -2922,8 +2922,6 @@ initFrame:SetScript("OnEvent", function(self)
                     if assigned ~= current then
                         local _, profiles = EllesmereUI.GetProfileList()
                         if profiles and profiles[assigned] then
-                            -- Save current state before switching
-                            EllesmereUI.AutoSaveActiveProfile()
                             local fontWillChange = EllesmereUI.ProfileChangesFont(profiles[assigned])
                             EllesmereUI.SwitchProfile(assigned)
                             EllesmereUI.RefreshAllAddons()
@@ -3604,7 +3602,7 @@ initFrame:SetScript("OnEvent", function(self)
 
                             local kbBtn = CreateFrame("Button", nil, itm)
                             kbBtn:SetSize(X_SZ, X_SZ)
-                            kbBtn:SetPoint("RIGHT", editBtn, "LEFT", -4, 0)
+                            kbBtn:SetPoint("RIGHT", xBtn, "LEFT", -4, 0)
                             kbBtn:SetFrameLevel(itm:GetFrameLevel() + 2)
                             local kbIcon = kbBtn:CreateTexture(nil, "OVERLAY")
                             kbIcon:SetAllPoints()
@@ -3614,11 +3612,11 @@ initFrame:SetScript("OnEvent", function(self)
                             itm._kbBtn = kbBtn
 
                             local function IsOverInlineBtn()
-                                return xBtn:IsMouseOver() or editBtn:IsMouseOver() or kbBtn:IsMouseOver()
+                                return xBtn:IsMouseOver() or kbBtn:IsMouseOver()
                             end
 
                             local function SetAllInlineAlpha(a)
-                                xBtn:SetAlpha(a); editBtn:SetAlpha(a); kbBtn:SetAlpha(a)
+                                xBtn:SetAlpha(a); kbBtn:SetAlpha(a)
                             end
 
                             itm:SetScript("OnEnter", function()
@@ -3654,14 +3652,6 @@ initFrame:SetScript("OnEvent", function(self)
                                 EllesmereUI.ShowWidgetTooltip(self, "Delete")
                             end)
                             xBtn:SetScript("OnLeave", function(self)
-                                InlineBtnLeave(self)
-                                EllesmereUI.HideWidgetTooltip()
-                            end)
-                            editBtn:SetScript("OnEnter", function(self)
-                                InlineBtnEnter(self)
-                                EllesmereUI.ShowWidgetTooltip(self, "Rename")
-                            end)
-                            editBtn:SetScript("OnLeave", function(self)
                                 InlineBtnLeave(self)
                                 EllesmereUI.HideWidgetTooltip()
                             end)
@@ -3701,20 +3691,19 @@ initFrame:SetScript("OnEvent", function(self)
                         else
                             local iLbl, iHl, iXBtn, iEditBtn, iKbBtn = itm._lbl, itm._hl, itm._xBtn, itm._editBtn, itm._kbBtn
                             iLbl:SetTextColor(1, 1, 1, EllesmereUI.TEXT_DIM_A)
+                            iEditBtn:Hide()  -- rename disabled; name is set at creation
                             if capName == "Default" then
                                 iXBtn:Hide()
-                                iEditBtn:Hide()
                                 iKbBtn:Hide()
                             else
                                 iXBtn:Show()
-                                iEditBtn:Show()
                                 iKbBtn:Show()
                             end
                             local function IsOverInline()
-                                return iXBtn:IsMouseOver() or iEditBtn:IsMouseOver() or iKbBtn:IsMouseOver()
+                                return iXBtn:IsMouseOver() or iKbBtn:IsMouseOver()
                             end
                             local function SetAllAlpha(a)
-                                iXBtn:SetAlpha(a); iEditBtn:SetAlpha(a); iKbBtn:SetAlpha(a)
+                                iXBtn:SetAlpha(a); iKbBtn:SetAlpha(a)
                             end
                             itm:SetScript("OnEnter", function()
                                 iLbl:SetTextColor(1, 1, 1, 1)
@@ -3730,13 +3719,6 @@ initFrame:SetScript("OnEvent", function(self)
                             itm:SetScript("OnClick", function()
                                 if capName == activeName then return end  -- already active, do nothing
                                 menu:Hide()
-                                -- Force-save current profile before switching
-                                -- (same direct snapshot the spec-switch uses,
-                                -- bypasses _profileSaveLocked guard)
-                                local wasLocked = EllesmereUI._profileSaveLocked
-                                EllesmereUI._profileSaveLocked = false
-                                EllesmereUI.AutoSaveActiveProfile()
-                                EllesmereUI._profileSaveLocked = wasLocked
                                 local _, profiles = EllesmereUI.GetProfileList()
                                 local fontWillChange = EllesmereUI.ProfileChangesFont(profiles and profiles[capName])
                                 EllesmereUI.SwitchProfile(capName)
@@ -3769,24 +3751,6 @@ initFrame:SetScript("OnEvent", function(self)
                                             EllesmereUI.SwitchProfile("Default")
                                             EllesmereUI.RefreshAllAddons()
                                         end
-                                        ddLabel:SetText(EllesmereUI.GetActiveProfileName())
-                                        EllesmereUI:InvalidatePageCache()
-                                        EllesmereUI:RefreshPage(true)
-                                    end,
-                                })
-                            end)
-                            iEditBtn:SetScript("OnClick", function()
-                                if capName == "Default" then return end
-                                menu:Hide()
-                                EllesmereUI:ShowInputPopup({
-                                    title       = "Rename Profile",
-                                    message     = "Enter a new name for \"" .. capName .. "\":",
-                                    placeholder = capName,
-                                    confirmText = "Rename",
-                                    cancelText  = "Cancel",
-                                    onConfirm   = function(newName)
-                                        if not newName or newName == "" or newName == capName then return end
-                                        EllesmereUI.RenameProfile(capName, newName)
                                         ddLabel:SetText(EllesmereUI.GetActiveProfileName())
                                         EllesmereUI:InvalidatePageCache()
                                         EllesmereUI:RefreshPage(true)
@@ -3902,20 +3866,34 @@ initFrame:SetScript("OnEvent", function(self)
             PP.Point(createNewBtn, "LEFT", saveAsBtn, "RIGHT", GAP, 0)
             createNewBtn:SetFrameLevel(rowFrame:GetFrameLevel() + 2)
             EllesmereUI.MakeStyledButton(createNewBtn, "Create New", 11, PROF_BTN_COLOURS, function()
-                local _, profiles = EllesmereUI.GetProfileList()
-                local n = 2
-                while profiles["Default " .. n] do n = n + 1 end
-                local newName = "Default " .. n
-                EllesmereUI.CreateDefaultProfile(newName)
-                EllesmereUI.SwitchProfile(newName)
-                EllesmereUI.RefreshAllAddons()
-                ddLabel:SetText(newName)
-                EllesmereUI:RefreshPage()
-                -- Flash the (rebuilt) dropdown after the page refresh
-                C_Timer.After(0, function()
-                    local btn = EllesmereUI._profileDDBtn
-                    if btn then EllesmereUI.PlaySyncFlash(btn) end
-                end)
+                EllesmereUI:ShowInputPopup({
+                    title       = "New Profile",
+                    message     = "Enter a name for the new profile:",
+                    placeholder = "My Profile",
+                    confirmText = "Create",
+                    cancelText  = "Cancel",
+                    onConfirm   = function(name)
+                        if not name or name == "" then return end
+                        local _, profiles = EllesmereUI.GetProfileList()
+                        if profiles[name] then
+                            EllesmereUI:ShowConfirmPopup({
+                                title   = "Name Taken",
+                                message = "A profile named \"" .. name .. "\" already exists.",
+                                confirmText = "OK",
+                            })
+                            return
+                        end
+                        EllesmereUI.CreateDefaultProfile(name)
+                        EllesmereUI.SwitchProfile(name)
+                        EllesmereUI.RefreshAllAddons()
+                        ddLabel:SetText(name)
+                        EllesmereUI:RefreshPage()
+                        C_Timer.After(0, function()
+                            local btn = EllesmereUI._profileDDBtn
+                            if btn then EllesmereUI.PlaySyncFlash(btn) end
+                        end)
+                    end,
+                })
             end)
 
             y = y - ROW_H
