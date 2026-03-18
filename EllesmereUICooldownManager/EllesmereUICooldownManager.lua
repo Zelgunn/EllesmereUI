@@ -136,6 +136,7 @@ ECache.InitCastCountSpellsCache()
 
 -- Reusable spell list buffers -- avoids table allocation every tick in update functions
 local _combinedBuf = {}   -- reused by UpdateTrackedBarIcons for tracked+extra spell list
+local _combinedSeen = {}  -- reused by UpdateTrackedBarIcons for extra-spell dedup
 local _spellsBuf   = {}   -- reused by UpdateCustomBarIcons for racial-substituted spell list
 
 -- Duration-based active timers for custom buff bars.
@@ -2475,25 +2476,28 @@ LayoutCDMBar = function(barKey)
     end
     frame:SetSize(SnapForScale(totalW, 1), SnapForScale(totalH, 1))
 
-    -- Immediately reposition this bar if it's anchored to something,
-    -- before the frame renders, to avoid a one-frame blink.
-    if EllesmereUI.ReapplyOwnAnchor then
-        EllesmereUI.ReapplyOwnAnchor("CDM_" .. barKey)
-    end
+    -- During unlock mode, skip anchor/propagation -- unlock mode owns positioning.
+    if not EllesmereUI._unlockActive then
+        -- Immediately reposition this bar if it's anchored to something,
+        -- before the frame renders, to avoid a one-frame blink.
+        if EllesmereUI.ReapplyOwnAnchor then
+            EllesmereUI.ReapplyOwnAnchor("CDM_" .. barKey)
+        end
 
-    if not frame._propagatingMatch then
-        frame._propagatingMatch = true
-        local unlockKey = "CDM_" .. barKey
-        if EllesmereUI.PropagateWidthMatch then
-            EllesmereUI.PropagateWidthMatch(unlockKey)
+        if not frame._propagatingMatch then
+            frame._propagatingMatch = true
+            local unlockKey = "CDM_" .. barKey
+            if EllesmereUI.PropagateWidthMatch then
+                EllesmereUI.PropagateWidthMatch(unlockKey)
+            end
+            if EllesmereUI.PropagateHeightMatch then
+                EllesmereUI.PropagateHeightMatch(unlockKey)
+            end
+            if EllesmereUI.PropagateAnchorChain then
+                EllesmereUI.PropagateAnchorChain(unlockKey)
+            end
+            frame._propagatingMatch = false
         end
-        if EllesmereUI.PropagateHeightMatch then
-            EllesmereUI.PropagateHeightMatch(unlockKey)
-        end
-        if EllesmereUI.PropagateAnchorChain then
-            EllesmereUI.PropagateAnchorChain(unlockKey)
-        end
-        frame._propagatingMatch = false
     end
 
     -- Bar opacity (affects entire bar, but respect visibility overrides)
@@ -3785,7 +3789,20 @@ local function UpdateTrackedBarIcons(barKey)
     if not barData or not barData.enabled then return end
 
     local tracked = barData.trackedSpells
-    if not tracked or #tracked == 0 then return end
+    local hasTracked = tracked and #tracked > 0
+    local hasExtras = barData.extraSpells and #barData.extraSpells > 0
+    if not hasTracked and not hasExtras then
+        -- Hide all leftover icons and collapse the bar
+        local icons2 = cdmBarIcons[barKey]
+        if icons2 then
+            for _, ic in ipairs(icons2) do ic:Hide() end
+        end
+        frame:SetSize(1, 1)
+        frame._prevVisibleCount = 0
+        if frame._barBg then frame._barBg:Hide() end
+        return
+    end
+    if not tracked then tracked = {} end
 
     local icons = cdmBarIcons[barKey]
     local desatOnCD = barData.desaturateOnCD
@@ -3817,12 +3834,19 @@ local function UpdateTrackedBarIcons(barKey)
     local companionChild = ECache.GetCachedCompanionChild(hasCompanions)
     local extras = barData.extraSpells
     if extras then
+        -- Dedup: skip extras already present in trackedSpells (avoids duplicate icons
+        -- when the same spellID appears in both lists after spec switch or reconcile).
+        wipe(_combinedSeen)
+        for ci = 1, combinedN do _combinedSeen[combined[ci]] = true end
         for _, sid in ipairs(extras) do
-            combinedN = combinedN + 1
+            local resolved = sid
             if ALL_RACIAL_SPELLS[sid] and not _myRacialsSet[sid] and _myRacials[1] then
-                combined[combinedN] = _myRacials[1]
-            else
-                combined[combinedN] = sid
+                resolved = _myRacials[1]
+            end
+            if not _combinedSeen[resolved] then
+                combinedN = combinedN + 1
+                combined[combinedN] = resolved
+                _combinedSeen[resolved] = true
             end
         end
     end
@@ -4009,8 +4033,12 @@ local function UpdateTrackedBarIcons(barKey)
     -- active, or when hideBuffsWhenInactive can swap which icons are visible
     -- without changing the total count (e.g. Eclipse Solar hides while Lunar
     -- shows — same count but different icons need repositioning).
+    -- Skip the hideBuffsWhenInactive forced layout during unlock mode since
+    -- no icons are hidden then (avoids per-tick LayoutCDMBar that causes jitter).
+    local hbiForced = isBuffBarForOverride and barData.hideBuffsWhenInactive
+        and not EllesmereUI._unlockActive
     local needsLayout = visibleCount ~= prevCount or hasCompanions or frame._hadCompanions
-        or (isBuffBarForOverride and barData.hideBuffsWhenInactive)
+        or hbiForced
     frame._hadCompanions = hasCompanions
     if needsLayout then
         frame._prevVisibleCount = visibleCount

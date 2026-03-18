@@ -633,6 +633,12 @@ ApplyAnchorPosition = function(childKey, targetKey, side, noMark, noMove)
     if not childBar or not targetBar then return end
     if InCombatLockdown() then return end
 
+    -- If the target frame has no valid screen bounds (hidden / not yet laid out),
+    -- bail to avoid computing garbage coordinates that cause oscillation.
+    if not targetBar:GetLeft() then return end
+    -- Same for the child when we need to read its actual position
+    if noMove and not childBar:GetLeft() then return end
+
     local uiS = UIParent:GetEffectiveScale()
     local tS = targetBar:GetEffectiveScale()
     local cS = childBar:GetEffectiveScale()
@@ -845,6 +851,10 @@ end
 -- reposition it immediately (no deferred frame). Eliminates the one-frame
 -- blink when a bar resizes and needs to snap back to its anchor edge.
 EllesmereUI.ReapplyOwnAnchor = function(key)
+    -- Skip if this element's mover is currently being dragged -- the drag
+    -- OnUpdate owns positioning and reapplying would snap the bar back.
+    local m = movers[key]
+    if m and m._dragging then return end
     local anchorDB = GetAnchorDB()
     if not anchorDB then return end
     local info = anchorDB[key]
