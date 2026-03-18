@@ -1069,7 +1069,7 @@ local function ApplyBarAnchor(frame, anchorKey, anchorPos, offsetX, offsetY, gro
     if frame._erbMouseTrack then
         frame:SetScript("OnUpdate", nil)
         frame._erbMouseTrack = nil
-        frame:SetFrameStrata("LOW")
+        frame:SetFrameStrata("MEDIUM")
         frame:SetFrameLevel(5)
         -- Restore mouse on frame and all children
         SetFrameClickThrough(frame, false)
@@ -1329,6 +1329,8 @@ local function BuildBars()
         if not healthBar then
             healthBar = CreateStatusBar(mainFrame, "ERB_HealthBar", hp.width, hp.height,
                 hp.borderSize, hp.borderR, hp.borderG, hp.borderB, hp.borderA)
+            healthBar:SetFrameStrata("MEDIUM")
+            healthBar:SetFrameLevel(10)
         end
         local healthAnchorKey = NormalizeAnchorKey(hp.anchorTo)
         if healthAnchorKey ~= "none" then
@@ -1417,6 +1419,8 @@ local function BuildBars()
         if not primaryBar then
             primaryBar = CreateStatusBar(mainFrame, "ERB_PrimaryBar", pp.width, ppHeight,
                 pp.borderSize, pp.borderR, pp.borderG, pp.borderB, pp.borderA)
+            primaryBar:SetFrameStrata("MEDIUM")
+            primaryBar:SetFrameLevel(10)
         end
         local primaryAnchorKey = NormalizeAnchorKey(pp.anchorTo)
         if primaryAnchorKey ~= "none" then
@@ -1495,6 +1499,8 @@ local function BuildBars()
         if not secondaryFrame then
             secondaryFrame = CreateFrame("Frame", "ERB_SecondaryFrame", mainFrame)
             secondaryFrame:SetClipsChildren(true)
+            secondaryFrame:SetFrameStrata("MEDIUM")
+            secondaryFrame:SetFrameLevel(10)
         end
 
         local maxPts = cachedSecondary.max or 5

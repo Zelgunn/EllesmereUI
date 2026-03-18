@@ -328,7 +328,8 @@ ns.IsSpellInBlizzCDM = IsSpellInBlizzCDM
 ---
 -------------------------------------------------------------------------------
 local function IsBlizzardChildUntracked(spellID, resolvedID)
-    return not cache._tickBlizzAllChild[resolvedID]
+    return cache._spellToCooldownID[spellID]
+           and not cache._tickBlizzAllChild[resolvedID]
            and not cache._tickBlizzAllChild[spellID]
            and not cache._tickBlizzChild[resolvedID]
            and not cache._tickBlizzChild[spellID]

@@ -5541,7 +5541,9 @@ function InitializeFrames()
             pf._restHolder:SetAllPoints(pf.Health)
             pf._restHolder:SetFrameLevel(pf.Health:GetFrameLevel() + 5)
             pf._restIndicator:ClearAllPoints()
-            pf._restIndicator:SetPoint("TOPLEFT", pf.Health, "TOPLEFT", 3, -2)
+            local rxOff = (EllesmereUIDB and EllesmereUIDB.restedIndicatorXOffset) or 0
+            local ryOff = (EllesmereUIDB and EllesmereUIDB.restedIndicatorYOffset) or 0
+            pf._restIndicator:SetPoint("TOPLEFT", pf.Health, "TOPLEFT", 3 + rxOff, -2 + ryOff)
 
             local restEnabled = EllesmereUIDB and EllesmereUIDB.showRestedIndicator == true
             if restEnabled and IsResting() then pf._restIndicator:Show() else pf._restIndicator:Hide() end

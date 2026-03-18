@@ -6160,7 +6160,9 @@ initFrame:SetScript("OnEvent", function(self)
               getValue=function() return BD().numRows or 1 end,
               setValue=function(v)
                   BD().numRows = v
+                  if v ~= 2 then BD().topRowCount = nil end
                   ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
+                  EllesmereUI:RefreshPage()
               end },
             { type="toggle", text="Vertical Orientation",
               getValue=function() return BD().verticalOrientation end,
@@ -6169,6 +6171,36 @@ initFrame:SetScript("OnEvent", function(self)
                   BD().growDirection = v and "DOWN" or "RIGHT"
                   ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
               end });  y = y - h
+
+        -- Row 3b: Top Row Icons (only when numRows == 2)
+        if (BD().numRows or 1) == 2 then
+            _, h = W:DualRow(parent, y,
+                { type="slider", text="Top Row Icons",
+                  tooltip="How many icons to show on the top row. The rest go on the bottom row.",
+                  min=1, max=50, step=1,
+                  getValue=function()
+                      local bd = BD()
+                      if bd.topRowCount and bd.topRowCount > 0 then return bd.topRowCount end
+                      -- Auto: count visible spells and compute default
+                      local count = 0
+                      if bd.customSpells then
+                          for _, sid in ipairs(bd.customSpells) do if sid and sid ~= 0 then count = count + 1 end end
+                      elseif bd.trackedSpells then
+                          for _, sid in ipairs(bd.trackedSpells) do if sid and sid ~= 0 then count = count + 1 end end
+                          if bd.extraSpells then
+                              for _, sid in ipairs(bd.extraSpells) do if sid and sid ~= 0 then count = count + 1 end end
+                          end
+                      end
+                      if count == 0 then return 1 end
+                      return math.ceil(count / 2)
+                  end,
+                  setValue=function(v)
+                      if v == 0 then v = nil end
+                      BD().topRowCount = v
+                      ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
+                  end },
+                { type="label", text="" });  y = y - h
+        end
 
         -- Hide Buffs When Inactive / Out of Range + Show Keybind
         local kbRow

@@ -2748,6 +2748,105 @@ initFrame:SetScript("OnEvent", function(self)
                 MakeCogBtn(leftRgn, ctSizeCogShow, nil, EllesmereUI.RESIZE_ICON)
             end
 
+            -- Row 3: Cooldown Text colorpicker (left) | empty (right)
+            local cdTextRow
+            cdTextRow, h = W:DualRow(parent, y,
+                { type="colorpicker", text="Cooldown Text",
+                  getValue=function()
+                      local c = SGet("cooldownTextColor")
+                      if not c then return 1, 1, 1, 1 end
+                      return c.r, c.g, c.b, 1
+                  end,
+                  setValue=function(r, g, b)
+                      SSetColor("cooldownTextColor", r, g, b, nil, function(k) EAB:ApplyCooldownFontsForBar(k) end)
+                      SUpdatePreview()
+                  end,
+                  hasAlpha=false },
+                { type="label", text="" });  y = y - h
+
+            -- Sync icon: Cooldown Text (left region)
+            do
+                local rgn = cdTextRow._leftRegion
+                EllesmereUI.BuildSyncIcon({
+                    region  = rgn,
+                    tooltip = "Apply Cooldown Text Settings to all Bars",
+                    onClick = function()
+                        local s = SB()
+                        local c = s.cooldownTextColor
+                        local sz = s.cooldownFontSize or 12
+                        local ox = s.cooldownTextXOffset or 0
+                        local oy = s.cooldownTextYOffset or 0
+                        for _, key in ipairs(GROUP_BAR_ORDER) do
+                            if c then EAB.db.profile.bars[key].cooldownTextColor = { r=c.r, g=c.g, b=c.b } end
+                            EAB.db.profile.bars[key].cooldownFontSize = sz
+                            EAB.db.profile.bars[key].cooldownTextXOffset = ox
+                            EAB.db.profile.bars[key].cooldownTextYOffset = oy
+                            EAB:ApplyCooldownFontsForBar(key)
+                        end
+                        EllesmereUI:RefreshPage()
+                    end,
+                    isSynced = function()
+                        local s = SB()
+                        local sz = s.cooldownFontSize or 12
+                        for _, key in ipairs(GROUP_BAR_ORDER) do
+                            if (EAB.db.profile.bars[key].cooldownFontSize or 12) ~= sz then return false end
+                        end
+                        return true
+                    end,
+                    flashTargets = function() return { rgn } end,
+                    multiApply = {
+                        elementKeys   = GROUP_BAR_ORDER,
+                        elementLabels = SHORT_LABELS,
+                        getCurrentKey = function() return SelectedKey() end,
+                        onApply       = function(checkedKeys)
+                            local s = SB()
+                            local c = s.cooldownTextColor
+                            local sz = s.cooldownFontSize or 12
+                            local ox = s.cooldownTextXOffset or 0
+                            local oy = s.cooldownTextYOffset or 0
+                            for _, key in ipairs(checkedKeys) do
+                                if c then EAB.db.profile.bars[key].cooldownTextColor = { r=c.r, g=c.g, b=c.b } end
+                                EAB.db.profile.bars[key].cooldownFontSize = sz
+                                EAB.db.profile.bars[key].cooldownTextXOffset = ox
+                                EAB.db.profile.bars[key].cooldownTextYOffset = oy
+                                EAB:ApplyCooldownFontsForBar(key)
+                            end
+                            EllesmereUI:RefreshPage()
+                        end,
+                    },
+                })
+            end
+
+            -- Inline cog on Cooldown Text (left) for Size + X/Y offsets
+            do
+                local leftRgn = cdTextRow._leftRegion
+                local _, cdSizeCogShowRaw = EllesmereUI.BuildCogPopup({
+                    title = "Cooldown Text Settings",
+                    rows = {
+                        { type="slider", label="Size", min=6, max=24, step=1,
+                          get=function() return SVal("cooldownFontSize", 12) end,
+                          set=function(v)
+                              SSet("cooldownFontSize", v, function(k) EAB:ApplyCooldownFontsForBar(k) end)
+                              SUpdatePreview()
+                          end },
+                        { type="slider", label="X Offset", min=-20, max=20, step=1,
+                          get=function() return SVal("cooldownTextXOffset", 0) end,
+                          set=function(v)
+                              SSet("cooldownTextXOffset", v, function(k) EAB:ApplyCooldownFontsForBar(k) end)
+                              SUpdatePreview()
+                          end },
+                        { type="slider", label="Y Offset", min=-20, max=20, step=1,
+                          get=function() return SVal("cooldownTextYOffset", 0) end,
+                          set=function(v)
+                              SSet("cooldownTextYOffset", v, function(k) EAB:ApplyCooldownFontsForBar(k) end)
+                              SUpdatePreview()
+                          end },
+                    },
+                })
+                local cdSizeCogShow = cdSizeCogShowRaw
+                MakeCogBtn(leftRgn, cdSizeCogShow, nil, EllesmereUI.RESIZE_ICON)
+            end
+
             _, h = W:Spacer(parent, y, 20);  y = y - h
 
             -------------------------------------------------------------------

@@ -560,6 +560,114 @@ function EllesmereUI.PropagateHeightMatch(key)
     ScheduleAnchorBatch()
 end
 
+-------------------------------------------------------------------------------
+--  Centralized resize notification
+--  Any addon can call EllesmereUI.NotifyElementResized(key) after changing
+--  a frame's size. This propagates width/height matches and anchor chains
+--  so all dependent elements update automatically.
+--  Additionally, OnSizeChanged hooks on registered element frames call this
+--  automatically, so most addons don't need to call it manually.
+-------------------------------------------------------------------------------
+local _resizeNotifyThrottle = {}  -- [key] = GetTime() of last notify
+local RESIZE_THROTTLE_SEC = 0.05 -- ignore rapid-fire size changes within 50ms
+
+function EllesmereUI.NotifyElementResized(key)
+    if isUnlocked then return end  -- unlock mode owns positioning
+    -- Throttle: skip if we just processed this key
+    local now = GetTime()
+    if _resizeNotifyThrottle[key] and (now - _resizeNotifyThrottle[key]) < RESIZE_THROTTLE_SEC then
+        return
+    end
+    _resizeNotifyThrottle[key] = now
+
+    -- Reapply own anchor first (if this element is anchored to something,
+    -- its position may need adjusting after its own size changed)
+    if EllesmereUI.ReapplyOwnAnchor then
+        EllesmereUI.ReapplyOwnAnchor(key)
+    end
+
+    -- Propagate width/height matches to dependents
+    local wdb = MatchH.GetWidthMatchDB()
+    if wdb then
+        local hasChildren = false
+        for childKey, tKey in pairs(wdb) do
+            if tKey == key then hasChildren = true; break end
+        end
+        if hasChildren then
+            EllesmereUI.PropagateWidthMatch(key)
+        end
+    end
+    local hdb = MatchH.GetHeightMatchDB()
+    if hdb then
+        local hasChildren = false
+        for childKey, tKey in pairs(hdb) do
+            if tKey == key then hasChildren = true; break end
+        end
+        if hasChildren then
+            EllesmereUI.PropagateHeightMatch(key)
+        end
+    end
+
+    -- Propagate anchor chain to children anchored to this element
+    _pendingAnchorKeys[key] = true
+    ScheduleAnchorBatch()
+end
+
+-------------------------------------------------------------------------------
+--  Apply ALL width/height matches globally (used on login/reload)
+-------------------------------------------------------------------------------
+local function ApplyAllWidthHeightMatches()
+    -- Width matches
+    local wdb = MatchH.GetWidthMatchDB()
+    if wdb then
+        for childKey, targetKey in pairs(wdb) do
+            MatchH.ApplyWidthMatch(childKey, targetKey)
+        end
+    end
+    -- Height matches
+    local hdb = MatchH.GetHeightMatchDB()
+    if hdb then
+        for childKey, targetKey in pairs(hdb) do
+            MatchH.ApplyHeightMatch(childKey, targetKey)
+        end
+    end
+end
+
+-------------------------------------------------------------------------------
+--  OnSizeChanged hook for registered element frames
+--  Automatically fires NotifyElementResized when a frame changes size,
+--  so dependent elements (width-matched, anchored) update without the
+--  source addon needing to call anything.
+-------------------------------------------------------------------------------
+local _sizeHookedFrames = {}  -- [frame] = true
+
+local function HookFrameSizeChanged(key)
+    local bar = GetBarFrame(key)
+    if not bar or _sizeHookedFrames[bar] then return end
+    _sizeHookedFrames[bar] = true
+    bar:HookScript("OnSizeChanged", function()
+        if isUnlocked then return end
+        EllesmereUI.NotifyElementResized(key)
+    end)
+end
+
+-- Wrap RegisterUnlockElements so newly registered elements get OnSizeChanged
+-- hooks installed automatically (handles late registrations like CDM bars).
+do
+    local origRegister = EllesmereUI.RegisterUnlockElements
+    function EllesmereUI:RegisterUnlockElements(elements)
+        origRegister(self, elements)
+        -- Defer hook installation so the frame has time to be created/sized
+        C_Timer.After(0.1, function()
+            for _, elem in ipairs(elements) do
+                if elem.key then
+                    HookFrameSizeChanged(elem.key)
+                end
+            end
+        end)
+    end
+end
+
 -- Smoothly fade the background overlay between normal and select-element alpha
 local function FadeOverlayForSelectElement(entering)
     if not unlockFrame or not unlockFrame._overlay then return end
@@ -1019,12 +1127,31 @@ local function ApplySavedPositions()
             end
         end
     end
+    -- Hook all known action bar frames for auto-propagation on resize
+    for barKey in pairs(BAR_LOOKUP) do
+        HookFrameSizeChanged(barKey)
+    end
     -- Registered elements: each addon applies its own positions
     RebuildRegisteredOrder()
     for _, key in ipairs(registeredOrder) do
         local elem = registeredElements[key]
         if elem and elem.applyPosition then
             pcall(elem.applyPosition, key)
+        end
+        -- Install OnSizeChanged hook so future resizes auto-propagate
+        HookFrameSizeChanged(key)
+    end
+
+    -- Apply all width/height matches now that positions are set
+    ApplyAllWidthHeightMatches()
+
+    -- Reapply all anchor positions (anchored elements need to follow their targets)
+    local adb = GetAnchorDB()
+    if adb then
+        for childKey, info in pairs(adb) do
+            if info.target and GetBarFrame(childKey) and GetBarFrame(info.target) then
+                ApplyAnchorPosition(childKey, info.target, info.side)
+            end
         end
     end
 end
@@ -4324,7 +4451,7 @@ local function CreateMover(barKey)
         selElemLbl:SetTextColor(isSelElem and 1 or 0.75, isSelElem and 1 or 0.75, isSelElem and 1 or 0.75, 0.9)
         selElemLbl:SetJustifyH("LEFT")
         selElemLbl:SetPoint("LEFT", selElemItem, "LEFT", 10, 0)
-        selElemLbl:SetText("Select Element")
+        selElemLbl:SetText("Snap Target: Select Element")
         selElemItem:SetScript("OnEnter", function()
             selElemHl:SetColorTexture(1, 1, 1, 0.08)
             selElemLbl:SetTextColor(1, 1, 1, 1)

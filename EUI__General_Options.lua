@@ -1476,6 +1476,69 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
 
+        -- Inline cog on Rested Indicator (right) for X/Y offsets
+        do
+            local rightRgn = crosshairRow._rightRegion
+            local _, restCogShow = EllesmereUI.BuildCogPopup({
+                title = "Rested Indicator Position",
+                rows = {
+                    { type="slider", label="X Offset", min=-50, max=50, step=1,
+                      get=function() return (EllesmereUIDB and EllesmereUIDB.restedIndicatorXOffset) or 0 end,
+                      set=function(v)
+                          if not EllesmereUIDB then EllesmereUIDB = {} end
+                          EllesmereUIDB.restedIndicatorXOffset = v
+                          local pf = _G["EllesmereUIUnitFrames_Player"]
+                          if pf and pf._restIndicator then
+                              pf._restIndicator:ClearAllPoints()
+                              local rx = EllesmereUIDB.restedIndicatorXOffset or 0
+                              local ry = EllesmereUIDB.restedIndicatorYOffset or 0
+                              pf._restIndicator:SetPoint("TOPLEFT", pf.Health, "TOPLEFT", 3 + rx, -2 + ry)
+                          end
+                      end },
+                    { type="slider", label="Y Offset", min=-50, max=50, step=1,
+                      get=function() return (EllesmereUIDB and EllesmereUIDB.restedIndicatorYOffset) or 0 end,
+                      set=function(v)
+                          if not EllesmereUIDB then EllesmereUIDB = {} end
+                          EllesmereUIDB.restedIndicatorYOffset = v
+                          local pf = _G["EllesmereUIUnitFrames_Player"]
+                          if pf and pf._restIndicator then
+                              pf._restIndicator:ClearAllPoints()
+                              local rx = EllesmereUIDB.restedIndicatorXOffset or 0
+                              local ry = EllesmereUIDB.restedIndicatorYOffset or 0
+                              pf._restIndicator:SetPoint("TOPLEFT", pf.Health, "TOPLEFT", 3 + rx, -2 + ry)
+                          end
+                      end },
+                },
+            })
+            -- Manual cog button (no MakeCogBtn in this file)
+            local function restOff()
+                return not EllesmereUIDB or EllesmereUIDB.showRestedIndicator ~= true
+            end
+            local restCogBtn = CreateFrame("Button", nil, rightRgn)
+            restCogBtn:SetSize(26, 26)
+            restCogBtn:SetPoint("RIGHT", rightRgn._lastInline or rightRgn._control, "LEFT", -9, 0)
+            rightRgn._lastInline = restCogBtn
+            restCogBtn:SetFrameLevel(rightRgn:GetFrameLevel() + 5)
+            restCogBtn:SetAlpha(restOff() and 0.15 or 0.4)
+            local restCogTex = restCogBtn:CreateTexture(nil, "OVERLAY")
+            restCogTex:SetAllPoints()
+            restCogTex:SetTexture(EllesmereUI.COGS_ICON)
+            restCogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
+            restCogBtn:SetScript("OnLeave", function(self) self:SetAlpha(restOff() and 0.15 or 0.4) end)
+            restCogBtn:SetScript("OnClick", function(self) restCogShow(self) end)
+
+            -- Blocking overlay when Rested Indicator is off
+            local restCogBlock = CreateFrame("Frame", nil, restCogBtn)
+            restCogBlock:SetAllPoints()
+            restCogBlock:SetFrameLevel(restCogBtn:GetFrameLevel() + 10)
+            restCogBlock:EnableMouse(true)
+            restCogBlock:SetScript("OnEnter", function()
+                EllesmereUI.ShowWidgetTooltip(restCogBtn, EllesmereUI.DisabledTooltip("Rested Indicator"))
+            end)
+            restCogBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+            if restOff() then restCogBlock:Show() else restCogBlock:Hide() end
+        end
+
         -- Inline color swatch on the crosshair dropdown (left region)
         do
             local leftRgn = crosshairRow._leftRegion

@@ -1007,6 +1007,33 @@ local function BuildKnownSpellIDSet()
             end
         end
     end
+    -- Fallback: also check the full CDM category set (cat, true) which
+    -- includes ALL spells for the class regardless of talent selection.
+    -- Spells that exist in the full set AND pass IsPlayerSpell are known
+    -- even if the viewer hasn't updated yet after a talent swap.
+    local _IsPlayerSpell = IsPlayerSpell
+    if _IsPlayerSpell then
+        for cat = 0, 3 do
+            local allIDs = C_CooldownViewer.GetCooldownViewerCategorySet(cat, true)
+            if allIDs then
+                for _, cdID in ipairs(allIDs) do
+                    local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                    if info then
+                        local sid = ResolveInfoSpellID(info)
+                        if sid and sid > 0 and not known[sid] and _IsPlayerSpell(sid) then
+                            known[sid] = true
+                        end
+                        if info.spellID and info.spellID > 0 and not known[info.spellID] and _IsPlayerSpell(info.spellID) then
+                            known[info.spellID] = true
+                        end
+                        if info.overrideSpellID and info.overrideSpellID > 0 and not known[info.overrideSpellID] and _IsPlayerSpell(info.overrideSpellID) then
+                            known[info.overrideSpellID] = true
+                        end
+                    end
+                end
+            end
+        end
+    end
     return known
 end
 
@@ -2433,6 +2460,21 @@ BuildCDMBar = function(barIndex)
     frame:Show()
 end
 
+-- Compute stride respecting topRowCount override (only for numRows == 2)
+local function ComputeTopRowStride(barData, count)
+    local numRows = barData.numRows or 1
+    if numRows < 1 then numRows = 1 end
+    if numRows == 2 and barData.topRowCount and barData.topRowCount > 0 then
+        local topCount = math.min(barData.topRowCount, count)
+        local bottomCount = count - topCount
+        return math.max(topCount, bottomCount), numRows, topCount
+    end
+    local stride = math.ceil(count / numRows)
+    local topCount = count - (numRows - 1) * stride
+    if topCount < 0 then topCount = 0 end
+    return stride, numRows, topCount
+end
+
 -------------------------------------------------------------------------------
 --  Layout icons within a CDM bar
 -------------------------------------------------------------------------------
@@ -2472,7 +2514,7 @@ LayoutCDMBar = function(barKey)
     end
 
     local isHoriz = (grow == "RIGHT" or grow == "LEFT")
-    local stride = math.ceil(count / numRows)
+    local stride, _, customTopCount = ComputeTopRowStride(barData, count)
 
     -- Container size (already snapped values)
     local totalW, totalH
@@ -2539,8 +2581,8 @@ LayoutCDMBar = function(barKey)
     local stepW = iconW + spacing
     local stepH = iconH + spacing
 
-    -- How many icons on the top row (remainder goes top, full rows on bottom)
-    local topRowCount = count - (numRows - 1) * stride
+    -- How many icons on the top row
+    local topRowCount = customTopCount
     if topRowCount < 0 then topRowCount = 0 end
     local topRowHasLess = (topRowCount > 0 and topRowCount < stride)
 
@@ -3270,6 +3312,7 @@ local function UpdateCustomBarIcons(barKey)
                 visibleCount = visibleCount + 1
 
                 -- Untracked overlay for custom bars
+                -- Only applies to spells in the CDM category system (have a cdID).
                 local isUntrackedC = ECache.IsBlizzardChildUntracked(spellID, resolvedID)
                 ApplyUntrackedOverlay(ourIcon, spellID, isUntrackedC)
 
@@ -4100,7 +4143,7 @@ local function UpdateTrackedBarIcons(barKey)
                     -- Store Blizzard child mapping so proc glow hooks can find our icon
                     ourIcon._blizzChild = blizzChild
 
-                    local isUntracked = ECache.IsBlizzardChildUntracked(spellID, resolvedID)
+                    local isUntracked = ECache.IsBlizzardChildUntracked(spellID, resolvedID) and not blizzChild
                     ApplyUntrackedOverlay(ourIcon, spellID, isUntracked)
 
                     ourIcon:Show()
@@ -5332,16 +5375,12 @@ function ns.AddTrackedSpell(barKey, id, isExtra)
                 local numRows = b.numRows or 1
                 if numRows < 1 then numRows = 1 end
                 local curCount = #b.customSpells
-                local stride = math.ceil(curCount / numRows)
+                local stride, _, topRowCount = ComputeTopRowStride(b, curCount)
                 if stride < 1 then stride = 1 end
-                local topRowCount = curCount - (numRows - 1) * stride
-                if topRowCount < 0 then topRowCount = 0 end
                 -- New count after insert
                 local newCount = curCount + 1
-                local newStride = math.ceil(newCount / numRows)
+                local newStride, _, newTopRow = ComputeTopRowStride(b, newCount)
                 if newStride < 1 then newStride = 1 end
-                local newTopRow = newCount - (numRows - 1) * newStride
-                if newTopRow < 0 then newTopRow = 0 end
                 -- If stride didn't change, insert at end of top row section
                 if newStride == stride and newTopRow > topRowCount then
                     table.insert(b.customSpells, topRowCount + 1, id)
@@ -5364,15 +5403,11 @@ function ns.AddTrackedSpell(barKey, id, isExtra)
                 local numRows = b.numRows or 1
                 if numRows < 1 then numRows = 1 end
                 local curCount = #b.trackedSpells
-                local stride = math.ceil(curCount / numRows)
+                local stride, _, topRowCount = ComputeTopRowStride(b, curCount)
                 if stride < 1 then stride = 1 end
-                local topRowCount = curCount - (numRows - 1) * stride
-                if topRowCount < 0 then topRowCount = 0 end
                 local newCount = curCount + 1
-                local newStride = math.ceil(newCount / numRows)
+                local newStride, _, newTopRow = ComputeTopRowStride(b, newCount)
                 if newStride < 1 then newStride = 1 end
-                local newTopRow = newCount - (numRows - 1) * newStride
-                if newTopRow < 0 then newTopRow = 0 end
                 if newStride == stride and newTopRow > topRowCount then
                     table.insert(b.trackedSpells, topRowCount + 1, id)
                 else
@@ -5731,7 +5766,7 @@ RegisterCDMUnlockElements = function()
         local sp = SnapForScale(bd.spacing or 2, 1)
         local rows = bd.numRows or 1
         if rows < 1 then rows = 1 end
-        local stride = math.ceil(count / rows)
+        local stride = ComputeTopRowStride(bd, count)
         local grow = bd.growDirection or "RIGHT"
         local isH = (grow == "RIGHT" or grow == "LEFT")
         if isH then
@@ -5792,7 +5827,7 @@ RegisterCDMUnlockElements = function()
                     if count == 0 then return end
                     local rows = bd2.numRows or 1
                     if rows < 1 then rows = 1 end
-                    local stride = math.ceil(count / rows)
+                    local stride = ComputeTopRowStride(bd2, count)
                     local grow = bd2.growDirection or "RIGHT"
                     local isH = (grow == "RIGHT" or grow == "LEFT")
                     local sp = SnapForScale(bd2.spacing or 2, 1)
@@ -5814,7 +5849,7 @@ RegisterCDMUnlockElements = function()
                     if count == 0 then return end
                     local rows = bd2.numRows or 1
                     if rows < 1 then rows = 1 end
-                    local stride = math.ceil(count / rows)
+                    local stride = ComputeTopRowStride(bd2, count)
                     local grow = bd2.growDirection or "RIGHT"
                     local isH = (grow == "RIGHT" or grow == "LEFT")
                     local sp = SnapForScale(bd2.spacing or 2, 1)
@@ -6147,25 +6182,47 @@ local function TalentAwareReconcile()
         if not dormant then dormant = {} end
 
         -- Phase 1: separate active list into still-known and newly-dormant
+        -- Also check IsPlayerSpell as a fallback for spells the CDM viewer
+        -- hasn't updated yet (e.g. choice-node talent swaps).
+        local _IPS = IsPlayerSpell
         local active = {}
+        local seenInActive = {}
         for i, sid in ipairs(spellList) do
             if sid and sid ~= 0 then
-                if knownSet[sid] then
+                if seenInActive[sid] then
+                    -- Duplicate already in active list -- skip silently
+                elseif knownSet[sid] or (_IPS and _IPS(sid)) then
                     active[#active + 1] = sid
+                    seenInActive[sid] = true
                 else
-                    -- Spell is no longer known — save its slot index and move to dormant
+                    -- Spell is no longer known -- save its slot index and move to dormant
                     dormant[sid] = i
                 end
             end
         end
 
-        -- Phase 2: check dormant spells — any that are now known get re-inserted
+        -- Build a set of spells already in the active list for dedup
+        local activeSet = seenInActive
+
+        -- Phase 2: check dormant spells -- any that are now known get re-inserted
         -- Collect returning spells sorted by their saved slot index (lowest first)
-        -- so insertions don't shift each other's target positions
+        -- so insertions don't shift each other's target positions.
+        -- Also check IsPlayerSpell directly on dormant spells as a fallback --
+        -- the CDM viewer may not have updated its entries yet after a talent
+        -- swap (e.g. choice-node spells like Bladestorm/Avatar share a viewer
+        -- slot and the viewer may still report the old spell's ID).
         local returning = {}
         for sid, savedSlot in pairs(dormant) do
-            if knownSet[sid] and not (removed and removed[sid]) then
-                returning[#returning + 1] = { sid = sid, slot = savedSlot }
+            local isKnown = knownSet[sid]
+                or (_IPS and _IPS(sid))
+            if isKnown and not (removed and removed[sid]) then
+                -- Only return spells that aren't already in the active list
+                if not activeSet[sid] then
+                    returning[#returning + 1] = { sid = sid, slot = savedSlot }
+                else
+                    -- Already active -- just clean it from dormant
+                    dormant[sid] = nil
+                end
             end
         end
         table.sort(returning, function(a, b) return a.slot < b.slot end)

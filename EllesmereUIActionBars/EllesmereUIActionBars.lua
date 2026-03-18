@@ -263,6 +263,10 @@ for _, info in ipairs(BAR_CONFIG) do
         keybindOffsetY = 0,
         countOffsetX = 0,
         countOffsetY = 0,
+        cooldownFontSize = 12,
+        cooldownTextXOffset = 0,
+        cooldownTextYOffset = 0,
+        cooldownTextColor = { r = 1, g = 1, b = 1 },
         orientation = "horizontal",
         numIcons = 12,
         numRows = 1,
@@ -2038,6 +2042,17 @@ local function LayoutBar(key)
                 btn.SpellActivationAlert:SetAllPoints(btn)
             end
 
+            -- Hide profession quality diamond overlays (added in Dragonflight)
+            if btn.ProfessionQualityOverlayFrame then
+                btn.ProfessionQualityOverlayFrame:SetShown(false)
+                if not btn._eabQualityHooked then
+                    btn.ProfessionQualityOverlayFrame:HookScript("OnShow", function(self)
+                        self:SetShown(false)
+                    end)
+                    btn._eabQualityHooked = true
+                end
+            end
+
             if not showEmpty and not _gridState.shown and not ButtonHasAction(btn, info.blizzBtnPrefix) then
                 btn:SetAlpha(0)
             else
@@ -2845,6 +2860,51 @@ end
 function EAB:ApplyFonts()
     for _, info in ipairs(BAR_CONFIG) do
         self:ApplyFontsForBar(info.key)
+    end
+    self:ApplyCooldownFonts()
+end
+
+-------------------------------------------------------------------------------
+--  Cooldown Countdown Font Override
+-------------------------------------------------------------------------------
+function EAB:ApplyCooldownFontsForBar(barKey)
+    local s = self.db.profile.bars[barKey]
+    if not s then return end
+    local buttons = barButtons[barKey]
+    if not buttons then return end
+    local fontPath = EllesmereUI and EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("actionBars") or FONT_PATH
+    local cdSize = s.cooldownFontSize or 12
+    local cdOX = s.cooldownTextXOffset or 0
+    local cdOY = s.cooldownTextYOffset or 0
+    local cdColor = s.cooldownTextColor or { r = 1, g = 1, b = 1 }
+
+    C_Timer.After(0, function()
+        for i = 1, #buttons do
+            local btn = buttons[i]
+            if not btn then break end
+            local cd = btn.cooldown
+            if cd then
+                for ri = 1, cd:GetNumRegions() do
+                    local region = select(ri, cd:GetRegions())
+                    if region and region.GetObjectType and region:GetObjectType() == "FontString" then
+                        region:SetFont(fontPath, cdSize, "OUTLINE")
+                        region:SetShadowOffset(0, 0)
+                        region:SetTextColor(cdColor.r, cdColor.g, cdColor.b)
+                        if cdOX ~= 0 or cdOY ~= 0 then
+                            region:ClearAllPoints()
+                            region:SetPoint("CENTER", cd, "CENTER", cdOX, cdOY)
+                        end
+                        break
+                    end
+                end
+            end
+        end
+    end)
+end
+
+function EAB:ApplyCooldownFonts()
+    for _, info in ipairs(BAR_CONFIG) do
+        self:ApplyCooldownFontsForBar(info.key)
     end
 end
 
