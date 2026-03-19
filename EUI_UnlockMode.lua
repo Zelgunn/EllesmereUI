@@ -53,6 +53,87 @@ end
 if EllesmereUI._unlockModeLoaded then return end
 EllesmereUI._unlockModeLoaded = true
 
+-------------------------------------------------------------------------------
+--  Lightweight anchor reapply stub (pre-EnsureLoaded)
+--  Allows child addons (CDM, etc.) to reposition anchored elements on login
+--  before the full unlock mode body has been loaded. The deferred block
+--  replaces this with the full implementation.
+-------------------------------------------------------------------------------
+if not EllesmereUI.ReapplyOwnAnchor then
+    EllesmereUI.ReapplyOwnAnchor = function(key)
+        if not EllesmereUIDB or not EllesmereUIDB.unlockAnchors then return end
+        local info = EllesmereUIDB.unlockAnchors[key]
+        if not info or not info.target then return end
+
+        -- Resolve child and target frames via registered elements
+        local elems = EllesmereUI._unlockRegisteredElements
+        local childElem = elems and elems[key]
+        local targetElem = elems and elems[info.target]
+        local childBar = childElem and childElem.getFrame and childElem.getFrame(key)
+        local targetBar = targetElem and targetElem.getFrame and targetElem.getFrame(info.target)
+        if not childBar or not targetBar then return end
+        if not targetBar:GetLeft() then return end
+
+        local side = info.side
+        local uiS = UIParent:GetEffectiveScale()
+        local tS = targetBar:GetEffectiveScale()
+        local cS = childBar:GetEffectiveScale()
+
+        local tL = (targetBar:GetLeft() or 0) * tS / uiS
+        local tR = (targetBar:GetRight() or 0) * tS / uiS
+        local tT = (targetBar:GetTop() or 0) * tS / uiS
+        local tB = (targetBar:GetBottom() or 0) * tS / uiS
+        local tCX = (tL + tR) / 2
+        local tCY = (tT + tB) / 2
+
+        local cW = (childBar:GetWidth() or 50) * cS / uiS
+        local cH = (childBar:GetHeight() or 50) * cS / uiS
+
+        local cx, cy
+        if info.offsetX and info.offsetY then
+            if side == "LEFT" then
+                cx = tL + info.offsetX - cW / 2
+                cy = tCY + info.offsetY
+            elseif side == "RIGHT" then
+                cx = tR + info.offsetX + cW / 2
+                cy = tCY + info.offsetY
+            elseif side == "TOP" then
+                cx = tCX + info.offsetX
+                cy = tT + info.offsetY + cH / 2
+            elseif side == "BOTTOM" then
+                cx = tCX + info.offsetX
+                cy = tB + info.offsetY - cH / 2
+            else
+                cx = tCX + info.offsetX
+                cy = tCY + info.offsetY
+            end
+        else
+            if side == "LEFT" then
+                cx = tL - cW / 2; cy = tCY
+            elseif side == "RIGHT" then
+                cx = tR + cW / 2; cy = tCY
+            elseif side == "TOP" then
+                cx = tCX; cy = tT + cH / 2
+            elseif side == "BOTTOM" then
+                cx = tCX; cy = tB - cH / 2
+            else
+                cx = tCX; cy = tCY
+            end
+        end
+
+        local ratio = uiS / cS
+        local barHW = (childBar:GetWidth() or 0) * 0.5
+        local barHH = (childBar:GetHeight() or 0) * 0.5
+        local barX = cx * ratio - barHW
+        local barY = (cy - UIParent:GetHeight()) * ratio + barHH
+
+        pcall(function()
+            childBar:ClearAllPoints()
+            childBar:SetPoint("TOPLEFT", UIParent, "TOPLEFT", barX, barY)
+        end)
+    end
+end
+
 -- DEFERRED: heavy body (4900+ lines) runs on first EnsureLoaded() call.
 EllesmereUI._deferredInits[#EllesmereUI._deferredInits + 1] = function()
 

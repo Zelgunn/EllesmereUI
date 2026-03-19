@@ -5564,6 +5564,7 @@ initFrame:SetScript("OnEvent", function(self)
         end
 
         local isDefault = (barData.key == "cooldowns" or barData.key == "utility" or barData.key == "buffs")
+        local isBuffBar = (barData.barType == "buffs" or barData.key == "buffs")
 
         -------------------------------------------------------------------
         --  CONTENT HEADER  (dropdown + live preview)
@@ -6320,8 +6321,117 @@ initFrame:SetScript("OnEvent", function(self)
         local BORDER_ORDER  = { "none", "thin", "normal", "heavy", "strong" }
         local BORDER_SIZES  = { none=0, thin=1, normal=2, heavy=3, strong=4 }
 
-        -- Row 1: Icon Scale | Active Animation (no sync icons on either)
+        -- Buff Glow dropdown values (buff bars only)
+        local BUFF_GLOW_VALUES = { [0] = "None" }
+        local BUFF_GLOW_ORDER = { 0 }
+        do
+            for i, entry in ipairs(ns.GLOW_STYLES) do
+                if not entry.shapeGlow then
+                    BUFF_GLOW_VALUES[i] = entry.name
+                    BUFF_GLOW_ORDER[#BUFF_GLOW_ORDER + 1] = i
+                end
+            end
+        end
+
+        -- Row 1: Icon Scale | Active Animation (or Buff Glow for buff bars)
         local scaleAnimRow
+        if isBuffBar then
+            scaleAnimRow, h = W:DualRow(parent, y,
+                { type="slider", text="Icon Scale",
+                  min=16, max=80, step=1,
+                  getValue=function() return BD().iconSize or 36 end,
+                  setValue=function(v)
+                      BD().iconSize = v
+                      ns.BuildAllCDMBars(); Refresh(); UpdateCDMPreviewAndResize()
+                  end },
+                { type="dropdown", text="Buff Glow",
+                  values=BUFF_GLOW_VALUES, order=BUFF_GLOW_ORDER,
+                  disabled=function() return IsCustomShape() end,
+                  disabledTooltip=EllesmereUI.DisabledTooltip("This option is not available for custom shapes"),
+                  getValue=function()
+                      if IsCustomShape() then return 0 end
+                      return BD().buffGlowType or 0
+                  end,
+                  setValue=function(v)
+                      BD().buffGlowType = v; ns.BuildAllCDMBars(); Refresh()
+                      C_Timer.After(0, function() EllesmereUI:RefreshPage() end)
+                  end });  y = y - h
+
+            -- Inline buff glow color swatches (right of row 1)
+            -- Order right-to-left: [class swatch] [custom swatch]
+            do
+                local rightRgn = scaleAnimRow._rightRegion
+                local ctrl = rightRgn._control
+
+                local classSwatch, updateClassSwatch = EllesmereUI.BuildColorSwatch(
+                    rightRgn, scaleAnimRow:GetFrameLevel() + 3,
+                    function()
+                        local _, classFile = UnitClass("player")
+                        local cc = classFile and RAID_CLASS_COLORS and RAID_CLASS_COLORS[classFile]
+                        if cc then return cc.r, cc.g, cc.b end
+                        return 1, 0.82, 0
+                    end,
+                    function() end,
+                    false, 20)
+                PP.Point(classSwatch, "RIGHT", ctrl, "LEFT", -8, 0)
+                classSwatch:SetScript("OnClick", function()
+                    BD().buffGlowClassColor = true; ns.BuildAllCDMBars()
+                    Refresh(); EllesmereUI:RefreshPage()
+                end)
+                classSwatch:SetScript("OnEnter", function()
+                    EllesmereUI.ShowWidgetTooltip(classSwatch, "Class Colored")
+                end)
+                classSwatch:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
+                local glowSwatch, updateGlowSwatch = EllesmereUI.BuildColorSwatch(
+                    rightRgn, scaleAnimRow:GetFrameLevel() + 3,
+                    function() return BD().buffGlowR or 1.0, BD().buffGlowG or 0.776, BD().buffGlowB or 0.376 end,
+                    function(r, g, b)
+                        BD().buffGlowR = r; BD().buffGlowG = g; BD().buffGlowB = b
+                        ns.BuildAllCDMBars(); Refresh()
+                    end,
+                    false, 20)
+                PP.Point(glowSwatch, "RIGHT", classSwatch, "LEFT", -8, 0)
+                glowSwatch:SetScript("OnEnter", function()
+                    EllesmereUI.ShowWidgetTooltip(glowSwatch, "Custom Colored")
+                end)
+                glowSwatch:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
+                local glowSwatchBlock = CreateFrame("Button", nil, glowSwatch)
+                glowSwatchBlock:SetAllPoints(); glowSwatchBlock:SetFrameLevel(glowSwatch:GetFrameLevel() + 10)
+                glowSwatchBlock:EnableMouse(true)
+                glowSwatchBlock:SetScript("OnClick", function()
+                    local gt = BD().buffGlowType or 0
+                    if gt ~= 0 and BD().buffGlowClassColor then
+                        BD().buffGlowClassColor = false; ns.BuildAllCDMBars()
+                        Refresh(); EllesmereUI:RefreshPage()
+                    end
+                end)
+                glowSwatchBlock:SetScript("OnEnter", function()
+                    local gt = BD().buffGlowType or 0
+                    local reason
+                    if gt == 0 or IsCustomShape() then
+                        reason = "This option requires a buff glow to be selected"
+                    else
+                        reason = "Color is controlled by class color"
+                    end
+                    EllesmereUI.ShowWidgetTooltip(glowSwatch, EllesmereUI.DisabledTooltip(reason))
+                end)
+                glowSwatchBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
+                local function UpdateBuffGlowState()
+                    local gt = BD().buffGlowType or 0
+                    local noGlow = gt == 0 or IsCustomShape()
+                    local isClassColored = BD().buffGlowClassColor
+                    local customDis = isClassColored or noGlow
+                    if customDis then glowSwatch:SetAlpha(0.3); glowSwatchBlock:Show()
+                    else glowSwatch:SetAlpha(1); glowSwatchBlock:Hide() end
+                    classSwatch:SetAlpha((isClassColored and not noGlow) and 1 or 0.3)
+                end
+                EllesmereUI.RegisterWidgetRefresh(function() updateGlowSwatch(); updateClassSwatch(); UpdateBuffGlowState() end)
+                UpdateBuffGlowState()
+            end
+        else
         scaleAnimRow, h = W:DualRow(parent, y,
             { type="slider", text="Icon Scale",
               min=16, max=80, step=1,
@@ -6478,6 +6588,7 @@ initFrame:SetScript("OnEvent", function(self)
             EllesmereUI.RegisterWidgetRefresh(function() updateAnimSwatch(); updateClassSwatch(); UpdateAnimState() end)
             UpdateAnimState()
         end
+        end -- isBuffBar else
 
         -- Row 2: (Sync) Custom Icon Shape | (Sync) Icon Spacing
         local shapeRow

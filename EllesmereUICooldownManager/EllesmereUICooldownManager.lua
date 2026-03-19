@@ -449,32 +449,9 @@ end
 --  child frame's PandemicIcon is visible, indicating the buff is refreshable.
 -------------------------------------------------------------------------------
 local function ApplyPandemicGlow(icon, blizzChild, barData)
-    if not barData.pandemicGlow then
-        if icon._pandemicGlowActive then
-            -- Only stop if no other glow owns the overlay
-            if not icon._procGlowActive and not icon._isActive then
-                StopNativeGlow(icon._glowOverlay)
-            end
-            icon._pandemicGlowActive = false
-        end
-        return
-    end
-    local isPandemic = blizzChild
-        and blizzChild.PandemicIcon
-        and blizzChild.PandemicIcon.IsShown
-        and blizzChild.PandemicIcon:IsShown()
-    if isPandemic then
-        if not icon._pandemicGlowActive
-           and not icon._procGlowActive
-           and not (icon._glowOverlay and icon._glowOverlay._glowActive) then
-            local style = (icon._shapeApplied and icon._shapeName) and 2 or 1
-            local cr = barData.pandemicR or 1
-            local cg = barData.pandemicG or 1
-            local cb = barData.pandemicB or 0
-            StartNativeGlow(icon._glowOverlay, style, cr, cg, cb)
-            icon._pandemicGlowActive = true
-        end
-    elseif icon._pandemicGlowActive then
+    -- Temporarily disabled -- pandemic glow feature is off for now.
+    -- To re-enable, restore the original function body.
+    if icon._pandemicGlowActive then
         if not icon._procGlowActive and not icon._isActive then
             StopNativeGlow(icon._glowOverlay)
         end
@@ -817,7 +794,7 @@ local DEFAULTS = {
                     keybindSize = 10, keybindOffsetX = 2, keybindOffsetY = -2,
                     keybindR = 1, keybindG = 1, keybindB = 1, keybindA = 0.9,
                     outOfRangeOverlay = false,
-                    pandemicGlow = true,
+                    pandemicGlow = false,
                     pandemicR = 1, pandemicG = 1, pandemicB = 0,
                 },
             },
@@ -2186,17 +2163,59 @@ local function SaveCDMBarPosition(barKey, frame)
     if not frame then return end
     local p = ECME.db.profile
     local scale = frame:GetScale() or 1
-    local cx, cy = frame:GetCenter()
-    if not cx then return end
-    local uiW, uiH = UIParent:GetSize()
     local uiScale = UIParent:GetEffectiveScale()
     local fScale = frame:GetEffectiveScale()
-    cx = cx * fScale / uiScale
-    cy = cy * fScale / uiScale
+    local uiW, uiH = UIParent:GetSize()
+    local ratio = fScale / uiScale
+
+    -- Determine anchor point from grow direction so the bar's near edge
+    -- stays fixed when icon count changes across specs.
+    local bd = barDataByKey[barKey]
+    local grow = bd and bd.growDirection or "RIGHT"
+    local pt
+    if     grow == "RIGHT" then pt = "LEFT"
+    elseif grow == "LEFT"  then pt = "RIGHT"
+    elseif grow == "DOWN"  then pt = "TOP"
+    elseif grow == "UP"    then pt = "BOTTOM"
+    else                        pt = "LEFT"
+    end
+
+    local ax, ay
+    if pt == "LEFT" then
+        local lx = frame:GetLeft()
+        if not lx then return end
+        local cy = select(2, frame:GetCenter())
+        if not cy then return end
+        ax = lx * ratio
+        ay = cy * ratio
+    elseif pt == "RIGHT" then
+        local rx = frame:GetRight()
+        if not rx then return end
+        local cy = select(2, frame:GetCenter())
+        if not cy then return end
+        ax = rx * ratio
+        ay = cy * ratio
+    elseif pt == "TOP" then
+        local cx = frame:GetCenter()
+        if not cx then return end
+        local ty = frame:GetTop()
+        if not ty then return end
+        ax = cx * ratio
+        ay = ty * ratio
+    elseif pt == "BOTTOM" then
+        local cx = frame:GetCenter()
+        if not cx then return end
+        local by = frame:GetBottom()
+        if not by then return end
+        ax = cx * ratio
+        ay = by * ratio
+    end
+
+    -- Store relative to UIParent CENTER so offset math is consistent
     p.cdmBarPositions[barKey] = {
-        point = "CENTER", relPoint = "CENTER",
-        x = (cx - uiW / 2) / scale,
-        y = (cy - uiH / 2) / scale,
+        point = pt, relPoint = "CENTER",
+        x = (ax - uiW / 2) / scale,
+        y = (ay - uiH / 2) / scale,
     }
 end
 
@@ -2459,31 +2478,6 @@ BuildCDMBar = function(barIndex)
                 frame:ClearAllPoints()
                 frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
             end
-        end
-    elseif anchorKey and anchorKey ~= "none" and cdmBarFrames[anchorKey] then
-        local anchorFrame = cdmBarFrames[anchorKey]
-        local anchorPos = barData.anchorPosition or "left"
-        frame:ClearAllPoints()
-        local gap = barData.spacing or 2
-        local oX = barData.anchorOffsetX or 0
-        local oY = barData.anchorOffsetY or 0
-        local grow = barData.growDirection or "RIGHT"
-        local centered = barData.growCentered ~= false
-        local fp = CDMFrameAnchorPoint(anchorPos:upper(), grow, centered)
-        frame._anchorSide = anchorPos:upper()
-        local ok
-        if anchorPos == "left" then
-            ok = pcall(frame.SetPoint, frame, fp, anchorFrame, "LEFT", -gap + oX, oY)
-        elseif anchorPos == "right" then
-            ok = pcall(frame.SetPoint, frame, fp, anchorFrame, "RIGHT", gap + oX, oY)
-        elseif anchorPos == "top" then
-            ok = pcall(frame.SetPoint, frame, fp, anchorFrame, "TOP", oX, gap + oY)
-        elseif anchorPos == "bottom" then
-            ok = pcall(frame.SetPoint, frame, fp, anchorFrame, "BOTTOM", oX, -gap + oY)
-        end
-        if not ok then
-            frame:ClearAllPoints()
-            frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
         end
     else
         local pos = p.cdmBarPositions[key]
@@ -3324,6 +3318,34 @@ local function UpdateCustomBarIcons(barKey)
                 ourIcon:Show()
                 visibleCount = visibleCount + 1
 
+                -- Buff glow (buff bars only): always-on glow when icon is visible
+                if isBuffBarForOverride then
+                    local bgt = barData.buffGlowType or 0
+                    if bgt > 0 and ourIcon._glowOverlay and not ourIcon._procGlowActive then
+                        if not ourIcon._buffGlowActive or ourIcon._buffGlowStyle ~= bgt then
+                            local bgR, bgG, bgB = 1.0, 0.776, 0.376
+                            if barData.buffGlowClassColor then
+                                local _, ct = UnitClass("player")
+                                if ct then
+                                    local cc = RAID_CLASS_COLORS[ct]
+                                    if cc then bgR, bgG, bgB = cc.r, cc.g, cc.b end
+                                end
+                            elseif barData.buffGlowR then
+                                bgR = barData.buffGlowR
+                                bgG = barData.buffGlowG or 0.776
+                                bgB = barData.buffGlowB or 0.376
+                            end
+                            StartNativeGlow(ourIcon._glowOverlay, bgt, bgR, bgG, bgB)
+                            ourIcon._buffGlowActive = true
+                            ourIcon._buffGlowStyle = bgt
+                        end
+                    elseif ourIcon._buffGlowActive then
+                        StopNativeGlow(ourIcon._glowOverlay)
+                        ourIcon._buffGlowActive = false
+                        ourIcon._buffGlowStyle = nil
+                    end
+                end
+
                 -- Untracked overlay for custom bars
                 -- Only applies to spells in the CDM category system (have a cdID).
                 local isUntrackedC = ECache.IsBlizzardChildUntracked(spellID, resolvedID)
@@ -3359,6 +3381,10 @@ local function UpdateCustomBarIcons(barKey)
                             if not isActive then
                                 ourIcon:Hide()
                                 visibleCount = visibleCount - 1
+                                if ourIcon._buffGlowActive then
+                                    ourIcon._buffGlowActive = false
+                                    ourIcon._buffGlowStyle = nil
+                                end
                             end
                         end
                     else
@@ -3376,6 +3402,11 @@ local function UpdateCustomBarIcons(barKey)
         local ic = icons[i]
         if ic._untrackedOverlay then ic._untrackedOverlay:Hide() end
         ic._isUntracked = false
+        if ic._buffGlowActive then
+            StopNativeGlow(ic._glowOverlay)
+            ic._buffGlowActive = false
+            ic._buffGlowStyle = nil
+        end
         if ic._procGlowActive then
             StopNativeGlow(ic._glowOverlay)
             ic._procGlowActive = false
@@ -3699,7 +3730,35 @@ UpdateCDMBarIcons = function(barKey)
 
             ourIcon:Show()
 
-            -- Hide buff icons when inactive (aura not active) — buff bars only
+            -- Buff glow (buff bars only): always-on glow when icon is visible
+            if isBuffBar then
+                local bgt = barData.buffGlowType or 0
+                if bgt > 0 and ourIcon._glowOverlay and not ourIcon._procGlowActive then
+                    if not ourIcon._buffGlowActive or ourIcon._buffGlowStyle ~= bgt then
+                        local bgR, bgG, bgB = 1.0, 0.776, 0.376
+                        if barData.buffGlowClassColor then
+                            local _, ct = UnitClass("player")
+                            if ct then
+                                local cc = RAID_CLASS_COLORS[ct]
+                                if cc then bgR, bgG, bgB = cc.r, cc.g, cc.b end
+                            end
+                        elseif barData.buffGlowR then
+                            bgR = barData.buffGlowR
+                            bgG = barData.buffGlowG or 0.776
+                            bgB = barData.buffGlowB or 0.376
+                        end
+                        StartNativeGlow(ourIcon._glowOverlay, bgt, bgR, bgG, bgB)
+                        ourIcon._buffGlowActive = true
+                        ourIcon._buffGlowStyle = bgt
+                    end
+                elseif ourIcon._buffGlowActive then
+                    StopNativeGlow(ourIcon._glowOverlay)
+                    ourIcon._buffGlowActive = false
+                    ourIcon._buffGlowStyle = nil
+                end
+            end
+
+            -- Hide buff icons when inactive (aura not active) -- buff bars only
             -- Skip during unlock mode so the bar is fully visible for repositioning
             local isBuffBar = (barKey == "buffs" or barData.barType == "buffs")
             if barData.hideBuffsWhenInactive and isBuffBar and not EllesmereUI._unlockActive
@@ -3713,6 +3772,10 @@ UpdateCDMBarIcons = function(barKey)
                 end
                 if not isActive then
                     ourIcon:Hide()
+                    if ourIcon._buffGlowActive then
+                        ourIcon._buffGlowActive = false
+                        ourIcon._buffGlowStyle = nil
+                    end
                 end
             end
         end
@@ -3722,6 +3785,11 @@ UpdateCDMBarIcons = function(barKey)
     for i = #blizzIcons + 1, #icons do
         local ic = icons[i]
         ic._blizzChild = nil
+        if ic._buffGlowActive then
+            StopNativeGlow(ic._glowOverlay)
+            ic._buffGlowActive = false
+            ic._buffGlowStyle = nil
+        end
         if ic._procGlowActive then
             StopNativeGlow(ic._glowOverlay)
             ic._procGlowActive = false
@@ -4182,9 +4250,37 @@ local function UpdateTrackedBarIcons(barKey)
 
                     ourIcon:Show()
 
+                    -- Buff glow (buff bars only): always-on glow when icon is visible
+                    if isBuffBarForOverride then
+                        local bgt = barData.buffGlowType or 0
+                        if bgt > 0 and ourIcon._glowOverlay and not ourIcon._procGlowActive then
+                            if not ourIcon._buffGlowActive or ourIcon._buffGlowStyle ~= bgt then
+                                local bgR, bgG, bgB = 1.0, 0.776, 0.376
+                                if barData.buffGlowClassColor then
+                                    local _, ct = UnitClass("player")
+                                    if ct then
+                                        local cc = RAID_CLASS_COLORS[ct]
+                                        if cc then bgR, bgG, bgB = cc.r, cc.g, cc.b end
+                                    end
+                                elseif barData.buffGlowR then
+                                    bgR = barData.buffGlowR
+                                    bgG = barData.buffGlowG or 0.776
+                                    bgB = barData.buffGlowB or 0.376
+                                end
+                                StartNativeGlow(ourIcon._glowOverlay, bgt, bgR, bgG, bgB)
+                                ourIcon._buffGlowActive = true
+                                ourIcon._buffGlowStyle = bgt
+                            end
+                        elseif ourIcon._buffGlowActive then
+                            StopNativeGlow(ourIcon._glowOverlay)
+                            ourIcon._buffGlowActive = false
+                            ourIcon._buffGlowStyle = nil
+                        end
+                    end
+
                     -- Hide buff icons when inactive
                     if barData.hideBuffsWhenInactive and isBuffBarForOverride and not EllesmereUI._unlockActive
-                    and not (EllesmereUI._mainFrame and EllesmereUI._mainFrame:IsShown()) then
+                       and not (EllesmereUI._mainFrame and EllesmereUI._mainFrame:IsShown()) then
                         local isActive = ECache.IsTickBlizzardActive(spellID, resolvedID)
                         -- Fallback: check if the buff-viewer child's cooldown is running
                         if not isActive then
@@ -4206,7 +4302,7 @@ local function UpdateTrackedBarIcons(barKey)
                     if ourIcon._untrackedOverlay then ourIcon._untrackedOverlay:Hide() end
                     ourIcon._isUntracked = false
                 end
-            end -- healthItem else
+            end
         end
     end
 
@@ -4214,6 +4310,11 @@ local function UpdateTrackedBarIcons(barKey)
     for i = combinedN + 1, #icons do
         local ic = icons[i]
         ic._blizzChild = nil
+        if ic._buffGlowActive then
+            StopNativeGlow(ic._glowOverlay)
+            ic._buffGlowActive = false
+            ic._buffGlowStyle = nil
+        end
         if ic._procGlowActive then
             StopNativeGlow(ic._glowOverlay)
             ic._procGlowActive = false
@@ -5679,7 +5780,7 @@ function ns.AddCDMBar(barType, name, numRows)
         -- Custom bars use a spell list instead of mirroring Blizzard
         customSpells = {},
         outOfRangeOverlay = false,
-        pandemicGlow = (barType == "buffs") or false,
+        pandemicGlow = false,
         pandemicR = 1, pandemicG = 1, pandemicB = 0,
     }
     BuildAllCDMBars()
@@ -5905,17 +6006,30 @@ RegisterCDMUnlockElements = function()
                 end,
                 savePos = function(_, point, relPoint, x, y)
                     local p = ECME.db.profile
-                    -- Always store as CENTER/CENTER so the bar stays centered
-                    -- when icon count changes across specs.
+                    -- Convert TOPLEFT (from unlock mode) to the grow-direction
+                    -- edge point so the near edge stays fixed when icon count
+                    -- changes across specs.
                     local f = cdmBarFrames[key]
                     if f and point == "TOPLEFT" and relPoint == "TOPLEFT" then
+                        local bd2 = barDataByKey[key]
+                        local grow = bd2 and bd2.growDirection or "RIGHT"
                         local fw, fh = f:GetWidth() or 0, f:GetHeight() or 0
-                        local cx = x + fw * 0.5
-                        local cy = y - fh * 0.5
                         local uiW, uiH = UIParent:GetSize()
+                        local pt, ax, ay
+                        if grow == "RIGHT" then
+                            pt = "LEFT";   ax = x;            ay = y - fh * 0.5
+                        elseif grow == "LEFT" then
+                            pt = "RIGHT";  ax = x + fw;       ay = y - fh * 0.5
+                        elseif grow == "DOWN" then
+                            pt = "TOP";    ax = x + fw * 0.5; ay = y
+                        elseif grow == "UP" then
+                            pt = "BOTTOM"; ax = x + fw * 0.5; ay = y - fh
+                        else
+                            pt = "LEFT";   ax = x;            ay = y - fh * 0.5
+                        end
                         p.cdmBarPositions[key] = {
-                            point = "CENTER", relPoint = "CENTER",
-                            x = cx - uiW * 0.5, y = cy + uiH * 0.5,
+                            point = pt, relPoint = "CENTER",
+                            x = ax - uiW * 0.5, y = ay + uiH * 0.5,
                         }
                     else
                         p.cdmBarPositions[key] = { point = point, relPoint = relPoint, x = x, y = y }
@@ -5938,7 +6052,12 @@ RegisterCDMUnlockElements = function()
                 end,
                 isAnchored = function()
                     local bd2 = barDataByKey[key]
-                    return bd2 and bd2.anchorTo and bd2.anchorTo ~= "none"
+                    if not bd2 or not bd2.anchorTo then return false end
+                    local a = bd2.anchorTo
+                    -- Only valid anchor types: mouse, partyframe, playerframe, erb_*
+                    if a == "mouse" or a == "partyframe" or a == "playerframe" then return true end
+                    if a:sub(1, 4) == "erb_" then return true end
+                    return false
                 end,
             })
             end -- not isPartyAnchored
@@ -6531,6 +6650,14 @@ function ECME:CDMFinishSetup()
     -- Register with unlock mode
     RegisterCDMUnlockElements()
     ns.RegisterTBBUnlockElements()
+
+    -- Deferred re-build: the initial BuildAllCDMBars may have run before
+    -- Blizzard CDM populated icons (0 visible -> 1x1 frames). By the next
+    -- frame, icon visibility has settled and a rebuild produces correct sizes
+    -- and anchor positions.
+    C_Timer.After(0, function()
+        BuildAllCDMBars()
+    end)
 end
 
 -- Event frame

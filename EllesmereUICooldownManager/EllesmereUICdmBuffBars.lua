@@ -554,7 +554,6 @@ local function SetupTBBThresholdOverlay(bar, cfg)
     local texPath = EllesmereUI.ResolveTexturePath(TBB_TEXTURES, cfg.texture or "none", "Interface\\Buttons\\WHITE8x8")
     overlay:SetStatusBarTexture(texPath)
     overlay:SetOrientation(cfg.verticalOrientation and "VERTICAL" or "HORIZONTAL")
-    overlay:SetFillStyle(Enum.StatusBarFillStyle.Center)
     overlay:GetStatusBarTexture():SetVertexColor(
         cfg.stackThresholdR or 0.8,
         cfg.stackThresholdG or 0.1,
@@ -695,7 +694,6 @@ local function ApplyTrackedBuffBarSettings(bar, cfg)
 
     -- Orientation
     sb:SetOrientation(isVert and "VERTICAL" or "HORIZONTAL")
-    sb:SetFillStyle(Enum.StatusBarFillStyle.Center)
 
     -- Texture (only re-set if changed to avoid fill flash)
     local texPath = EllesmereUI.ResolveTexturePath(TBB_TEXTURES, cfg.texture or "none", "Interface\\Buttons\\WHITE8x8")
