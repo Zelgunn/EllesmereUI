@@ -1669,6 +1669,9 @@ local function ShowProcGlow(icon, cr, cg, cb)
     icon._procGlowActive = true
 end
 
+-- Cached player info (set once at PLAYER_LOGIN)
+local _playerRace, _playerClass
+
 -- Stop proc glow on one of our icons (restores active state glow if needed)
 local function StopProcGlow(icon)
     if not icon or not icon._procGlowActive then return end
@@ -1936,9 +1939,6 @@ end
 
 -- Combat lockout state: [spellID] = true while item was used in combat
 local _healthCombatLockout = {}
-
--- Cached player info (set once at PLAYER_LOGIN)
-local _playerRace, _playerClass
 
 -- Forward declarations
 local BuildCDMBar, LayoutCDMBar, UpdateCDMBarIcons, HideBlizzardCDM, RestoreBlizzardCDM
@@ -2296,7 +2296,9 @@ BuildCDMBar = function(barIndex)
     end
 
     -- Scale removed -- all sizing is width/height based now
-    frame:SetScale(1)
+    -- Using scale=1 for now so the variable is declared
+    local scale = 1
+    frame:SetScale(scale)
 
     -- Clear any previous mouse-tracking OnUpdate
     if frame._mouseTrack then
@@ -2689,7 +2691,7 @@ end
 ---   this function does nothing (and returns nil).
 --- @param barKey number    Index of the bar
 --- @param index number     Index of the icon on the bar
---- @return Frame|nil icon
+--- @return table|nil icon
 -------------------------------------------------------------------------------
 local function CreateCDMIcon(barKey, index)
     local frame = cdmBarFrames[barKey]
@@ -2729,7 +2731,7 @@ local function CreateCDMIcon(barKey, index)
     cd:SetDrawSwipe(true)
     cd:SetDrawBling(false)
     cd:SetSwipeColor(0, 0, 0, barData.swipeAlpha or 0.7)
-    cd:SetSwipeTexture("Interface\\Buttons\\WHITE8x8")
+    cd:SetSwipeTexture("Interface\\Buttons\\WHITE8x8", 1, 1, 1, 1)
     cd:SetHideCountdownNumbers(not barData.showCooldownText)
     cd:SetReverse(false)
     icon._cooldown = cd
@@ -4101,25 +4103,27 @@ local function UpdateTrackedBarIcons(barKey)
     -- Ensure we have enough icon frames
     while #icons < combinedN do
         local newIcon = CreateCDMIcon(barKey, #icons + 1)
-        icons[#icons + 1] = newIcon
-        if barData.showTooltip then
-            newIcon:SetScript("OnUpdate", _cdmTooltipOnUpdate)
-        end
-        -- Apply pending cooldown font immediately for dynamically created icons
-        -- (the batch applicator in BuildAllCDMBars only runs once at setup).
-        if newIcon._pendingFontPath and newIcon._cooldown then
-            C_Timer.After(0, function()
-                if newIcon._pendingFontPath and newIcon._cooldown then
-                    for ri = 1, newIcon._cooldown:GetNumRegions() do
-                        local region = select(ri, newIcon._cooldown:GetRegions())
-                        if region and region.GetObjectType and region:GetObjectType() == "FontString" then
-                            SetBlizzCDMFont(region, newIcon._pendingFontPath, newIcon._pendingFontSize)
-                            break
+        if newIcon ~= nil then
+            icons[#icons + 1] = newIcon
+            if barData.showTooltip then
+                newIcon:SetScript("OnUpdate", _cdmTooltipOnUpdate)
+            end
+            -- Apply pending cooldown font immediately for dynamically created icons
+            -- (the batch applicator in BuildAllCDMBars only runs once at setup).
+            if newIcon._pendingFontPath and newIcon._cooldown then
+                C_Timer.After(0, function()
+                    if newIcon._pendingFontPath and newIcon._cooldown then
+                        for ri = 1, newIcon._cooldown:GetNumRegions() do
+                            local region = select(ri, newIcon._cooldown:GetRegions())
+                            if region and region.GetObjectType and region:GetObjectType() == "FontString" then
+                                SetBlizzCDMFont(region, newIcon._pendingFontPath, newIcon._pendingFontSize)
+                                break
+                            end
                         end
+                        newIcon._pendingFontPath = nil; newIcon._pendingFontSize = nil
                     end
-                    newIcon._pendingFontPath = nil; newIcon._pendingFontSize = nil
-                end
-            end)
+                end)
+            end
         end
     end
 
@@ -6342,7 +6346,7 @@ local function TalentAwareReconcile()
         -- Phase 1: separate active list into still-known and newly-dormant
         -- Also check IsPlayerSpell as a fallback for spells the CDM viewer
         -- hasn't updated yet (e.g. choice-node talent swaps).
-        local _IPS = IsPlayerSpell
+        local _IPS = C_Spell.IsPlayerSpell
         local active = {}
         local seenInActive = {}
         for i, sid in ipairs(spellList) do

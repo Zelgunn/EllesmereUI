@@ -6,5 +6,9 @@ EllesmereUIUnitFrames/Libs/
 .kiro/
 .DS_Store
 
+# VSCode
+.vscode/
+.gitignore
+
 # Developer scripts
 *.ps1
