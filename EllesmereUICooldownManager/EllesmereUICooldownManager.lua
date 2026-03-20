@@ -3652,7 +3652,13 @@ local function UpdateCustomBarIcons(barKey)
     local icons = cdmBarIcons[barKey]
 
     -- Build spell list with render-time racial substitution
-    local spells = rawSpells
+    local spells = {}
+    for _, spellID in pairs(rawSpells) do
+        if (barData.barType == "misc") or C_SpellBook.IsSpellInSpellBook(spellID) then
+            spells[#spells+1] = spellID
+        end
+    end
+
     if _myRacials[1] then
         local needsSub = false
         for _, sid in ipairs(rawSpells) do
