@@ -1375,6 +1375,13 @@ local function GetClassPagingConditions()
     -- Dragonriding (all classes)
     conditions = conditions .. "[bonusbar:5] 11; "
 
+    -- Manual page switching (pages 2-6)
+    -- [bar:N] checks WoW's internal action bar page set by ChangeActionBarPage().
+    -- This allows the state driver to respond to manual page cycling.
+    local NUM_AB_PAGES = NUM_ACTIONBAR_PAGES or 6
+    for i = 2, NUM_AB_PAGES do
+        conditions = conditions .. "[bar:" .. i .. "] " .. i .. "; "
+    end
 
     -- Default: page 1
     conditions = conditions .. "1"
