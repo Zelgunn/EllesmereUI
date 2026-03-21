@@ -243,6 +243,12 @@ initFrame:SetScript("OnEvent", function(self)
               end }
         );  y = y - h
 
+        -- Extended chat options (font, enhancements, copy, search)
+        if EllesmereUI._BuildExtendedChatOptions then
+            local extH = EllesmereUI._BuildExtendedChatOptions(parent, y)
+            y = y - extH
+        end
+
         return math.abs(y)
     end
 

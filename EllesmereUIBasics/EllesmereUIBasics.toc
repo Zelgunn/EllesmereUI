@@ -11,10 +11,12 @@
 
 # Main Lua
 EllesmereUIBasics.lua
+EllesmereUIBasics_Chat.lua
 EllesmereUIBasics_QuestTracker.lua
 EllesmereUIBasics_Cursor.lua
 
 # Options
+EUI_Basics_Chat_Options.lua
 EUI_Basics_QuestTracker_Options.lua
 EUI_Basics_Cursor_Options.lua
 EUI_Basics_Options.lua

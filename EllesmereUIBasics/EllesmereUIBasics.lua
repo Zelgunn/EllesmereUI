@@ -24,6 +24,21 @@ local defaults = {
             visHideMounted   = false,
             visHideNoTarget  = false,
             visHideNoEnemy   = false,
+            -- New fields
+            fontFace           = nil,          -- nil = preserve current, else LSM font name
+            fontOutline        = "",           -- "", "OUTLINE", "THICKOUTLINE"
+            fontShadow         = true,         -- toggle shadow on/off
+            classColorNames    = true,         -- color player names by class
+            clickableURLs      = true,         -- detect and linkify URLs
+            shortenChannels    = "off",        -- "off", "short", "minimal"
+            timestamps         = "none",       -- "none","HH:MM","HH:MM:SS","HH:MM AP","HH:MM:SS AP"
+            timestampSeparator = false,        -- vertical bar between timestamp and message
+            messageFadeEnabled = true,         -- enable message fading
+            messageFadeTime    = 120,          -- seconds before fade (5-240)
+            messageSpacing     = 0,            -- line spacing (0-10)
+            copyButton         = false,        -- show copy button on chat frame
+            copyLines          = 200,          -- lines to include in copy (50-500)
+            showSearchButton   = true,         -- show search button on chat frame
         },
         minimap = {
             enabled       = true,
@@ -229,12 +244,48 @@ local function SkinChatFrame(chatFrame, p)
         end
     end
 
-    -- Font size
-    local fontString = chatFrame:GetFontObject()
-    if fontString then
-        local font, _, flags = fontString:GetFont()
-        if font then
-            chatFrame:SetFont(font, p.fontSize, flags)
+    -- Font: face, size, outline, shadow
+    do
+        local fontObj = chatFrame:GetFontObject()
+        if fontObj then
+            local curFont, _, curFlags = fontObj:GetFont()
+            -- Face: use configured LSM font or preserve current
+            local face = curFont
+            if p.fontFace then
+                local lsm = LibStub and LibStub("LibSharedMedia-3.0", true)
+                if lsm then
+                    local lsmPath = lsm:Fetch("font", p.fontFace)
+                    if lsmPath then face = lsmPath end
+                end
+            end
+            -- Outline
+            local outline = p.fontOutline or ""
+            -- Apply
+            chatFrame:SetFont(face, p.fontSize, outline)
+            -- Shadow
+            if p.fontShadow then
+                chatFrame:SetShadowOffset(1, -1)
+                chatFrame:SetShadowColor(0, 0, 0, 1)
+            else
+                chatFrame:SetShadowOffset(0, 0)
+                chatFrame:SetShadowColor(0, 0, 0, 0)
+            end
+        end
+    end
+
+    -- Message spacing
+    if chatFrame.SetSpacing then
+        chatFrame:SetSpacing(p.messageSpacing or 0)
+    end
+
+    -- Message fade
+    if chatFrame.SetTimeVisible then
+        if p.messageFadeEnabled then
+            chatFrame:SetTimeVisible(p.messageFadeTime or 120)
+            chatFrame:SetFadeDuration(3)
+        else
+            chatFrame:SetTimeVisible(9999)
+            chatFrame:SetFadeDuration(0)
         end
     end
 
@@ -354,6 +405,13 @@ local function ApplyChat()
             end)
         end
     end
+
+    -- Apply timestamps (from EllesmereUIBasics_Chat.lua)
+    if _G._EBS_ApplyTimestamps then _G._EBS_ApplyTimestamps() end
+
+    -- Update copy/search buttons (from EllesmereUIBasics_Chat.lua)
+    if _G._EBS_UpdateCopyButtons then _G._EBS_UpdateCopyButtons() end
+    if _G._EBS_UpdateSearchButtons then _G._EBS_UpdateSearchButtons() end
 
 end
 
