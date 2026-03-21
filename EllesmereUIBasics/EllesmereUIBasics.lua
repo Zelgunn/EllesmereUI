@@ -18,6 +18,12 @@ local defaults = {
             fontSize      = 14,
             hideButtons   = false,
             hideTabFlash  = false,
+            visibility    = "always",
+            visOnlyInstances = false,
+            visHideHousing   = false,
+            visHideMounted   = false,
+            visHideNoTarget  = false,
+            visHideNoEnemy   = false,
         },
         minimap = {
             enabled       = true,
@@ -26,12 +32,100 @@ local defaults = {
             useClassColor = false,
             hideZoneText  = false,
             hideButtons   = true,
+            visibility    = "always",
+            visOnlyInstances = false,
+            visHideHousing   = false,
+            visHideMounted   = false,
+            visHideNoTarget  = false,
+            visHideNoEnemy   = false,
         },
         friends = {
             enabled       = true,
             bgAlpha       = 0.8,
             borderR       = 0.05, borderG = 0.05, borderB = 0.05, borderA = 1,
             useClassColor = false,
+            visibility    = "always",
+            visOnlyInstances = false,
+            visHideHousing   = false,
+            visHideMounted   = false,
+            visHideNoTarget  = false,
+            visHideNoEnemy   = false,
+        },
+        cursor = {
+            enabled = true,
+            instanceOnly = false,
+            useClassColor = true,
+            hex = "0CD29D",
+            texture = "ring_normal",
+            scale = 1,
+            gcd = {
+                enabled = false,
+                attached = true,
+                radius = 21,
+                ringTex = "light",
+                scale = 100,
+                hex = "FFFFFF",
+                alpha = 80,
+                useClassColor = false,
+                instanceOnly = false,
+            },
+            castCircle = {
+                enabled = false,
+                attached = true,
+                radius = 30,
+                ringTex = "normal",
+                scale = 100,
+                hex = "3FA7FF",
+                alpha = 80,
+                sparkEnabled = true,
+                sparkHex = nil,
+                useClassColor = true,
+                instanceOnly = false,
+            },
+            trail = false,
+            visibility       = "always",
+            visOnlyInstances = false,
+            visHideHousing   = false,
+            visHideMounted   = false,
+            visHideNoTarget  = false,
+            visHideNoEnemy   = false,
+        },
+        questTracker = {
+            enabled              = true,
+            pos                  = nil,
+            width                = 220,
+            bgAlpha              = 0.6,
+            bgR                  = 0,
+            bgG                  = 0,
+            bgB                  = 0,
+            height               = 600,
+            alignment            = "top",
+            titleFontSize        = 11,
+            titleColor           = { r=1.0,  g=0.91, b=0.47 },
+            objFontSize          = 10,
+            objColor             = { r=0.72, g=0.72, b=0.72 },
+            secFontSize          = 12,
+            showZoneQuests       = true,
+            showWorldQuests      = true,
+            zoneCollapsed        = false,
+            worldCollapsed       = false,
+            showQuestItems       = true,
+            questItemSize        = 22,
+            secColor             = { r=0.047, g=0.824, b=0.624 },
+            delveCollapsed       = false,
+            questsCollapsed      = false,
+            questItemHotkey      = nil,
+            autoAccept           = false,
+            autoTurnIn           = false,
+            autoTurnInShiftSkip  = true,
+            showTopLine          = true,
+            hideBlizzardTracker  = true,
+            visibility           = "always",
+            visOnlyInstances     = false,
+            visHideHousing       = false,
+            visHideMounted       = false,
+            visHideNoTarget      = false,
+            visHideNoEnemy       = false,
         },
     },
 }
@@ -57,6 +151,7 @@ end
 --  Combat safety
 -------------------------------------------------------------------------------
 local pendingApply = false
+local ApplyAll  -- forward declaration
 
 local function QueueApplyAll()
     if pendingApply then return end
@@ -242,6 +337,7 @@ local function ApplyChat()
             end)
         end
     end
+
 end
 
 -------------------------------------------------------------------------------
@@ -446,12 +542,169 @@ local function ApplyFriends()
 end
 
 -------------------------------------------------------------------------------
+--  Visibility
+-------------------------------------------------------------------------------
+local _ebsInCombat = false
+
+-- Returns true = show, false = hide, "mouseover" = mouseover mode
+local function EvalVisibility(cfg)
+    if not cfg or not cfg.enabled then return false end
+    if EllesmereUI.CheckVisibilityOptions and EllesmereUI.CheckVisibilityOptions(cfg) then
+        return false
+    end
+    local mode = cfg.visibility or "always"
+    if mode == "mouseover" then return "mouseover" end
+    if mode == "always" then return true end
+    if mode == "never" then return false end
+    if mode == "in_combat" then return _ebsInCombat end
+    if mode == "out_of_combat" then return not _ebsInCombat end
+    local inGroup = IsInGroup()
+    local inRaid  = IsInRaid()
+    if mode == "in_raid"  then return inRaid end
+    if mode == "in_party" then return inGroup and not inRaid end
+    if mode == "solo"     then return not inGroup end
+    return true
+end
+
+-- Mouseover poll: single lightweight frame, only runs when needed
+-- Cached state avoids redundant SetAlpha calls; only fires API on change
+local mouseoverTargets = {}  -- { { frame=, visible= }, ... }
+local mouseoverPoll = CreateFrame("Frame")
+mouseoverPoll:Hide()
+local moElapsed = 0
+mouseoverPoll:SetScript("OnUpdate", function(_, dt)
+    moElapsed = moElapsed + dt
+    if moElapsed < 0.15 then return end
+    moElapsed = 0
+    for i = 1, #mouseoverTargets do
+        local t = mouseoverTargets[i]
+        local frame = t.frame
+        if frame and frame:IsShown() then
+            local over = frame:IsMouseOver()
+            if over and not t.visible then
+                t.visible = true
+                frame:SetAlpha(1)
+            elseif not over and t.visible then
+                t.visible = false
+                frame:SetAlpha(0)
+            end
+        end
+    end
+end)
+
+local function RebuildMouseoverTargets()
+    wipe(mouseoverTargets)
+    if not EBS.db then return end
+    local prof = EBS.db.profile
+    -- Chat: use first skinned chat frame as hover anchor, apply alpha to all
+    if prof.chat and prof.chat.enabled and prof.chat.visibility == "mouseover" then
+        for chatFrame in pairs(skinnedChatFrames) do
+            mouseoverTargets[#mouseoverTargets + 1] = { frame = chatFrame }
+        end
+    end
+    -- Minimap
+    if prof.minimap and prof.minimap.enabled and prof.minimap.visibility == "mouseover" then
+        if Minimap then
+            mouseoverTargets[#mouseoverTargets + 1] = { frame = Minimap }
+        end
+    end
+    -- Friends
+    if prof.friends and prof.friends.enabled and prof.friends.visibility == "mouseover" then
+        if FriendsFrame then
+            mouseoverTargets[#mouseoverTargets + 1] = { frame = FriendsFrame }
+        end
+    end
+    if #mouseoverTargets > 0 then
+        mouseoverPoll:Show()
+    else
+        mouseoverPoll:Hide()
+    end
+end
+
+local function UpdateChatVisibility()
+    local p = EBS.db and EBS.db.profile and EBS.db.profile.chat
+    if not p or not p.enabled then return end
+    local vis = EvalVisibility(p)
+    if vis == "mouseover" then
+        -- Start hidden; poll will handle show on hover
+        for chatFrame in pairs(skinnedChatFrames) do
+            chatFrame:SetAlpha(0)
+        end
+    else
+        for chatFrame in pairs(skinnedChatFrames) do
+            chatFrame:SetAlpha(vis and 1 or 0)
+        end
+    end
+end
+
+local function UpdateMinimapVisibility()
+    local p = EBS.db and EBS.db.profile and EBS.db.profile.minimap
+    if not p or not p.enabled then return end
+    local vis = EvalVisibility(p)
+    local minimap = Minimap
+    if not minimap then return end
+    if vis == "mouseover" then
+        minimap:SetAlpha(0)
+        minimap:Show()
+    elseif vis then
+        minimap:SetAlpha(1)
+        minimap:Show()
+    else
+        minimap:Hide()
+    end
+end
+
+local function UpdateFriendsVisibility()
+    local p = EBS.db and EBS.db.profile and EBS.db.profile.friends
+    if not p or not p.enabled then return end
+    if not FriendsFrame or not FriendsFrame:IsShown() then return end
+    local vis = EvalVisibility(p)
+    if vis == "mouseover" then
+        FriendsFrame:SetAlpha(0)
+    else
+        FriendsFrame:SetAlpha(vis and 1 or 0)
+    end
+end
+
+local function UpdateAllVisibility()
+    UpdateChatVisibility()
+    UpdateMinimapVisibility()
+    UpdateFriendsVisibility()
+    if _G._EBS_UpdateQTVisibility then _G._EBS_UpdateQTVisibility() end
+    if _G._ECL_UpdateVisibility then _G._ECL_UpdateVisibility() end
+    RebuildMouseoverTargets()
+end
+
+-- Expose globals for options/quest tracker/cursor
+_G._EBS_InCombat = function() return _ebsInCombat end
+_G._EBS_UpdateVisibility = UpdateAllVisibility
+_G._EBS_EvalVisibility = EvalVisibility
+
+local visFrame = CreateFrame("Frame")
+visFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+visFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+visFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+visFrame:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
+visFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+visFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+visFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+visFrame:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_REGEN_DISABLED" then
+        _ebsInCombat = true
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        _ebsInCombat = false
+    end
+    C_Timer.After(0, UpdateAllVisibility)
+end)
+
+-------------------------------------------------------------------------------
 --  Apply All
 -------------------------------------------------------------------------------
-local function ApplyAll()
+ApplyAll = function()
     ApplyChat()
     ApplyMinimap()
     ApplyFriends()
+    C_Timer.After(0, UpdateAllVisibility)
 end
 
 -------------------------------------------------------------------------------

@@ -3,57 +3,6 @@
 -------------------------------------------------------------------------------
 local addonName, ns = ...
 
-local DEFAULTS = {
-    enabled              = true,
-    locked               = false,
-    xPos                 = nil,
-    yPos                 = nil,
-    width                = 220,
-    bgAlpha              = 0.35,
-    fixedHeight          = false,
-    fixedHeightValue     = 300,
-    maxHeight            = 600,
-    titleFontSize        = 11,
-    titleFont            = nil,
-    titleColor           = { r=1.0,  g=0.85, b=0.1  },
-    objFontSize          = 10,
-    objFont              = nil,
-    objColor             = { r=0.72, g=0.72, b=0.72 },
-    secFontSize          = 8,
-    secFont              = nil,
-    showZoneQuests       = true,
-    showWorldQuests      = true,
-    zoneCollapsed        = false,
-    worldCollapsed       = false,
-    showQuestItems       = true,
-    questItemSize        = 22,
-    secColor             = { r=0.047, g=0.824, b=0.624 },
-    hdrFont              = nil,
-    hdrFontSize          = 11,
-    hdrColor             = { r=1.0,   g=1.0,   b=1.0  },
-    hdrShadow            = "OUTLINE",
-    titleShadow          = "NONE",
-    objShadow            = "NONE",
-    secShadow            = "OUTLINE",
-    -- Shadow color/alpha/offset per font type (r,g,b default black, a=1, ox=1,oy=-1)
-    hdrShadowColor       = { r=0, g=0, b=0, a=0.8 },
-    titleShadowColor     = { r=0, g=0, b=0, a=0.8 },
-    objShadowColor       = { r=0, g=0, b=0, a=0.8 },
-    secShadowColor       = { r=0, g=0, b=0, a=0.8 },
-    hdrShadowOffset      = { x=1, y=-1 },
-    titleShadowOffset    = { x=1, y=-1 },
-    objShadowOffset      = { x=1, y=-1 },
-    secShadowOffset      = { x=1, y=-1 },
-    delveCollapsed       = false,
-    questsCollapsed      = false,
-    questItemHotkey      = nil,
-    autoAccept           = false,
-    autoTurnIn           = false,
-    autoTurnInShiftSkip  = true,
-    showTopLine          = true,
-    hideBlizzardTracker  = true,
-}
-
 local C = {
     accent    = { r=0.047, g=0.824, b=0.624 },
     complete  = { r=0.25,  g=1.0,   b=0.35  },
@@ -78,19 +27,14 @@ EQT.dirty      = false
 -- DB
 -------------------------------------------------------------------------------
 local function DB()
-    EllesmereUIQuestTrackerDB = EllesmereUIQuestTrackerDB or {}
-    for k, v in pairs(DEFAULTS) do
-        if type(v) ~= "table" and EllesmereUIQuestTrackerDB[k] == nil then
-            EllesmereUIQuestTrackerDB[k] = v
-        end
+    -- Quest tracker data lives under the shared Basics Lite DB at profile.questTracker
+    local basicsDB = _G._EBS_AceDB
+    if basicsDB and basicsDB.profile and basicsDB.profile.questTracker then
+        return basicsDB.profile.questTracker
     end
-    for _, key in ipairs({"titleColor","objColor","secColor","hdrColor"}) do
-        if not EllesmereUIQuestTrackerDB[key] then
-            local d = DEFAULTS[key]
-            EllesmereUIQuestTrackerDB[key] = {r=d.r, g=d.g, b=d.b}
-        end
-    end
-    return EllesmereUIQuestTrackerDB
+    -- Fallback: Lite hasn't initialized yet, return a temporary table
+    if not EQT._tmpDB then EQT._tmpDB = {} end
+    return EQT._tmpDB
 end
 local function Cfg(k) return DB()[k] end
 
@@ -105,13 +49,19 @@ local function SafeFont(p)
     if ext and ext:lower() == "otf" then return FALLBACK_FONT end
     return p
 end
--- Apply shadow color/offset to a FontString from DB settings
-local function ApplyShadow(fs, shadowColorKey, shadowOffsetKey)
+-- Apply shadow based on global outline mode
+local function ApplyFontShadow(fs)
     if not fs then return end
-    local sc = Cfg(shadowColorKey) or {}
-    local so = Cfg(shadowOffsetKey) or {}
-    fs:SetShadowColor(sc.r or 0, sc.g or 0, sc.b or 0, sc.a or 0.8)
-    fs:SetShadowOffset(so.x or 1, so.y or -1)
+    if EllesmereUI.GetFontUseShadow and EllesmereUI.GetFontUseShadow() then
+        fs:SetShadowColor(0, 0, 0, 0.8)
+        fs:SetShadowOffset(1, -1)
+    else
+        fs:SetShadowOffset(0, 0)
+    end
+end
+local function OutlineFlag()
+    if EllesmereUI.GetFontOutlineFlag then return EllesmereUI.GetFontOutlineFlag() end
+    return ""
 end
 local function SetFontSafe(fs, path, size, flags)
     if not fs then return end
@@ -136,26 +86,121 @@ local function GlobalFont()
     end
     return FALLBACK_FONT
 end
-local function ResolveName(name)
-    if not name or name == "" then return nil end
-    if EllesmereUI and EllesmereUI.ResolveFontName then
-        local p = EllesmereUI.ResolveFontName(name); if p then return p end
+local function TitleFont() return GlobalFont(), Cfg("titleFontSize") or 11, OutlineFlag() end
+local function ObjFont()   return GlobalFont(), Cfg("objFontSize")   or 10, OutlineFlag() end
+local function SecFont()   return GlobalFont(), Cfg("secFontSize")   or 8,  OutlineFlag() end
+
+-------------------------------------------------------------------------------
+-- Context menu (EUI-styled popup)
+-------------------------------------------------------------------------------
+local ctxMenu  -- reusable context menu frame
+local function ShowContextMenu(anchor, items)
+    local PP = EllesmereUI and EllesmereUI.PP
+    local E  = EllesmereUI
+    if not E then return end
+
+    -- Build or reuse the menu frame
+    if not ctxMenu then
+        ctxMenu = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        ctxMenu:SetFrameStrata("FULLSCREEN_DIALOG")
+        ctxMenu:SetFrameLevel(200)
+        ctxMenu:SetClampedToScreen(true)
+        ctxMenu:EnableMouse(true)
+
+        -- Background
+        local bg = ctxMenu:CreateTexture(nil, "BACKGROUND")
+        bg:SetAllPoints()
+        bg:SetColorTexture(E.DD_BG_R, E.DD_BG_G, E.DD_BG_B, E.DD_BG_HA)
+        ctxMenu._bg = bg
+
+        -- Border
+        if PP then
+            PP.CreateBorder(ctxMenu, 1, 1, 1, E.DD_BRD_A, 1)
+        end
+
+        ctxMenu._items = {}
+
+        -- Close when clicking elsewhere
+        ctxMenu:SetScript("OnShow", function()
+            ctxMenu:SetScript("OnUpdate", function()
+                if not ctxMenu:IsMouseOver() and IsMouseButtonDown("LeftButton") then
+                    ctxMenu:Hide()
+                end
+            end)
+        end)
+        ctxMenu:SetScript("OnHide", function()
+            ctxMenu:SetScript("OnUpdate", nil)
+        end)
     end
-    if EllesmereUI and EllesmereUI.FONT_BLIZZARD and EllesmereUI.FONT_BLIZZARD[name] then
-        return EllesmereUI.FONT_BLIZZARD[name]
+
+    -- Clear old item frames
+    for _, btn in ipairs(ctxMenu._items) do
+        btn:Hide()
     end
-    if EllesmereUI and EllesmereUI.FONT_FILES and EllesmereUI.FONT_FILES[name] and EllesmereUI.MEDIA_PATH then
-        return SafeFont(EllesmereUI.MEDIA_PATH.."fonts\\"..EllesmereUI.FONT_FILES[name])
+    wipe(ctxMenu._items)
+
+    local ITEM_H = 26
+    local MENU_PAD = 4
+    local maxTextW = 0
+
+    -- Measure text widths first
+    for _, item in ipairs(items) do
+        local tmp = ctxMenu:CreateFontString(nil, "OVERLAY")
+        SetFontSafe(tmp, GlobalFont(), 12, OutlineFlag())
+        tmp:SetText(item.text)
+        local w = tmp:GetStringWidth()
+        if w > maxTextW then maxTextW = w end
+        tmp:Hide()
     end
-    return nil
-end
-local function TitleFont() return ResolveName(Cfg("titleFont")) or GlobalFont(), Cfg("titleFontSize") or 11, Cfg("titleShadow") or "NONE" end
-local function ObjFont()   return ResolveName(Cfg("objFont"))   or GlobalFont(), Cfg("objFontSize")   or 10, Cfg("objShadow") or "NONE" end
-local function SecFont()
-    return SafeFont(ResolveName(Cfg("secFont")) or GlobalFont()), Cfg("secFontSize") or 8, Cfg("secShadow") or "OUTLINE"
-end
-local function HdrFont()
-    return SafeFont(ResolveName(Cfg("hdrFont")) or GlobalFont()), Cfg("hdrFontSize") or 11, Cfg("hdrShadow") or "OUTLINE"
+
+    local MENU_W = math.max(140, maxTextW + 40)
+
+    -- Create item buttons
+    for i, item in ipairs(items) do
+        local btn = CreateFrame("Button", nil, ctxMenu)
+        btn:SetSize(MENU_W - MENU_PAD * 2, ITEM_H)
+        btn:SetPoint("TOPLEFT", ctxMenu, "TOPLEFT", MENU_PAD, -(MENU_PAD + (i - 1) * ITEM_H))
+
+        -- Highlight
+        local hl = btn:CreateTexture(nil, "BACKGROUND", nil, 1)
+        hl:SetAllPoints()
+        hl:SetColorTexture(1, 1, 1, 0)
+        btn._hl = hl
+
+        -- Label
+        local lbl = btn:CreateFontString(nil, "OVERLAY")
+        SetFontSafe(lbl, GlobalFont(), 12, OutlineFlag())
+        lbl:SetPoint("LEFT", btn, "LEFT", 10, 0)
+        lbl:SetPoint("RIGHT", btn, "RIGHT", -10, 0)
+        lbl:SetJustifyH("LEFT")
+        lbl:SetTextColor(E.TEXT_DIM_R, E.TEXT_DIM_G, E.TEXT_DIM_B, E.TEXT_DIM_A)
+        lbl:SetText(item.text)
+        btn._lbl = lbl
+
+        btn:SetScript("OnEnter", function()
+            hl:SetColorTexture(1, 1, 1, E.DD_ITEM_HL_A)
+            lbl:SetTextColor(1, 1, 1, 1)
+        end)
+        btn:SetScript("OnLeave", function()
+            hl:SetColorTexture(1, 1, 1, 0)
+            lbl:SetTextColor(E.TEXT_DIM_R, E.TEXT_DIM_G, E.TEXT_DIM_B, E.TEXT_DIM_A)
+        end)
+        btn:SetScript("OnClick", function()
+            ctxMenu:Hide()
+            if item.onClick then item.onClick() end
+        end)
+
+        table.insert(ctxMenu._items, btn)
+    end
+
+    ctxMenu:SetSize(MENU_W, MENU_PAD * 2 + #items * ITEM_H)
+
+    -- Position at cursor
+    local scale = ctxMenu:GetEffectiveScale()
+    local cx, cy = GetCursorPosition()
+    ctxMenu:ClearAllPoints()
+    ctxMenu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", cx / scale, cy / scale)
+    ctxMenu:Show()
 end
 
 -------------------------------------------------------------------------------
@@ -258,9 +303,14 @@ local function AcquireRow(parent)
         r.text:SetWordWrap(true)
         r.text:SetNonSpaceWrap(false)
         r.frame:SetScript("OnEnter", function(self)
-            if self._questID then r.text:SetAlpha(0.55) end
+            if self._questID and r._baseR then
+                local br, bg, bb = r._baseR, r._baseG, r._baseB
+                r.text:SetTextColor(br + (1 - br) * 0.5, bg + (1 - bg) * 0.5, bb + (1 - bb) * 0.5)
+            end
         end)
-        r.frame:SetScript("OnLeave", function() r.text:SetAlpha(1) end)
+        r.frame:SetScript("OnLeave", function()
+            if r._baseR then r.text:SetTextColor(r._baseR, r._baseG, r._baseB) end
+        end)
     end
     r.frame:SetParent(parent); r.frame._questID = nil
     r.frame:EnableMouse(false); r.frame:Show(); r.text:Show()
@@ -268,6 +318,8 @@ local function AcquireRow(parent)
 end
 local function ReleaseRow(r)
     r.frame:Hide(); r.frame:ClearAllPoints(); r.frame:SetScript("OnClick", nil)
+    r._baseR, r._baseG, r._baseB = nil, nil, nil
+    if r.numFS then r.numFS:Hide() end
     -- Clean up timer/progressbar sub-widgets
     if r.timerFS     then r.timerFS:Hide()     end
     if r.barBg       then r.barBg:Hide()       end
@@ -296,13 +348,18 @@ local function AcquireSection(parent)
         s.label:SetJustifyH("LEFT")
         s.arrow = s.frame:CreateFontString(nil, "OVERLAY")
         s.arrow:SetJustifyH("CENTER")
+        s.line = s.frame:CreateTexture(nil, "ARTWORK")
+        s.line:SetHeight(1)
+        s.line:SetPoint("BOTTOMLEFT",  s.frame, "BOTTOMLEFT",  0, 0)
+        s.line:SetPoint("BOTTOMRIGHT", s.frame, "BOTTOMRIGHT", 0, 0)
     end
     s.frame:SetParent(parent); s.frame:EnableMouse(true)
-    s.frame:Show(); s.label:Show(); s.arrow:Show()
+    s.frame:Show(); s.label:Show(); s.arrow:Show(); s.line:Show()
     return s
 end
 local function ReleaseSection(s)
     s.frame:Hide(); s.frame:ClearAllPoints(); s.frame:SetScript("OnClick", nil)
+    if s.line then s.line:Hide() end
     table.insert(secPool, s)
 end
 
@@ -466,7 +523,7 @@ local function GetScenarioSection()
     if isDelve then
         title = bannerTitle or scenarioName or "Delve"
     elseif scenarioName and stageName and stageName ~= "" then
-        title = scenarioName .. " — " .. stageName
+        title = scenarioName .. " - " .. stageName
     elseif stageName and stageName ~= "" then
         title = stageName
     else
@@ -686,12 +743,15 @@ end
 -------------------------------------------------------------------------------
 local PAD_H    = 8
 local PAD_V    = 6
-local HEADER_H = 20
+local TXT_PAD  = 5
 local ROW_GAP  = 1
-local SEC_GAP  = 4
+local SEC_GAP  = 5
 local ITEM_PAD = 3
 local BAR_H    = 9   -- progress bar height (doubled)
 local BAR_PAD  = 2   -- gap between text and bar
+
+-- Forward declaration; defined after BuildFrame
+local UpdateInnerAlignment
 
 function EQT:Refresh()
     local f = self.frame
@@ -705,21 +765,12 @@ function EQT:Refresh()
     ReleaseAll(); ReleaseAllItems()
     for i = #self.sections, 1, -1 do ReleaseSection(self.sections[i]); self.sections[i] = nil end
 
-    if f.bg then f.bg:SetColorTexture(0, 0, 0, Cfg("bgAlpha") or 0.35) end
+    if f.bg then f.bg:SetColorTexture(Cfg("bgR") or 0, Cfg("bgG") or 0, Cfg("bgB") or 0, Cfg("bgAlpha") or 0.35) end
     f:SetWidth(width)
-
-    -- Update header "OBJECTIVES" text font/color
-    if f.hdrTitle then
-        local hfp, hfs, hff = HdrFont()
-        SetFontSafe(f.hdrTitle, hfp, hfs, hff)
-        local hc = Cfg("hdrColor") or C.header
-        f.hdrTitle:SetTextColor(hc.r, hc.g, hc.b)
-        ApplyShadow(f.hdrTitle, "hdrShadowColor", "hdrShadowOffset")
-    end
-
-    if f.collapsed then
-        f:SetHeight(PAD_V + HEADER_H + PAD_V); content:SetHeight(1); return
-    end
+    local contentW = math.max(10, width - PAD_H * 2 - 10)
+    content:SetWidth(contentW)
+    -- Row width for explicit SetWidth before measuring text height (anchors may not resolve in time)
+    local rowW = contentW - TXT_PAD
 
     local yOff = 0
     local sfp, sfs, sff = SecFont()
@@ -731,20 +782,29 @@ function EQT:Refresh()
         SetFontSafe(s.label, sfp, sfs, sff)
         local sc = Cfg("secColor") or C.section
         s.label:SetTextColor(sc.r, sc.g, sc.b)
-        ApplyShadow(s.label, "secShadowColor", "secShadowOffset")
+        ApplyFontShadow(s.label)
         s.label:SetText(label)
         s.label:ClearAllPoints()
-        s.label:SetPoint("LEFT",  s.frame, "LEFT",  0, 0)
-        s.label:SetPoint("RIGHT", s.frame, "RIGHT", -(arrowSize + 4), 0)
-        SetFontSafe(s.arrow, arrowFont, arrowSize, "OUTLINE")
+        s.label:SetPoint("LEFT",  s.frame, "LEFT",  0, 3)
+        s.label:SetPoint("RIGHT", s.frame, "RIGHT", -(arrowSize + 4), 3)
+        SetFontSafe(s.arrow, arrowFont, arrowSize, OutlineFlag())
         s.arrow:SetTextColor(C.accent.r, C.accent.g, C.accent.b)
         s.arrow:SetText(isCollapsed and "+" or "-")
         s.arrow:ClearAllPoints()
-        s.arrow:SetPoint("RIGHT", s.frame, "RIGHT", 0, 0)
+        s.arrow:SetPoint("RIGHT", s.frame, "RIGHT", 0, 3)
         s.arrow:SetWidth(arrowSize + 4)
-        local h = math.max(sfs + 6, arrowSize + 2)
+        s.line:SetColorTexture(sc.r, sc.g, sc.b, 0.4)
+        local br, bg, bb = sc.r, sc.g, sc.b
+        s.frame:SetScript("OnEnter", function()
+            s.label:SetTextColor(br + (1 - br) * 0.5, bg + (1 - bg) * 0.5, bb + (1 - bb) * 0.5)
+        end)
+        s.frame:SetScript("OnLeave", function()
+            s.label:SetTextColor(br, bg, bb)
+        end)
+        local textH = math.max(sfs + 6, arrowSize + 2)
+        local h = textH + 5 + 1
         s.frame:SetHeight(h)
-        s.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -yOff)
+        s.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  TXT_PAD, -yOff)
         s.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -yOff)
         s.frame:SetScript("OnClick", onToggle)
         yOff = yOff + h + SEC_GAP
@@ -758,13 +818,21 @@ function EQT:Refresh()
         s.label:SetTextColor(sc2.r, sc2.g, sc2.b)
         s.label:SetText(label)
         s.label:ClearAllPoints()
-        s.label:SetPoint("LEFT",  s.frame, "LEFT",  0, 0)
-        s.label:SetPoint("RIGHT", s.frame, "RIGHT", 0, 0)
+        s.label:SetPoint("LEFT",  s.frame, "LEFT",  0, 3)
+        s.label:SetPoint("RIGHT", s.frame, "RIGHT", 0, 3)
         SetFontSafe(s.arrow, sfp, sfs, sff); s.arrow:SetText("")
-        s.frame:EnableMouse(false)
-        local h = math.max(sfs + 6, 12)
+        s.line:SetColorTexture(sc2.r, sc2.g, sc2.b, 0.4)
+        local br, bg, bb = sc2.r, sc2.g, sc2.b
+        s.frame:SetScript("OnEnter", function()
+            s.label:SetTextColor(br + (1 - br) * 0.5, bg + (1 - bg) * 0.5, bb + (1 - bb) * 0.5)
+        end)
+        s.frame:SetScript("OnLeave", function()
+            s.label:SetTextColor(br, bg, bb)
+        end)
+        local textH = math.max(sfs + 6, 12)
+        local h = textH + 5 + 1
         s.frame:SetHeight(h)
-        s.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -yOff)
+        s.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  TXT_PAD, -yOff)
         s.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -yOff)
         yOff = yOff + h + SEC_GAP
         table.insert(self.sections, s)
@@ -788,13 +856,13 @@ function EQT:Refresh()
 
         local r = AcquireRow(content)
         r.frame:SetHeight(TOTAL_H)
-        r.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -yOff)
+        r.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  TXT_PAD, -yOff)
         r.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -yOff)
 
         -- Countdown text
-        SetFontSafe(r.text, ofp, TEXT_H, "OUTLINE")
+        SetFontSafe(r.text, ofp, TEXT_H, OutlineFlag())
         r.text:ClearAllPoints()
-        r.text:SetPoint("TOPLEFT",  r.frame, "TOPLEFT",  14, 0)
+        r.text:SetPoint("TOPLEFT",  r.frame, "TOPLEFT",  20, 0)
         r.text:SetPoint("TOPRIGHT", r.frame, "TOPRIGHT", -4, 0)
         r.text:SetHeight(TEXT_H + 2)
         r.text:Show()
@@ -880,7 +948,7 @@ function EQT:Refresh()
         -- Percentage text (always recreate - reparenting loses font state)
         if r.pctFS then r.pctFS:Hide(); r.pctFS = nil end
         r.pctFS = r.frame:CreateFontString(nil, "OVERLAY")
-        SetFontSafe(r.pctFS, GlobalFont(), BAR_H + 2, "OUTLINE")
+        SetFontSafe(r.pctFS, GlobalFont(), BAR_H + 2, OutlineFlag())
         r.pctFS:SetJustifyH("RIGHT")
         r.pctFS:SetJustifyV("MIDDLE")
         r.pctFS:SetTextColor(1, 1, 1)
@@ -894,7 +962,7 @@ function EQT:Refresh()
 
         local rh = BAR_H + BAR_PAD * 2 + 2
         r.frame:SetHeight(rh)
-        r.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -yOff)
+        r.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  TXT_PAD, -yOff)
         r.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -yOff)
         yOff = yOff + rh + ROW_GAP
         table.insert(self.rows, r)
@@ -904,15 +972,17 @@ function EQT:Refresh()
         local r = AcquireRow(content)
         SetFontSafe(r.text, tfp, tfs, tff)
         r.text:SetTextColor(cr, cg, cb)
-        ApplyShadow(r.text, "titleShadowColor", "titleShadowOffset")
+        r._baseR, r._baseG, r._baseB = cr, cg, cb
+        ApplyFontShadow(r.text)
         r.text:SetText(text)
         r.text:Show()
         local item = Cfg("showQuestItems") and qID and GetQuestItem(qID)
         local rightPad = item and (iqSize + ITEM_PAD * 2) or 0
         r.text:ClearAllPoints()
-        r.text:SetPoint("TOPLEFT",  r.frame, "TOPLEFT",  4, 0)
+        r.text:SetPoint("TOPLEFT",  r.frame, "TOPLEFT",  2, 0)
         r.text:SetPoint("TOPRIGHT", r.frame, "TOPRIGHT", -rightPad, 0)
-        r.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -yOff)
+        r.frame:SetWidth(rowW)
+        r.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  TXT_PAD, -yOff)
         r.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -yOff)
         local th = r.text:GetStringHeight()
         if th < tfs then th = tfs end
@@ -933,7 +1003,7 @@ function EQT:Refresh()
             if item.charges and item.charges > 0 then
                 if not btn._chargeFS then
                     btn._chargeFS = btn:CreateFontString(nil, "OVERLAY")
-                    SetFontSafe(btn._chargeFS, GlobalFont(), 9, "OUTLINE")
+                    SetFontSafe(btn._chargeFS, GlobalFont(), 9, OutlineFlag())
                     btn._chargeFS:SetTextColor(1,1,1)
                     btn._chargeFS:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 0, 2)
                 end
@@ -946,9 +1016,18 @@ function EQT:Refresh()
             r.frame:RegisterForClicks("LeftButtonUp", "RightButtonUp")
             r.frame:SetScript("OnClick", function(self, btn)
                 if btn == "RightButton" then
-                    RemoveWatch(qID); EQT.dirty = true
+                    ShowContextMenu(self, {
+                        { text = "Untrack Quest", onClick = function()
+                            RemoveWatch(qID); EQT.dirty = true
+                        end },
+                        { text = "Abandon Quest", onClick = function()
+                            C_QuestLog.SetSelectedQuest(qID)
+                            C_QuestLog.SetAbandonQuest()
+                            StaticPopup_Show("ABANDON_QUEST", C_QuestLog.GetTitleForQuestID(qID))
+                        end },
+                    })
                 else
-                    -- TWW: open world map to quest details
+                    -- Open world map to quest details
                     if C_QuestLog.SetSelectedQuest then
                         C_QuestLog.SetSelectedQuest(qID)
                     end
@@ -970,13 +1049,14 @@ function EQT:Refresh()
         local r = AcquireRow(content)
         SetFontSafe(r.text, ofp, ofs, off)
         r.text:SetTextColor(cr, cg, cb)
-        ApplyShadow(r.text, "objShadowColor", "objShadowOffset")
+        ApplyFontShadow(r.text)
         r.text:SetText(text)
         r.text:Show()
         r.text:ClearAllPoints()
-        r.text:SetPoint("TOPLEFT",  r.frame, "TOPLEFT",  14, 0)
+        r.text:SetPoint("TOPLEFT",  r.frame, "TOPLEFT",  20, 0)
         r.text:SetPoint("TOPRIGHT", r.frame, "TOPRIGHT",  0, 0)
-        r.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -yOff)
+        r.frame:SetWidth(rowW)
+        r.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  TXT_PAD, -yOff)
         r.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -yOff)
         local th = r.text:GetStringHeight()
         if th < ofs then th = ofs end
@@ -1038,7 +1118,7 @@ function EQT:Refresh()
             local BANNER_H = 42
             local ICON_SIZE = 36
             local r = AcquireRow(content)
-            r.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, -yOff)
+            r.frame:SetPoint("TOPLEFT",  content, "TOPLEFT",  TXT_PAD, -yOff)
             r.frame:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -yOff)
             r.frame:SetHeight(BANNER_H)
 
@@ -1079,7 +1159,7 @@ function EQT:Refresh()
                     r.tierFS = r.frame:CreateFontString(nil, "OVERLAY")
                     r.tierFS:SetJustifyH("CENTER")
                 end
-                SetFontSafe(r.tierFS, GlobalFont(), tfs + 4, "OUTLINE")
+                SetFontSafe(r.tierFS, GlobalFont(), tfs + 4, OutlineFlag())
                 r.tierFS:SetTextColor(C.accent.r, C.accent.g, C.accent.b)
                 r.tierFS:SetText(scenario.bannerTier)
                 r.tierFS:ClearAllPoints()
@@ -1099,7 +1179,7 @@ function EQT:Refresh()
             r.text:SetJustifyV("MIDDLE")
             r.text:SetHeight(BANNER_H)
             r.text:Show()
-            ApplyShadow(r.text, "titleShadowColor", "titleShadowOffset")
+            ApplyFontShadow(r.text)
 
             yOff = yOff + BANNER_H + 6  -- extra gap below banner
             table.insert(self.rows, r)
@@ -1163,103 +1243,330 @@ function EQT:Refresh()
     end
 
     content:SetHeight(math.max(yOff, 1))
-    local totalH = PAD_V + HEADER_H + 4 + yOff + PAD_V
-    if Cfg("fixedHeight") then
-        f:SetHeight(Cfg("fixedHeightValue") or 300)
-    else
-        f:SetHeight(math.min(totalH, Cfg("maxHeight") or 600))
+    local totalH = PAD_V + 2 + yOff + PAD_V + 5
+    local maxH = Cfg("height") or 600
+    -- Outer frame stays at max height (consistent with unlock mode)
+    f:SetHeight(maxH)
+    -- Inner frame auto-collapses to content
+    if f.inner then
+        f.inner:SetHeight(math.min(totalH, maxH))
+        UpdateInnerAlignment(f)
     end
-    if f.sf then f.sf:SetVerticalScroll(0) end
+    -- Clamp scroll position to valid range (don't reset to 0)
+    if f.sf then
+        local maxScroll = EllesmereUI.SafeScrollRange(f.sf)
+        local cur = f.sf:GetVerticalScroll()
+        if cur > maxScroll then
+            f.sf:SetVerticalScroll(maxScroll)
+        end
+        if f._updateScrollThumb then f._updateScrollThumb() end
+    end
 end
 
 -------------------------------------------------------------------------------
 -- Frame
 -------------------------------------------------------------------------------
+UpdateInnerAlignment = function(f)
+    local inner = f.inner
+    if not inner then return end
+    inner:ClearAllPoints()
+    local align = Cfg("alignment") or "top"
+    if align == "bottom" then
+        inner:SetPoint("BOTTOMLEFT",  f, "BOTTOMLEFT",  0, 0)
+        inner:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
+    elseif align == "center" then
+        inner:SetPoint("LEFT",  f, "LEFT",  0, 0)
+        inner:SetPoint("RIGHT", f, "RIGHT", 0, 0)
+    else -- top (default)
+        inner:SetPoint("TOPLEFT",  f, "TOPLEFT",  0, 0)
+        inner:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
+    end
+end
+
 local function BuildFrame()
     local f = CreateFrame("Frame", "EUI_QuestTrackerFrame", UIParent)
-    f:SetFrameStrata("MEDIUM"); f:SetClampedToScreen(false); f:SetMovable(true)
+    f:SetFrameStrata("MEDIUM"); f:SetClampedToScreen(false)
 
-    local bg = f:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints(); bg:SetColorTexture(0, 0, 0, Cfg("bgAlpha") or 0.35); f.bg = bg
+    -- Inner frame holds all visual content; aligns within f based on setting
+    local inner = CreateFrame("Frame", nil, f)
+    inner:EnableMouse(true)
+    f.inner = inner
 
-    local topLine = f:CreateTexture(nil, "ARTWORK")
+    local bg = inner:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(); bg:SetColorTexture(Cfg("bgR") or 0, Cfg("bgG") or 0, Cfg("bgB") or 0, Cfg("bgAlpha") or 0.35); f.bg = bg
+
+    local topLine = inner:CreateTexture(nil, "ARTWORK")
     topLine:SetHeight(1)
-    topLine:SetPoint("TOPLEFT",  f, "TOPLEFT",  0, 0)
-    topLine:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
+    topLine:SetPoint("TOPLEFT",  inner, "TOPLEFT",  0, 0)
+    topLine:SetPoint("TOPRIGHT", inner, "TOPRIGHT", 0, 0)
     topLine:SetColorTexture(C.accent.r, C.accent.g, C.accent.b, 0.7)
     if not Cfg("showTopLine") then topLine:Hide() end
     f.topLine = topLine
 
-    local drag = CreateFrame("Frame", nil, f)
-    drag:SetHeight(PAD_V + HEADER_H + PAD_V)
-    drag:SetPoint("TOPLEFT",  f, "TOPLEFT",  0, 0)
-    drag:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
-    drag:SetFrameLevel(f:GetFrameLevel() + 20)
-    drag:EnableMouse(true); drag:RegisterForDrag("LeftButton")
-    drag:SetScript("OnDragStart", function()
-        if not Cfg("locked") then f:StartMoving() end
-    end)
-    drag:SetScript("OnDragStop", function()
-        f:StopMovingOrSizing()
-        local uiH = UIParent:GetHeight()
-        DB().xPos = f:GetLeft(); DB().yPos = f:GetTop() - uiH
-        f:ClearAllPoints()
-        f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", DB().xPos, DB().yPos + uiH)
-    end)
-
-    local hdrTitle = drag:CreateFontString(nil, "OVERLAY")
-    local hfp, hfs, hff = HdrFont()
-    SetFontSafe(hdrTitle, hfp, hfs, hff)
-    local hc = Cfg("hdrColor") or C.header
-    hdrTitle:SetTextColor(hc.r, hc.g, hc.b)
-    ApplyShadow(hdrTitle, "hdrShadowColor", "hdrShadowOffset")
-    f.hdrTitle = hdrTitle
-    hdrTitle:SetJustifyH("LEFT")
-    hdrTitle:SetPoint("LEFT",  drag, "LEFT",  PAD_H, 0)
-    hdrTitle:SetPoint("RIGHT", drag, "RIGHT", -28, 0)
-    hdrTitle:SetHeight(HEADER_H)
-    hdrTitle:SetText("OBJECTIVES")
-
-    local colBtn = CreateFrame("Button", nil, f)
-    colBtn:SetSize(22, 22)
-    colBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD_H + 2, -PAD_V + 1)
-    colBtn:SetFrameLevel(drag:GetFrameLevel() + 5)
-    local colFS = colBtn:CreateFontString(nil, "OVERLAY")
-    SetFontSafe(colFS, GlobalFont(), 16, "OUTLINE")
-    colFS:SetTextColor(C.accent.r, C.accent.g, C.accent.b)
-    colFS:SetAllPoints(); colFS:SetText("-")
-    f.collapsed = false
-    colBtn:SetScript("OnClick", function()
-        f.collapsed = not f.collapsed
-        colFS:SetText(f.collapsed and "+" or "-")
-        EQT:Refresh()
-    end)
-
-    local sep = f:CreateTexture(nil, "ARTWORK")
-    sep:SetHeight(1)
-    sep:SetPoint("TOPLEFT",  f, "TOPLEFT",  PAD_H, -(PAD_V + HEADER_H + 1))
-    sep:SetPoint("TOPRIGHT", f, "TOPRIGHT", -PAD_H, -(PAD_V + HEADER_H + 1))
-    sep:SetColorTexture(C.accent.r, C.accent.g, C.accent.b, 0.25)
-
-    local sf = CreateFrame("ScrollFrame", "EUI_QuestTrackerScroll", f)
-    sf:SetPoint("TOPLEFT",     f, "TOPLEFT",     PAD_H, -(PAD_V + HEADER_H + 4))
-    sf:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -PAD_H, PAD_V)
+    local sf = CreateFrame("ScrollFrame", "EUI_QuestTrackerScroll", inner)
+    sf:SetPoint("TOPLEFT",     inner, "TOPLEFT",     PAD_H, -(PAD_V + 2))
+    sf:SetPoint("BOTTOMRIGHT", inner, "BOTTOMRIGHT", -(PAD_H + 10), PAD_V + 5)
     sf:EnableMouseWheel(true)
-    sf:SetScript("OnMouseWheel", function(self, delta)
-        local new = math.max(0, math.min(self:GetVerticalScrollRange(), self:GetVerticalScroll() - delta*28))
-        self:SetVerticalScroll(new)
-    end)
+    sf:SetClipsChildren(true)
     f.sf = sf
 
     local content = CreateFrame("Frame", nil, sf)
-    content:SetWidth(math.max(10, (Cfg("width") or 220) - PAD_H*2))
+    content:SetWidth(math.max(10, (Cfg("width") or 220) - PAD_H*2 - 10))
     content:SetHeight(1)
     sf:SetScrollChild(content); f.content = content
 
-    f:HookScript("OnSizeChanged", function(self, w)
-        local cw = math.max(10, w - PAD_H*2)
-        content:SetWidth(cw); sf:SetWidth(cw)
+    -- Thin scrollbar (parented to inner so it isn't clipped by ScrollFrame)
+    local scrollTrack = CreateFrame("Frame", nil, inner)
+    scrollTrack:SetWidth(4)
+    scrollTrack:SetPoint("TOPRIGHT", inner, "TOPRIGHT", -4, -(PAD_V + 2 + 4))
+    scrollTrack:SetPoint("BOTTOMRIGHT", inner, "BOTTOMRIGHT", -4, PAD_V + 5 + 4)
+    scrollTrack:SetFrameLevel(sf:GetFrameLevel() + 3)
+    scrollTrack:Hide()
+
+    local trackBg = scrollTrack:CreateTexture(nil, "BACKGROUND")
+    trackBg:SetAllPoints()
+    trackBg:SetColorTexture(1, 1, 1, 0.02)
+
+    local scrollThumb = CreateFrame("Button", nil, scrollTrack)
+    scrollThumb:SetWidth(4)
+    scrollThumb:SetHeight(60)
+    scrollThumb:SetPoint("TOP", scrollTrack, "TOP", 0, 0)
+    scrollThumb:SetFrameLevel(scrollTrack:GetFrameLevel() + 1)
+    scrollThumb:EnableMouse(true)
+    scrollThumb:RegisterForDrag("LeftButton")
+    scrollThumb:SetScript("OnDragStart", function() end)
+    scrollThumb:SetScript("OnDragStop", function() end)
+
+    local scrollHitArea = CreateFrame("Button", nil, inner)
+    scrollHitArea:SetWidth(16)
+    scrollHitArea:SetPoint("TOPRIGHT", inner, "TOPRIGHT", 0, -(PAD_V + 2 + 4))
+    scrollHitArea:SetPoint("BOTTOMRIGHT", inner, "BOTTOMRIGHT", 0, PAD_V + 5 + 4)
+    scrollHitArea:SetFrameLevel(scrollTrack:GetFrameLevel() + 2)
+    scrollHitArea:EnableMouse(true)
+    scrollHitArea:RegisterForDrag("LeftButton")
+    scrollHitArea:SetScript("OnDragStart", function() end)
+    scrollHitArea:SetScript("OnDragStop", function() end)
+
+    local thumbTex = scrollThumb:CreateTexture(nil, "ARTWORK")
+    thumbTex:SetAllPoints()
+    thumbTex:SetColorTexture(1, 1, 1, 0.27)
+
+    local SCROLL_STEP = 60
+    local SMOOTH_SPEED = 12
+    local isDragging = false
+    local dragStartY, dragStartScroll
+    local scrollTarget = 0
+    local isSmoothing = false
+
+    local function StopScrollDrag()
+        if not isDragging then return end
+        isDragging = false
+        scrollThumb:SetScript("OnUpdate", nil)
+    end
+
+    local scrollbarHovered = false
+    local FADE_DUR = 0.2
+    local hoverFade = 0   -- 0 = fully out, 1 = fully in
+    scrollTrack:SetAlpha(0)
+    scrollTrack:Show()
+
+    local function UpdateScrollThumb()
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
+        if maxScroll <= 0 then scrollTrack:SetAlpha(0); hoverFade = 0; return end
+        local trackH = scrollTrack:GetHeight()
+        local visH   = sf:GetHeight()
+        local visibleRatio = visH / (visH + maxScroll)
+        local thumbH = math.max(30, trackH * visibleRatio)
+        scrollThumb:SetHeight(thumbH)
+        local scrollRatio = (tonumber(sf:GetVerticalScroll()) or 0) / maxScroll
+        local maxThumbTravel = trackH - thumbH
+        scrollThumb:ClearAllPoints()
+        scrollThumb:SetPoint("TOP", scrollTrack, "TOP", 0, -(scrollRatio * maxThumbTravel))
+    end
+    f._updateScrollThumb = UpdateScrollThumb
+
+    -- Smooth scroll OnUpdate
+    local smoothFrame = CreateFrame("Frame")
+    smoothFrame:Hide()
+    smoothFrame:SetScript("OnUpdate", function(_, elapsed)
+        local cur = sf:GetVerticalScroll()
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
+        local scale = sf:GetEffectiveScale()
+        maxScroll = math.floor(maxScroll * scale) / scale
+        scrollTarget = math.max(0, math.min(maxScroll, scrollTarget))
+        local diff = scrollTarget - cur
+        if math.abs(diff) < 0.3 then
+            sf:SetVerticalScroll(scrollTarget)
+            UpdateScrollThumb()
+            isSmoothing = false
+            smoothFrame:Hide()
+            return
+        end
+        local newScroll = cur + diff * math.min(1, SMOOTH_SPEED * elapsed)
+        newScroll = math.max(0, math.min(maxScroll, newScroll))
+        if diff > 0 then
+            newScroll = math.ceil(newScroll * scale) / scale
+        else
+            newScroll = math.floor(newScroll * scale) / scale
+        end
+        newScroll = math.max(0, math.min(maxScroll, newScroll))
+        sf:SetVerticalScroll(newScroll)
+        UpdateScrollThumb()
     end)
+
+    local function SmoothScrollTo(target)
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
+        local scale = sf:GetEffectiveScale()
+        maxScroll = math.floor(maxScroll * scale) / scale
+        scrollTarget = math.max(0, math.min(maxScroll, target))
+        scrollTarget = math.floor(scrollTarget * scale + 0.5) / scale
+        scrollTarget = math.min(scrollTarget, maxScroll)
+        if not isSmoothing then
+            isSmoothing = true
+            smoothFrame:Show()
+        end
+    end
+
+    sf:SetScript("OnMouseWheel", function(self, delta)
+        local maxScroll = EllesmereUI.SafeScrollRange(self)
+        if maxScroll <= 0 then return end
+        local base = isSmoothing and scrollTarget or self:GetVerticalScroll()
+        SmoothScrollTo(base - delta * SCROLL_STEP)
+    end)
+    sf:SetScript("OnScrollRangeChanged", function() UpdateScrollThumb() end)
+
+    local function ScrollThumbOnUpdate(self)
+        if not IsMouseButtonDown("LeftButton") then StopScrollDrag(); return end
+        isSmoothing = false; smoothFrame:Hide()
+        local _, cursorY = GetCursorPosition()
+        cursorY = cursorY / self:GetEffectiveScale()
+        local deltaY = dragStartY - cursorY
+        local trackH = scrollTrack:GetHeight()
+        local maxThumbTravel = trackH - self:GetHeight()
+        if maxThumbTravel <= 0 then return end
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
+        local newScroll = math.max(0, math.min(maxScroll, dragStartScroll + (deltaY / maxThumbTravel) * maxScroll))
+        local scale = sf:GetEffectiveScale()
+        newScroll = math.floor(newScroll * scale + 0.5) / scale
+        scrollTarget = newScroll
+        sf:SetVerticalScroll(newScroll)
+        UpdateScrollThumb()
+    end
+
+    scrollThumb:SetScript("OnMouseDown", function(self, button)
+        if button ~= "LeftButton" then return end
+        isSmoothing = false; smoothFrame:Hide()
+        isDragging = true
+        local _, cursorY = GetCursorPosition()
+        dragStartY = cursorY / self:GetEffectiveScale()
+        dragStartScroll = sf:GetVerticalScroll()
+        self:SetScript("OnUpdate", ScrollThumbOnUpdate)
+    end)
+    scrollThumb:SetScript("OnMouseUp", function(_, button)
+        if button ~= "LeftButton" then return end
+        StopScrollDrag()
+    end)
+
+    scrollHitArea:SetScript("OnMouseDown", function(_, button)
+        if button ~= "LeftButton" then return end
+        isSmoothing = false; smoothFrame:Hide()
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
+        if maxScroll <= 0 then return end
+        local _, cy = GetCursorPosition()
+        cy = cy / scrollTrack:GetEffectiveScale()
+        local top = scrollTrack:GetTop() or 0
+        local trackH = scrollTrack:GetHeight()
+        local thumbH = scrollThumb:GetHeight()
+        if trackH <= thumbH then return end
+        local frac = (top - cy - thumbH / 2) / (trackH - thumbH)
+        frac = math.max(0, math.min(1, frac))
+        local newScroll = frac * maxScroll
+        local scale = sf:GetEffectiveScale()
+        newScroll = math.floor(newScroll * scale + 0.5) / scale
+        scrollTarget = newScroll
+        sf:SetVerticalScroll(newScroll)
+        UpdateScrollThumb()
+        isDragging = true
+        dragStartY = cy
+        dragStartScroll = newScroll
+        scrollThumb:SetScript("OnUpdate", ScrollThumbOnUpdate)
+    end)
+    scrollHitArea:SetScript("OnMouseUp", function(_, button)
+        if button ~= "LeftButton" then return end
+        StopScrollDrag()
+    end)
+
+    f:HookScript("OnSizeChanged", function(self, w)
+        if EQT._widthDragging then return end
+        local cw = math.max(10, w - PAD_H*2 - 10)
+        content:SetWidth(cw); sf:SetWidth(cw)
+        UpdateScrollThumb()
+    end)
+
+    -- Event-driven hover fade (0.2s transition for scrollbar + bg opacity)
+    local frameHovered = false
+    local fadeFrame = CreateFrame("Frame")
+    fadeFrame:Hide()
+    fadeFrame:SetScript("OnUpdate", function(_, dt)
+        local target = frameHovered and 1 or 0
+        if hoverFade == target then fadeFrame:Hide(); return end
+        local speed = dt / FADE_DUR
+        if target > hoverFade then
+            hoverFade = math.min(1, hoverFade + speed)
+        else
+            hoverFade = math.max(0, hoverFade - speed)
+        end
+        -- Scrollbar alpha
+        local maxScroll = EllesmereUI.SafeScrollRange(sf)
+        if maxScroll > 0 then
+            scrollTrack:SetAlpha(hoverFade)
+        else
+            scrollTrack:SetAlpha(0)
+        end
+        -- Background opacity boost (0 to +0.15)
+        local baseA = Cfg("bgAlpha") or 0.6
+        local curA = baseA + 0.15 * hoverFade
+        f.bg:SetColorTexture(Cfg("bgR") or 0, Cfg("bgG") or 0, Cfg("bgB") or 0, math.min(1, curA))
+        -- Snap when close enough
+        if math.abs(hoverFade - target) < 0.01 then
+            hoverFade = target
+        end
+    end)
+
+    local function OnHoverIn()
+        if frameHovered then return end
+        frameHovered = true
+        scrollbarHovered = true
+        UpdateScrollThumb()
+        fadeFrame:Show()
+    end
+    local function OnHoverOut()
+        -- Defer one frame: OnLeave fires when entering a child frame too
+        C_Timer.After(0, function()
+            if not inner:IsMouseOver() then
+                frameHovered = false
+                scrollbarHovered = false
+                fadeFrame:Show()
+            end
+        end)
+    end
+    inner:SetScript("OnEnter", OnHoverIn)
+    inner:SetScript("OnLeave", OnHoverOut)
+    sf:HookScript("OnLeave", OnHoverOut)
+
+    -- Stop all standalone frames when hidden (M+, raids, disabled, etc.)
+    f:HookScript("OnHide", function()
+        fadeFrame:Hide()
+        smoothFrame:Hide()
+        frameHovered = false
+        scrollbarHovered = false
+        hoverFade = 0
+        scrollTrack:SetAlpha(0)
+        isSmoothing = false
+    end)
+
+    UpdateInnerAlignment(f)
+
     return f
 end
 
@@ -1268,10 +1575,28 @@ end
 -------------------------------------------------------------------------------
 function EQT:ApplyPosition()
     local f = self.frame; if not f then return end
+    -- Skip if unlock mode owns the position
+    if EllesmereUI and EllesmereUI.IsUnlockAnchored
+        and EllesmereUI.IsUnlockAnchored("EQT_Tracker") and f:GetLeft() then
+        return
+    end
     f:ClearAllPoints()
-    local x, y = DB().xPos, DB().yPos
-    if x and y then
-        f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x, y + UIParent:GetHeight())
+    -- Migrate legacy xPos/yPos to new pos format
+    local db = DB()
+    if db.xPos and db.yPos and not db.pos then
+        local uiW, uiH = UIParent:GetSize()
+        local fW, fH = f:GetSize()
+        local cx = db.xPos + fW / 2
+        local cy = (db.yPos + uiH) - fH / 2
+        db.pos = {
+            point = "CENTER", relPoint = "CENTER",
+            x = cx - uiW / 2, y = cy - uiH / 2,
+        }
+        db.xPos = nil; db.yPos = nil
+    end
+    local pos = db.pos
+    if pos and pos.point then
+        f:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
     else
         f:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -30, -200)
     end
@@ -1284,13 +1609,66 @@ local function RegisterSlash()
         if msg == "" or msg == "toggle" then
             local f = EQT.frame
             if f then if f:IsShown() then f:Hide() else f:Show(); EQT:Refresh() end end
-        elseif msg == "lock" then
-            DB().locked = not DB().locked
-            print("|cff0cd29fEUI Quest Tracker:|r "..(Cfg("locked") and "Locked." or "Unlocked."))
         elseif msg == "reset" then
-            DB().xPos = nil; DB().yPos = nil; EQT:ApplyPosition()
+            DB().pos = nil; EQT:ApplyPosition()
         end
     end
+end
+
+-------------------------------------------------------------------------------
+-- Snapshot Blizzard ObjectiveTrackerFrame position on first install
+-- Captures position, width, and font size so our tracker starts where the
+-- user had Blizzard's tracker in Edit Mode. Only runs once per install.
+-------------------------------------------------------------------------------
+local function CaptureBlizzardTracker()
+    local ot = _G.ObjectiveTrackerFrame
+    if not ot then return end
+    local db = DB()
+    local uiW, uiH = UIParent:GetSize()
+    local uiScale = UIParent:GetEffectiveScale()
+    -- Get center position, scale-adjusted to UIParent coords
+    local cx, cy = ot:GetCenter()
+    if not cx or not cy then return end
+    local bScale = ot:GetEffectiveScale()
+    cx = cx * bScale / uiScale
+    cy = cy * bScale / uiScale
+    -- Store as CENTER/CENTER offset
+    db.pos = {
+        point = "CENTER", relPoint = "CENTER",
+        x = cx - (uiW / 2), y = cy - (uiH / 2),
+    }
+    -- Capture width if available
+    local w = ot:GetWidth()
+    if w and w > 50 then
+        db.width = math.floor(w * bScale / uiScale + 0.5)
+    end
+    -- Capture height as fixed height
+    local h = ot:GetHeight()
+    if h and h > 50 then
+        db.height = math.floor(h * bScale / uiScale + 0.5)
+    end
+    -- Capture text size from Blizzard's edit mode setting (index 2)
+    if ot.GetSettingValue then
+        local ok, val = pcall(ot.GetSettingValue, ot, 2)
+        if ok and val and val > 0 then
+            local s = math.floor(val + 0.5)
+            db.titleFontSize = s
+            db.objFontSize   = math.max(s - 1, 6)
+            db.secFontSize   = s + 1
+        end
+    end
+    db._capturedOnce = true
+end
+
+-- Returns true if the player is in a Normal+ raid or M+ dungeon
+local function IsInHiddenInstance()
+    local _, iType, diffID = GetInstanceInfo()
+    diffID = tonumber(diffID) or 0
+    -- Raid difficulties: Normal(14), Heroic(15), Mythic(16), LFR(17)
+    if iType == "raid" and diffID >= 14 then return true end
+    -- Mythic+ dungeon: difficultyID 8 (Mythic Keystone)
+    if iType == "party" and diffID == 8 then return true end
+    return false
 end
 
 function EQT:Init()
@@ -1299,9 +1677,10 @@ function EQT:Init()
     EQT.itemBtns  = EQT.itemBtns  or {}
     EQT.timerRows = EQT.timerRows or {}
     if not Cfg("enabled") then return end
+    self._needsCapture = not DB()._capturedOnce
     self.frame = BuildFrame()
     self.frame:SetWidth(Cfg("width") or 220)
-    self.frame:SetHeight(60)
+    self.frame:SetHeight(Cfg("height") or 600)
     self:ApplyPosition()
 
     -- Hide/show Blizzard ObjectiveTrackerFrame based on setting
@@ -1317,35 +1696,113 @@ function EQT:Init()
         end
     end
     EQT.ApplyBlizzardTrackerVisibility = ApplyBlizzardTrackerVisibility
-    -- Also hook Show so Blizzard can't restore it while we want it hidden
+    -- Hook Show and SetAlpha so Blizzard/unlock mode can't restore it
     local ot = _G.ObjectiveTrackerFrame
     if ot then
-        hooksecurefunc(ot, "Show", function()
+        local suppressing = false
+        local function SuppressBlizzTracker()
+            if suppressing then return end
             if Cfg("hideBlizzardTracker") and Cfg("enabled") ~= false then
+                suppressing = true
                 ot:SetAlpha(0)
                 ot:EnableMouse(false)
+                suppressing = false
             end
-        end)
+        end
+        hooksecurefunc(ot, "Show", SuppressBlizzTracker)
+        hooksecurefunc(ot, "SetAlpha", SuppressBlizzTracker)
     end
     C_Timer.After(1, ApplyBlizzardTrackerVisibility)
 
-    local w = CreateFrame("Frame")
-    for _, ev in ipairs({
-        "QUEST_LOG_UPDATE","QUEST_ACCEPTED","QUEST_REMOVED","QUEST_TURNED_IN",
-        "PLAYER_ENTERING_WORLD","UNIT_QUEST_LOG_CHANGED",
-    }) do w:RegisterEvent(ev) end
-    pcall(function() w:RegisterEvent("QUEST_WATCH_LIST_CHANGED") end)
-    pcall(function() w:RegisterEvent("QUEST_WATCH_UPDATE") end)
-    pcall(function() w:RegisterEvent("QUEST_TASK_PROGRESS_UPDATE") end)
-    pcall(function() w:RegisterEvent("TASK_IS_TOO_DIFFERENT") end)
-    pcall(function() w:RegisterEvent("SCENARIO_CRITERIA_UPDATE") end)
-    pcall(function() w:RegisterEvent("SCENARIO_UPDATE") end)
-    pcall(function() w:RegisterEvent("UI_WIDGET_UNIT_CHANGED") end)
-
-    local zoneFrame = CreateFrame("Frame")
-    for _, ev in ipairs({"ZONE_CHANGED_NEW_AREA","ZONE_CHANGED"}) do
-        zoneFrame:RegisterEvent(ev)
+    -- Visibility system: check mode + options + instance hiding
+    local qtMouseoverActive = false
+    local function QTMouseoverIn()
+        if not qtMouseoverActive then return end
+        EQT.frame:SetAlpha(1)
     end
+    local function QTMouseoverOut()
+        if not qtMouseoverActive then return end
+        C_Timer.After(0, function()
+            if not qtMouseoverActive then return end
+            local target = EQT.frame.inner or EQT.frame
+            if not target:IsMouseOver() then
+                EQT.frame:SetAlpha(0)
+            end
+        end)
+    end
+    -- Hook onto inner/sf for event-driven mouseover visibility (no poll)
+    local innerFrame = self.frame.inner or self.frame
+    innerFrame:HookScript("OnEnter", QTMouseoverIn)
+    innerFrame:HookScript("OnLeave", QTMouseoverOut)
+    if self.frame.sf then
+        self.frame.sf:HookScript("OnEnter", QTMouseoverIn)
+        self.frame.sf:HookScript("OnLeave", QTMouseoverOut)
+    end
+
+    local function UpdateQTVisibility()
+        if not EQT.frame then return end
+        if Cfg("enabled") == false then EQT.frame:Hide(); qtMouseoverActive = false; return end
+        if IsInHiddenInstance() then EQT.frame:Hide(); qtMouseoverActive = false; return end
+        local qt = DB()
+        if EllesmereUI.CheckVisibilityOptions and EllesmereUI.CheckVisibilityOptions(qt) then
+            EQT.frame:Hide(); qtMouseoverActive = false; return
+        end
+        local mode = qt.visibility or "always"
+        if mode == "mouseover" then
+            qtMouseoverActive = true
+            EQT.frame:Show()
+            EQT.frame:SetAlpha(0)
+            return
+        end
+        qtMouseoverActive = false
+        EQT.frame:SetAlpha(1)
+        local show = true
+        if mode == "never" then
+            show = false
+        elseif mode == "in_combat" then
+            show = _G._EBS_InCombat and _G._EBS_InCombat() or false
+        elseif mode == "out_of_combat" then
+            show = not (_G._EBS_InCombat and _G._EBS_InCombat())
+        elseif mode == "in_raid" then
+            show = IsInRaid()
+        elseif mode == "in_party" then
+            show = IsInGroup() and not IsInRaid()
+        elseif mode == "solo" then
+            show = not IsInGroup()
+        end
+        if show then EQT.frame:Show() else EQT.frame:Hide() end
+    end
+    _G._EBS_UpdateQTVisibility = UpdateQTVisibility
+
+    local QUEST_EVENTS = {
+        "QUEST_LOG_UPDATE","QUEST_ACCEPTED","QUEST_REMOVED","QUEST_TURNED_IN",
+        "UNIT_QUEST_LOG_CHANGED",
+    }
+    local QUEST_EVENTS_SAFE = {
+        "QUEST_WATCH_LIST_CHANGED","QUEST_WATCH_UPDATE","QUEST_TASK_PROGRESS_UPDATE",
+        "TASK_IS_TOO_DIFFERENT","SCENARIO_CRITERIA_UPDATE","SCENARIO_UPDATE",
+        "UI_WIDGET_UNIT_CHANGED",
+    }
+    local ZONE_EVENTS = {"ZONE_CHANGED_NEW_AREA","ZONE_CHANGED"}
+
+    local w = CreateFrame("Frame")
+    local zoneFrame = CreateFrame("Frame")
+
+    local function RegisterQTEvents()
+        w:RegisterEvent("PLAYER_ENTERING_WORLD")
+        for _, ev in ipairs(QUEST_EVENTS) do w:RegisterEvent(ev) end
+        for _, ev in ipairs(QUEST_EVENTS_SAFE) do pcall(w.RegisterEvent, w, ev) end
+        for _, ev in ipairs(ZONE_EVENTS) do zoneFrame:RegisterEvent(ev) end
+    end
+    local function UnregisterQTEvents()
+        for _, ev in ipairs(QUEST_EVENTS) do w:UnregisterEvent(ev) end
+        for _, ev in ipairs(QUEST_EVENTS_SAFE) do pcall(w.UnregisterEvent, w, ev) end
+        for _, ev in ipairs(ZONE_EVENTS) do zoneFrame:UnregisterEvent(ev) end
+        -- Keep PLAYER_ENTERING_WORLD so visibility is re-evaluated on zone transitions
+    end
+
+    RegisterQTEvents()
+
     zoneFrame:SetScript("OnEvent", function()
         C_Timer.After(0.5,  function() EQT.dirty = true end)
         C_Timer.After(1.5,  function() EQT.dirty = true end)
@@ -1353,9 +1810,30 @@ function EQT:Init()
         C_Timer.After(5.0,  function() EQT.dirty = true end)
     end)
 
-    w:SetScript("OnEvent", function()
+    w:SetScript("OnEvent", function(_, event)
         EQT.dirty = true
+        if event == "PLAYER_ENTERING_WORLD" then
+            -- First install: snapshot Blizzard tracker position before we hide it
+            if EQT._needsCapture then
+                EQT._needsCapture = false
+                CaptureBlizzardTracker()
+                if EQT.frame then
+                    EQT.frame:SetWidth(Cfg("width") or 220)
+                end
+            end
+            EQT:ApplyPosition()
+            UpdateQTVisibility()
+        end
         if EQT.UpdateQuestItemAttribute then EQT.UpdateQuestItemAttribute() end
+    end)
+
+    -- Fully suspend/resume quest tracking when hidden/shown
+    self.frame:HookScript("OnHide", function()
+        UnregisterQTEvents()
+    end)
+    self.frame:HookScript("OnShow", function()
+        RegisterQTEvents()
+        EQT.dirty = true
     end)
 
     -------------------------------------------------------------------------------
@@ -1413,20 +1891,35 @@ function EQT:Init()
     qItemBtn:SetAlpha(0)
     qItemBtn:EnableMouse(false)
     qItemBtn:RegisterForClicks("LeftButtonUp")
-    qItemBtn:SetAttribute("type", "item")
 
-    -- This runs entirely in the secure environment - no taint possible
-    -- When item attribute changes, it updates the key binding internally
-    qItemBtn:SetAttribute("_onattributechanged", [[
-        if name == 'item' then
-            self:ClearBindings()
-            if value then
-                local key1, key2 = GetBindingKey('EUI_QUESTITEM')
-                if key1 then self:SetBindingClick(false, key1, self, 'LeftButton') end
-                if key2 then self:SetBindingClick(false, key2, self, 'LeftButton') end
+    -- Secure attribute setup must be deferred if we loaded during combat
+    -- (e.g. /reload while in combat), otherwise the restricted environment
+    -- handles are not yet valid and SetAttribute triggers an error.
+    local function InitSecureAttributes()
+        qItemBtn:SetAttribute("type", "item")
+        qItemBtn:SetAttribute("_onattributechanged", [[
+            if name == 'item' then
+                self:ClearBindings()
+                if value then
+                    local key1, key2 = GetBindingKey('EUI_QUESTITEM')
+                    if key1 then self:SetBindingClick(false, key1, self, 'LeftButton') end
+                    if key2 then self:SetBindingClick(false, key2, self, 'LeftButton') end
+                end
             end
-        end
-    ]])
+        ]])
+    end
+    if InCombatLockdown() then
+        local initFrame = CreateFrame("Frame")
+        initFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        initFrame:SetScript("OnEvent", function(f)
+            f:UnregisterAllEvents()
+            InitSecureAttributes()
+            if EQT.ApplyQuestItemHotkey then EQT.ApplyQuestItemHotkey() end
+            if EQT.UpdateQuestItemAttribute then EQT.UpdateQuestItemAttribute() end
+        end)
+    else
+        InitSecureAttributes()
+    end
 
     EQT.qItemBtn = qItemBtn
 
@@ -1443,7 +1936,8 @@ function EQT:Init()
         if key and key ~= "" then
             SetBinding(key, "EUI_QUESTITEM")
         end
-        SaveBindings(GetCurrentBindingSet())
+        local bindingSet = GetCurrentBindingSet()
+        if bindingSet then SaveBindings(bindingSet) end
         -- Trigger attribute handler to re-register click binding
         if not InCombatLockdown() then
             local cur = qItemBtn:GetAttribute("item")
@@ -1489,6 +1983,7 @@ function EQT:Init()
     qItemFrame:RegisterEvent("UPDATE_BINDINGS")
     qItemFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     qItemFrame:SetScript("OnEvent", function(_, event)
+        if InCombatLockdown() then return end
         if event == "PLAYER_REGEN_ENABLED" or event == "UPDATE_BINDINGS" then
             ApplyQuestItemHotkey()
         end
@@ -1496,15 +1991,81 @@ function EQT:Init()
     end)
 
     C_Timer.After(1.5, function()
+        if InCombatLockdown() then return end
         ApplyQuestItemHotkey()
         UpdateQuestItemAttribute()
     end)
+
+    ---------------------------------------------------------------------------
+    -- Register unlock mode element
+    ---------------------------------------------------------------------------
+    if EllesmereUI and EllesmereUI.RegisterUnlockElements then
+        local MK = EllesmereUI.MakeUnlockElement
+        local f = self.frame
+        EllesmereUI:RegisterUnlockElements({
+            MK({
+                key   = "EQT_Tracker",
+                label = "Quest Tracker",
+                group = "Basics",
+                order = 510,
+                noResize = false,
+                getFrame = function() return f end,
+                getSize  = function()
+                    return f:GetWidth(), f:GetHeight()
+                end,
+                setWidth = function(_, w)
+                    local minW = 120
+                    w = math.max(minW, math.floor(w + 0.5))
+                    DB().width = w
+                    f:SetWidth(w)
+                    EQT:Refresh()
+                    EllesmereUI.RepositionBarToMover("EQT_Tracker")
+                end,
+                setHeight = function(_, h)
+                    h = math.max(60, math.floor(h + 0.5))
+                    DB().height = h
+                    f:SetHeight(h)
+                    EQT:Refresh()
+                    EllesmereUI.RepositionBarToMover("EQT_Tracker")
+                end,
+                savePos = function(_, point, relPoint, x, y)
+                    DB().pos = { point = point, relPoint = relPoint, x = x, y = y }
+                    if not EllesmereUI._unlockActive then
+                        EQT:ApplyPosition()
+                    end
+                end,
+                loadPos = function()
+                    return DB().pos
+                end,
+                clearPos = function()
+                    DB().pos = nil
+                end,
+                applyPos = function()
+                    EQT:ApplyPosition()
+                end,
+            }),
+        })
+    end
 end
 
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
 loader:SetScript("OnEvent", function(self, _, loaded)
-    if loaded ~= addonName then return end
-    self:UnregisterEvent("ADDON_LOADED")
-    C_Timer.After(0.1, function() EQT:Init() end)
+    if loaded == addonName then
+        EQT:Init()
+    end
+    -- Catch Blizzard's tracker loading: capture position then hide it
+    if loaded == "Blizzard_ObjectiveTracker" then
+        if EQT._needsCapture then
+            EQT._needsCapture = false
+            CaptureBlizzardTracker()
+            if EQT.frame then
+                EQT.frame:SetWidth(Cfg("width") or 220)
+                EQT:ApplyPosition()
+            end
+        end
+        if EQT.ApplyBlizzardTrackerVisibility then
+            EQT.ApplyBlizzardTrackerVisibility()
+        end
+    end
 end)

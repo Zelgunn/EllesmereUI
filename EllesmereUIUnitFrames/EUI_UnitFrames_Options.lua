@@ -2757,7 +2757,7 @@ initFrame:SetScript("OnEvent", function(self)
                         EllesmereUI.ShowWidgetTooltip(anchor, tip)
                     end)
                     hitFrame:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-                    hitFrame:SetPassThroughButtons("LeftButton", "RightButton")
+                    securecallfunction(hitFrame.SetPassThroughButtons, hitFrame, "LeftButton", "RightButton")
                 end
                 MakeSupportHit(region._label)
                 MakeSupportHit(region._control)

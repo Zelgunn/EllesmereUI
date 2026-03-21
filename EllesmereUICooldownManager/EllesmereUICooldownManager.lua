@@ -2356,14 +2356,16 @@ local _myRacialsSet = {}
 -- Forward declaration is kept so call sites in LoadSpecProfile/OnEnable compile.
 RefreshRacialSpells = function() end
 
--- Health potions / healthstones: { itemID, spellID [, altItemID] [, class] [, combatLockout] }
--- altItemID: alternate quality tier of the same potion (e.g. Artisan quality variant).
--- When the player has the alt version but not the base, we display the alt instead.
+-- Health potions / healthstones: { itemID, spellID [, altItemIDs] [, class] [, combatLockout] }
+-- altItemIDs: array of alternate quality tiers of the same potion (e.g. ranks 2-4).
+-- When the player has an alt version but not the base, we display the first alt found.
 local HEALTH_ITEMS = {
-    { itemID = 241304, spellID = 1234768, altItemID = 241305, combatLockout = true },  -- Silvermoon Health Potion
-    { itemID = 241308, spellID = 1236616, altItemID = 241309, combatLockout = true },  -- Light's Potential
-    { itemID = 5512,   spellID = 6262, combatLockout = true },                         -- Healthstone
-    { itemID = 224464, spellID = 452930, class = "WARLOCK" },                          -- Demonic Healthstone
+    { itemID = 241308, spellID = 1236616, altItemIDs = { 245898, 245897, 241309 }, combatLockout = true },  -- Light's Potential
+    { itemID = 241288, spellID = 1236994, altItemIDs = { 241289, 245902, 245903 }, combatLockout = true },  -- Potion of Recklessness
+    { itemID = 241304, spellID = 1234768, altItemIDs = { 241305 }, combatLockout = true },  -- Silvermoon Health Potion
+    { itemID = 241300, spellID = 1236648, altItemIDs = { 245917, 245916, 241301 }, combatLockout = true },  -- Lightfused Mana Potion
+    { itemID = 5512,   spellID = 6262, combatLockout = true },                              -- Healthstone
+    { itemID = 224464, spellID = 452930, class = "WARLOCK" },                               -- Demonic Healthstone
 }
 
 -- Reverse lookup: spellID -> HEALTH_ITEMS entry (for item-aware cooldown/count display)
@@ -2372,13 +2374,15 @@ for _, hi in ipairs(HEALTH_ITEMS) do
     HEALTH_ITEM_BY_SPELL[hi.spellID] = hi
 end
 
--- Returns the active itemID for a health item entry: base if player has any, alt if only alt exists.
+-- Returns the active itemID for a health item entry: base if player has any, first alt found otherwise.
 local function GetActiveHealthItemID(hi)
     local baseCount = C_Item.GetItemCount(hi.itemID, false, true) or 0
     if baseCount > 0 then return hi.itemID, baseCount end
-    if hi.altItemID then
-        local altCount = C_Item.GetItemCount(hi.altItemID, false, true) or 0
-        if altCount > 0 then return hi.altItemID, altCount end
+    if hi.altItemIDs then
+        for _, altID in ipairs(hi.altItemIDs) do
+            local altCount = C_Item.GetItemCount(altID, false, true) or 0
+            if altCount > 0 then return altID, altCount end
+        end
     end
     return hi.itemID, 0
 end
@@ -3827,12 +3831,51 @@ local function UpdateCustomBarIcons(barKey)
                 local slot = -spellID
                 local itemID = GetInventoryItemID("player", slot)
                 if itemID then
-                    -- On misc bars, hide trinkets that have no on-use effect
+                    -- On misc bars, hide trinkets that have no real on-use effect.
+                    -- Check both that the item has a spell AND that the trinket slot
+                    -- reports a cooldown duration >= 20s (filters passive/proc trinkets).
                     if barData.barType == "misc" then
-                        local spellName = C_Item.GetItemSpell(itemID)
+                        local spellName, spellID2 = C_Item.GetItemSpell(itemID)
                         if not spellName then
                             ourIcon:Hide()
                             itemID = nil
+                        else
+                            local start, dur = GetInventoryItemCooldown("player", slot)
+                            -- If the trinket is off cooldown, dur is 0 -- check the
+                            -- spell's base cooldown instead via tooltip data cache.
+                            if dur and dur >= 20 then
+                                -- Currently on cooldown with >= 20s duration: real on-use
+                            else
+                                -- Check tooltip for cooldown text
+                                local tipData = C_TooltipInfo.GetItemByID(itemID)
+                                local hasCd = false
+                                if tipData and tipData.lines then
+                                    for _, tipLine in ipairs(tipData.lines) do
+                                        local lt = tipLine.leftText
+                                        if lt and lt:find("Cooldown%)") then
+                                            local cdStr = lt:match("%((.+Cooldown)%)")
+                                            if cdStr then
+                                                local totalSec = 0
+                                                for num, unit in cdStr:gmatch("(%d+)%s*(%a+)") do
+                                                    local n = tonumber(num)
+                                                    if n then
+                                                        local u = unit:lower()
+                                                        if u == "min" then totalSec = totalSec + n * 60
+                                                        elseif u == "sec" then totalSec = totalSec + n
+                                                        elseif u == "hr" or u == "hour" then totalSec = totalSec + n * 3600
+                                                        end
+                                                    end
+                                                end
+                                                if totalSec >= 20 then hasCd = true end
+                                            end
+                                        end
+                                    end
+                                end
+                                if not hasCd then
+                                    ourIcon:Hide()
+                                    itemID = nil
+                                end
+                            end
                         end
                     end
                     if itemID then
@@ -3895,10 +3938,7 @@ local function UpdateCustomBarIcons(barKey)
             if healthItem then
                 local activeID, itemCount = GetActiveHealthItemID(healthItem)
                 local inLockout = _healthCombatLockout[spellID]
-                -- Hide if player has none and not in combat lockout
-                if itemCount <= 0 and not inLockout then
-                    ourIcon:Hide()
-                else
+                do
                     local tex = C_Item.GetItemIconByID(activeID)
                     if tex then
                         if tex ~= ourIcon._lastTex then
@@ -5228,10 +5268,7 @@ local function UpdateTrackedBarIcons(barKey)
             local healthItem = HEALTH_ITEM_BY_SPELL[spellID]
             if healthItem then
                 local activeID, itemCount = GetActiveHealthItemID(healthItem)
-                local inLockout = _healthCombatLockout[spellID]
-                if itemCount <= 0 and not inLockout then
-                    ourIcon:Hide()
-                else
+                do
                     local tex = C_Item.GetItemIconByID(activeID)
                     if tex then
                         if tex ~= ourIcon._lastTex then

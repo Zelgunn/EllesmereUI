@@ -6,7 +6,7 @@
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
-local PAGE_CURSOR     = "Cursor Circle"
+local PAGE_CURSOR     = "Cursor"
 local PAGE_UNLOCK     = "Unlock Mode"
 
 local SECTION_APPEARANCE   = "CURSOR"

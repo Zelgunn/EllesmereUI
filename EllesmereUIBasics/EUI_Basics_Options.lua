@@ -7,9 +7,10 @@ local ADDON_NAME, ns = ...
 
 local PAGE_CHAT          = "Chat"
 local PAGE_MINIMAP       = "Minimap"
-local PAGE_FRIENDS       = "Friends List"
+local PAGE_FRIENDS       = "Friends"
 local PAGE_QUEST_TRACKER = "Quest Tracker"
-local PAGE_CURSOR        = "Cursor Circle"
+local PAGE_CURSOR        = "Cursor"
+local PAGE_DMG_METERS    = "Damage Meters"
 
 local SECTION_CHAT    = "CHAT"
 local SECTION_MINIMAP = "MINIMAP"
@@ -68,6 +69,58 @@ initFrame:SetScript("OnEvent", function(self)
 
     local function RefreshAll()
         if _G._EBS_ApplyAll then _G._EBS_ApplyAll() end
+    end
+
+    ---------------------------------------------------------------------------
+    --  Visibility row builder (reused across all pages)
+    ---------------------------------------------------------------------------
+    local PP = EllesmereUI.PP
+    local function BuildVisibilityRow(W, parent, y, getCfg, refreshFn)
+        local visRow, visH = W:DualRow(parent, y,
+            { type="dropdown", text="Visibility",
+              values = EllesmereUI.VIS_VALUES,
+              order  = EllesmereUI.VIS_ORDER,
+              getValue=function()
+                  local c = getCfg(); if not c then return "always" end
+                  if not c.enabled and c.enabled ~= nil then return "disabled" end
+                  return c.visibility or "always"
+              end,
+              setValue=function(v)
+                  local c = getCfg(); if not c then return end
+                  if v == "disabled" then
+                      c.enabled = false
+                      c.visibility = "disabled"
+                  else
+                      c.enabled = true
+                      c.visibility = v
+                  end
+                  if refreshFn then refreshFn() end
+                  if _G._EBS_UpdateVisibility then _G._EBS_UpdateVisibility() end
+                  EllesmereUI:RefreshPage()
+              end },
+            { type="dropdown", text="Visibility Options",
+              values={ __placeholder = "..." }, order={ "__placeholder" },
+              getValue=function() return "__placeholder" end,
+              setValue=function() end })
+        do
+            local rightRgn = visRow._rightRegion
+            if rightRgn._control then rightRgn._control:Hide() end
+            local cbDD, cbDDRefresh = EllesmereUI.BuildVisOptsCBDropdown(
+                rightRgn, 210, rightRgn:GetFrameLevel() + 2,
+                EllesmereUI.VIS_OPT_ITEMS,
+                function(k) local c = getCfg(); return c and c[k] or false end,
+                function(k, v)
+                    local c = getCfg(); if not c then return end
+                    c[k] = v
+                    if _G._EBS_UpdateVisibility then _G._EBS_UpdateVisibility() end
+                    EllesmereUI:RefreshPage()
+                end)
+            PP.Point(cbDD, "RIGHT", rightRgn, "RIGHT", -20, 0)
+            rightRgn._control = cbDD
+            rightRgn._lastInline = nil
+            EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
+        end
+        return visH
     end
 
     ---------------------------------------------------------------------------
@@ -135,49 +188,44 @@ initFrame:SetScript("OnEvent", function(self)
 
         _, h = W:SectionHeader(parent, SECTION_CHAT, y);  y = y - h
 
-        -- Enable Chat Skin | Font Size
+        h = BuildVisibilityRow(W, parent, y, ChatDB, RefreshChat);  y = y - h
+
+        -- Font Size | Background Opacity
         _, h = W:DualRow(parent, y,
-            { type="toggle", text="Enable Chat Skin",
-              getValue=function() local c = ChatDB(); return c and c.enabled end,
-              setValue=function(v)
-                local c = ChatDB(); if not c then return end
-                c.enabled = v
-                RefreshChat()
-                EllesmereUI:RefreshPage()
-              end },
             { type="slider", text="Font Size", min=8, max=24, step=1,
               disabled=function() local c = ChatDB(); return c and not c.enabled end,
-              disabledTooltip="Enable Chat Skin",
+              disabledTooltip="Module is disabled",
               getValue=function() local c = ChatDB(); return c and c.fontSize or 14 end,
               setValue=function(v)
                 local c = ChatDB(); if not c then return end
                 c.fontSize = v
                 RefreshChat()
-              end }
-        );  y = y - h
-
-        -- Background Opacity | Border Color
-        _, h = W:DualRow(parent, y,
+              end },
             { type="slider", text="Background Opacity", min=0, max=1, step=0.05,
               disabled=function() local c = ChatDB(); return c and not c.enabled end,
-              disabledTooltip="Enable Chat Skin",
+              disabledTooltip="Module is disabled",
               getValue=function() local c = ChatDB(); return c and c.bgAlpha or 0.6 end,
               setValue=function(v)
                 local c = ChatDB(); if not c then return end
                 c.bgAlpha = v
                 RefreshChat()
-              end },
+              end }
+        );  y = y - h
+
+        -- Border Color | (spacer)
+        _, h = W:DualRow(parent, y,
             { type="multiSwatch", text="Border Color",
               disabled=function() local c = ChatDB(); return c and not c.enabled end,
-              disabledTooltip="Enable Chat Skin",
-              swatches = MakeBorderSwatch(ChatDB, RefreshChat) }
+              disabledTooltip="Module is disabled",
+              swatches = MakeBorderSwatch(ChatDB, RefreshChat) },
+            { type="label", text="" }
         );  y = y - h
 
         -- Hide Chat Buttons | Hide Tab Flash
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Hide Chat Buttons",
               disabled=function() local c = ChatDB(); return c and not c.enabled end,
-              disabledTooltip="Enable Chat Skin",
+              disabledTooltip="Module is disabled",
               getValue=function() local c = ChatDB(); return c and c.hideButtons end,
               setValue=function(v)
                 local c = ChatDB(); if not c then return end
@@ -186,7 +234,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="toggle", text="Hide Tab Flash",
               disabled=function() local c = ChatDB(); return c and not c.enabled end,
-              disabledTooltip="Enable Chat Skin",
+              disabledTooltip="Module is disabled",
               getValue=function() local c = ChatDB(); return c and c.hideTabFlash end,
               setValue=function(v)
                 local c = ChatDB(); if not c then return end
@@ -210,52 +258,45 @@ initFrame:SetScript("OnEvent", function(self)
 
         _, h = W:SectionHeader(parent, SECTION_MINIMAP, y);  y = y - h
 
-        -- Enable Minimap Skin | Scale
+        h = BuildVisibilityRow(W, parent, y, MinimapDB, RefreshMinimap);  y = y - h
+
+        -- Scale | Border Color
         _, h = W:DualRow(parent, y,
-            { type="toggle", text="Enable Minimap Skin",
-              getValue=function() local m = MinimapDB(); return m and m.enabled end,
-              setValue=function(v)
-                local m = MinimapDB(); if not m then return end
-                m.enabled = v
-                RefreshMinimap()
-                EllesmereUI:RefreshPage()
-              end },
             { type="slider", text="Scale", min=0.5, max=2.0, step=0.1,
               disabled=function() local m = MinimapDB(); return m and not m.enabled end,
-              disabledTooltip="Enable Minimap Skin",
+              disabledTooltip="Module is disabled",
               getValue=function() local m = MinimapDB(); return m and m.scale or 1.0 end,
               setValue=function(v)
                 local m = MinimapDB(); if not m then return end
                 m.scale = v
                 RefreshMinimap()
-              end }
-        );  y = y - h
-
-        -- Border Color | Hide Zone Text
-        _, h = W:DualRow(parent, y,
+              end },
             { type="multiSwatch", text="Border Color",
               disabled=function() local m = MinimapDB(); return m and not m.enabled end,
-              disabledTooltip="Enable Minimap Skin",
-              swatches = MakeBorderSwatch(MinimapDB, RefreshMinimap) },
+              disabledTooltip="Module is disabled",
+              swatches = MakeBorderSwatch(MinimapDB, RefreshMinimap) }
+        );  y = y - h
+
+        -- Hide Zone Text | Hide Minimap Buttons
+        _, h = W:DualRow(parent, y,
             { type="toggle", text="Hide Zone Text",
               disabled=function() local m = MinimapDB(); return m and not m.enabled end,
-              disabledTooltip="Enable Minimap Skin",
+              disabledTooltip="Module is disabled",
               getValue=function() local m = MinimapDB(); return m and m.hideZoneText end,
               setValue=function(v)
                 local m = MinimapDB(); if not m then return end
                 m.hideZoneText = v
                 RefreshMinimap()
-              end }
-        );  y = y - h
-
-        -- Hide Minimap Buttons
-        _, h = W:Toggle(parent, "Hide Minimap Buttons", y,
-            function() local m = MinimapDB(); return m and m.hideButtons end,
-            function(v)
+              end },
+            { type="toggle", text="Hide Minimap Buttons",
+              disabled=function() local m = MinimapDB(); return m and not m.enabled end,
+              disabledTooltip="Module is disabled",
+              getValue=function() local m = MinimapDB(); return m and m.hideButtons end,
+              setValue=function(v)
                 local m = MinimapDB(); if not m then return end
                 m.hideButtons = v
                 RefreshMinimap()
-            end
+              end }
         );  y = y - h
 
         return math.abs(y)
@@ -273,34 +314,23 @@ initFrame:SetScript("OnEvent", function(self)
 
         _, h = W:SectionHeader(parent, SECTION_FRIENDS, y);  y = y - h
 
-        -- Enable Friends Skin | Background Opacity
+        h = BuildVisibilityRow(W, parent, y, FriendsDB, RefreshFriends);  y = y - h
+
+        -- Background Opacity | Border Color
         _, h = W:DualRow(parent, y,
-            { type="toggle", text="Enable Friends Skin",
-              getValue=function() local f = FriendsDB(); return f and f.enabled end,
-              setValue=function(v)
-                local f = FriendsDB(); if not f then return end
-                f.enabled = v
-                RefreshFriends()
-                EllesmereUI:RefreshPage()
-              end },
             { type="slider", text="Background Opacity", min=0, max=1, step=0.05,
               disabled=function() local f = FriendsDB(); return f and not f.enabled end,
-              disabledTooltip="Enable Friends Skin",
+              disabledTooltip="Module is disabled",
               getValue=function() local f = FriendsDB(); return f and f.bgAlpha or 0.8 end,
               setValue=function(v)
                 local f = FriendsDB(); if not f then return end
                 f.bgAlpha = v
                 RefreshFriends()
-              end }
-        );  y = y - h
-
-        -- Border Color | (spacer)
-        _, h = W:DualRow(parent, y,
+              end },
             { type="multiSwatch", text="Border Color",
               disabled=function() local f = FriendsDB(); return f and not f.enabled end,
-              disabledTooltip="Enable Friends Skin",
-              swatches = MakeBorderSwatch(FriendsDB, RefreshFriends) },
-            nil
+              disabledTooltip="Module is disabled",
+              swatches = MakeBorderSwatch(FriendsDB, RefreshFriends) }
         );  y = y - h
 
         return math.abs(y)
@@ -311,8 +341,10 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     EllesmereUI:RegisterModule("EllesmereUIBasics", {
         title       = "Basics",
-        description = "Chat, Minimap, Friends List, Quest Tracker, and Cursor.",
-        pages       = { PAGE_CHAT, PAGE_MINIMAP, PAGE_FRIENDS, PAGE_QUEST_TRACKER, PAGE_CURSOR },
+        description = "Lightweight skins for all major Blizzard UI objects.",
+        pages       = { PAGE_CURSOR, PAGE_DMG_METERS, PAGE_QUEST_TRACKER, PAGE_FRIENDS, PAGE_CHAT, PAGE_MINIMAP },
+        disabledPages = { PAGE_DMG_METERS },
+        disabledPageTooltips = { [PAGE_DMG_METERS] = "Coming Soon" },
         buildPage   = function(pageName, parent, yOffset)
             if pageName == PAGE_CHAT    then return BuildChatPage(pageName, parent, yOffset) end
             if pageName == PAGE_MINIMAP then return BuildMinimapPage(pageName, parent, yOffset) end

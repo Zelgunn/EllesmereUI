@@ -7637,7 +7637,7 @@ function ns.ShowUnlockTip()
     if unlockTipFrame and unlockTipFrame:IsShown() then return end
 
     if not unlockTipFrame then
-        local TIP_W, TIP_H = 380, 175
+        local TIP_W, TIP_H = 450, 175
         local ar, ag, ab = GetAccent()
 
         local tip = CreateFrame("Frame", nil, UIParent)
@@ -7710,7 +7710,7 @@ function ns.ShowUnlockTip()
         msg:SetWidth(TIP_W - 30)
         msg:SetJustifyH("CENTER")
         msg:SetSpacing(6)
-        msg:SetText("This is where you can control the settings of Unlock Mode.\n\nElement repositioning supports dragging,\narrow keys, and shift arrow keys.\nSnapping is based on closest element.\nSnap to a specific element via the cogwheel icon.")
+        msg:SetText("This is where you can control the settings of Unlock Mode.\n\nElements can be repositioned by dragging or arrow keys (+shift)\nAnchor, Height Match, or Width match any element.\nSnapping is based on closest element, but you can snap only to\n a specific element via right click or the settings icon.")
 
         -- Okay button
         local okBtn = CreateFrame("Button", nil, tip)

@@ -33,7 +33,7 @@ local statuses = {}        -- name -> true if enabled
 -- Returns a table with :RegisterEvent / :UnregisterEvent mixed in.
 function EUILite.NewAddon(name)
     if addons[name] then
-        error("EUILite.NewAddon: addon '" .. name .. "' already exists.", 2)
+        return addons[name]
     end
     local addon = { name = name, enabledState = true }
     addons[name] = addon

@@ -474,8 +474,10 @@ local function ApplyGCDCircle()
             end
         else
             gcdRoot:SetScript("OnUpdate", nil)
-            -- Position is managed by unlock mode or saved position
-            _G._ECL_ApplyGCDPosition()
+            -- Skip repositioning during unlock mode (mover owns position)
+            if not EllesmereUI._unlockActive then
+                _G._ECL_ApplyGCDPosition()
+            end
         end
     else
         gcdRoot:Hide()
@@ -502,6 +504,28 @@ UpdateVisibility = function()
     local shouldShow = (p.enabled ~= false)
     if shouldShow and p.instanceOnly then
         shouldShow = InRealInstancedContent()
+    end
+    -- Standard visibility options (returns true if should HIDE)
+    if shouldShow and EllesmereUI.CheckVisibilityOptions and EllesmereUI.CheckVisibilityOptions(p) then
+        shouldShow = false
+    end
+    -- Standard visibility mode (mouseover treated as always for cursor)
+    if shouldShow then
+        local mode = p.visibility or "always"
+        if mode == "never" then
+            shouldShow = false
+        elseif mode == "in_combat" then
+            shouldShow = _G._EBS_InCombat and _G._EBS_InCombat() or false
+        elseif mode == "out_of_combat" then
+            shouldShow = not (_G._EBS_InCombat and _G._EBS_InCombat())
+        elseif mode == "in_raid" then
+            shouldShow = IsInRaid()
+        elseif mode == "in_party" then
+            shouldShow = IsInGroup() and not IsInRaid()
+        elseif mode == "solo" then
+            shouldShow = not IsInGroup()
+        -- "always" and "mouseover" both show (cursor is always at mouse)
+        end
     end
     if shouldShow and not isVisible then
         isVisible = true
@@ -803,7 +827,10 @@ local function ApplyCastCircle()
             end
         else
             castRoot:SetScript("OnUpdate", nil)
-            _G._ECL_ApplyCastPosition()
+            -- Skip repositioning during unlock mode (mover owns position)
+            if not EllesmereUI._unlockActive then
+                _G._ECL_ApplyCastPosition()
+            end
         end
     else
         castRoot:Hide()
@@ -838,19 +865,27 @@ local function RegisterUnlockElements()
                 if not p or not p.gcd then return end
                 p.gcd.radius = math.max(math.floor(w / 2 + 0.5), 5)
                 ApplyGCDCircle()
+                if EllesmereUI._unlockActive and EllesmereUI.RepositionBarToMover then
+                    EllesmereUI.RepositionBarToMover("ECL_GCD")
+                end
             end,
             setHeight = function(_, h)
                 local p = ECL.db and ECL.db.profile
                 if not p or not p.gcd then return end
                 p.gcd.radius = math.max(math.floor(h / 2 + 0.5), 5)
                 ApplyGCDCircle()
+                if EllesmereUI._unlockActive and EllesmereUI.RepositionBarToMover then
+                    EllesmereUI.RepositionBarToMover("ECL_GCD")
+                end
             end,
             savePos = function(key, point, relPoint, x, y)
                 local p = ECL.db and ECL.db.profile
                 if not p then return end
                 if not p.gcd then p.gcd = {} end
                 p.gcd.pos = { point = point, relPoint = relPoint, x = x, y = y }
-                ApplyGCDCircle()
+                if not EllesmereUI._unlockActive then
+                    ApplyGCDCircle()
+                end
             end,
             loadPos = function()
                 local g2 = GCD_DB()
@@ -884,19 +919,23 @@ local function RegisterUnlockElements()
                 if not p or not p.castCircle then return end
                 p.castCircle.radius = math.max(math.floor(w / 2 + 0.5), 5)
                 ApplyCastCircle()
+                EllesmereUI.RepositionBarToMover("ECL_Cast")
             end,
             setHeight = function(_, h)
                 local p = ECL.db and ECL.db.profile
                 if not p or not p.castCircle then return end
                 p.castCircle.radius = math.max(math.floor(h / 2 + 0.5), 5)
                 ApplyCastCircle()
+                EllesmereUI.RepositionBarToMover("ECL_Cast")
             end,
             savePos = function(key, point, relPoint, x, y)
                 local p = ECL.db and ECL.db.profile
                 if not p then return end
                 if not p.castCircle then p.castCircle = {} end
                 p.castCircle.pos = { point = point, relPoint = relPoint, x = x, y = y }
-                ApplyCastCircle()
+                if not EllesmereUI._unlockActive then
+                    ApplyCastCircle()
+                end
             end,
             loadPos = function()
                 local c2 = Cast_DB()
@@ -956,43 +995,28 @@ end
 --  Initialization
 -------------------------------------------------------------------------------
 function ECL:OnInitialize()
-    self.db = EllesmereUI.Lite.NewDB("EllesmereUICursorDB", {
-        profile = {
-            enabled = true,
-            instanceOnly = DEF_INSTANCE_ONLY,
-            useClassColor = true,
-            hex = DEF_HEX,
-            texture = DEF_TEX,
-            scale = DEF_SCALE,
-            gcd = {
-                enabled = false,
-                attached = true,
-                radius = 21,
-                ringTex = "light",
-                scale = 100,
-                hex = "FFFFFF",
-                alpha = 80,
-                useClassColor = false,
-                instanceOnly = false,
-            },
-            castCircle = {
-                enabled = false,
-                attached = true,
-                radius = 30,
-                ringTex = "normal",
-                scale = 100,
-                hex = "3FA7FF",
-                alpha = 80,
-                sparkEnabled = true,
-                sparkHex = nil,  -- nil = use ring color
-                useClassColor = true,
-                instanceOnly = false,
-            },
-            trail = false,
-        }
-    }, true)
+    -- Cursor data lives under the shared Basics Lite DB at profile.cursor
+    local basicsDB = _G._EBS_AceDB
+    if basicsDB then
+        self.db = { profile = basicsDB.profile.cursor }
+        -- Provide ResetProfile for options reset button
+        self.db.ResetProfile = function(dbSelf)
+            local defaults = basicsDB._profileDefaults and basicsDB._profileDefaults.cursor
+            if defaults then
+                wipe(dbSelf.profile)
+                for k, v in pairs(defaults) do
+                    if type(v) == "table" then
+                        dbSelf.profile[k] = {}
+                        for k2, v2 in pairs(v) do dbSelf.profile[k][k2] = v2 end
+                    else
+                        dbSelf.profile[k] = v
+                    end
+                end
+            end
+        end
+    end
 
-    -- Expose for EUI_CursorLite_Options.lua
+    -- Expose for EUI_Basics_Cursor_Options.lua
     _G._ECL_AceDB = self.db
     _G._ECL_Apply = Apply
     _G._ECL_UpdateVisibility = UpdateVisibility

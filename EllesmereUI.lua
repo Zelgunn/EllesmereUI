@@ -254,7 +254,6 @@ local ADDON_ROSTER = {
     { folder = "EllesmereUICooldownManager",   display = "Cooldown Manager",   search_name = "EllesmereUI Cooldown Manager",   icon_on = ICONS_PATH .. "sidebar\\cdmeffects-ig-on.png",      icon_off = ICONS_PATH .. "sidebar\\cdmeffects-ig.png"      },
     { folder = "EllesmereUIResourceBars",      display = "Resource Bars",      search_name = "EllesmereUI Resource Bars",      icon_on = ICONS_PATH .. "sidebar\\resourcebars-ig-on-2.png",  icon_off = ICONS_PATH .. "sidebar\\resourcebars-ig-2.png"  },
     { folder = "EllesmereUIAuraBuffReminders", display = "AuraBuff Reminders", search_name = "EllesmereUI AuraBuff Reminders", icon_on = ICONS_PATH .. "sidebar\\beacons-ig-on.png",         icon_off = ICONS_PATH .. "sidebar\\beacons-ig.png"         },
-    { folder = "EllesmereUICursor",            display = "Cursor",             search_name = "EllesmereUI Cursor",             icon_on = ICONS_PATH .. "sidebar\\cursor-ig-on.png",          icon_off = ICONS_PATH .. "sidebar\\cursor-ig.png"          },
     { folder = "EllesmereUIBasics",            display = "Basics",             search_name = "EllesmereUI Basics",             icon_on = ICONS_PATH .. "sidebar\\basics-ig-on-2.png",        icon_off = ICONS_PATH .. "sidebar\\basics-ig-2.png"      },
     { folder = "EllesmereUIPartyMode",         display = "Party Mode",         search_name = "EllesmereUI Party Mode",         icon_on = ICONS_PATH .. "sidebar\\partymode-ig-on.png",       icon_off = ICONS_PATH .. "sidebar\\partymode-ig.png",       alwaysLoaded = true },
 }
@@ -2391,8 +2390,8 @@ function EllesmereUI.PerformResetWipe()
     local svNames = {
         "EllesmereUIActionBarsDB",
         "EllesmereUIAuraBuffRemindersDB",
+        "EllesmereUIBasicsDB",
         "EllesmereUICooldownManagerDB",
-        "EllesmereUICursorDB",
         "EllesmereUINameplatesDB",
         "EllesmereUIResourceBarsDB",
         "EllesmereUIUnitFramesDB",
@@ -2514,11 +2513,14 @@ do
                 local svNames = {
                     "EllesmereUIActionBarsDB",
                     "EllesmereUIAuraBuffRemindersDB",
+                    "EllesmereUIBasicsDB",
                     "EllesmereUICooldownManagerDB",
-                    "EllesmereUICursorDB",
                     "EllesmereUINameplatesDB",
                     "EllesmereUIResourceBarsDB",
                     "EllesmereUIUnitFramesDB",
+                    -- Legacy globals (merged into BasicsDB, clean up stale files)
+                    "EllesmereUICursorDB",
+                    "EllesmereUIQuestTrackerDB",
                 }
                 for _, name in ipairs(svNames) do
                     _G[name] = {}
@@ -5929,7 +5931,7 @@ end
 -------------------------------------------------------------------------------
 --  Slash commands
 -------------------------------------------------------------------------------
-EllesmereUI.VERSION = "5.3"
+EllesmereUI.VERSION = "5.3.1"
 
 -- Register this addon's version into a shared global table (taint-free at load time)
 if not _G._EUI_AddonVersions then _G._EUI_AddonVersions = {} end
@@ -6850,6 +6852,7 @@ end)
 
 -- Dropdown 1: Visibility mode
 EllesmereUI.VIS_VALUES = {
+    disabled   = "Disable Module",
     never      = "Never",
     always     = "Always",
     mouseover  = "Mouseover",
@@ -6859,7 +6862,7 @@ EllesmereUI.VIS_VALUES = {
     in_party   = "In Party",
     solo       = "Solo",
 }
-EllesmereUI.VIS_ORDER = { "never", "always", "mouseover", "in_combat", "out_of_combat", "---", "in_raid", "in_party", "solo" }
+EllesmereUI.VIS_ORDER = { "disabled", "---", "never", "always", "mouseover", "in_combat", "out_of_combat", "---", "in_raid", "in_party", "solo" }
 
 -- Checkbox dropdown 2: Visibility Options (keys match DB fields)
 EllesmereUI.VIS_OPT_ITEMS = {
@@ -6970,6 +6973,7 @@ end
 -- `mode` is the string from the visibility dropdown.
 -- `state` is a table: { inCombat, inRaid, inParty }
 function EllesmereUI.CheckVisibilityMode(mode, state)
+    if mode == "disabled" then return false end
     if mode == "never" then return false end
     if mode == "in_combat" then return state.inCombat end
     if mode == "out_of_combat" then return not state.inCombat end

@@ -1863,8 +1863,8 @@ initFrame:SetScript("OnEvent", function(self)
                         local svNames = {
                             "EllesmereUIActionBarsDB",
                             "EllesmereUIAuraBuffRemindersDB",
+                            "EllesmereUIBasicsDB",
                             "EllesmereUICooldownManagerDB",
-                            "EllesmereUICursorDB",
                             "EllesmereUINameplatesDB",
                             "EllesmereUIResourceBarsDB",
                             "EllesmereUIUnitFramesDB",
@@ -3471,29 +3471,6 @@ initFrame:SetScript("OnEvent", function(self)
             -- Popular Presets dropdown (label always stays "Popular Presets")
             do
                 local presetEntries = {}
-                presetEntries[#presetEntries + 1] = {
-                    label = "Spin the Wheel",
-                    onApply = function()
-                        -- Snapshot before randomizing so the original profile
-                        -- isn't corrupted for other characters sharing it.
-                        local origName = EllesmereUI.GetActiveProfileName()
-                        local origSnap = EllesmereUI.SnapshotAllAddons()
-                        EllesmereUI.SpinTheWheel()
-                        local newName = UniquePresetName("Spin the Wheel")
-                        EllesmereUI.SaveCurrentAsProfile(newName)
-                        -- Restore original profile data so the shared AceDB
-                        -- tables are clean when SavedVariables flush on reload.
-                        local pdb = EllesmereUI.GetProfilesDB and EllesmereUI.GetProfilesDB()
-                        if pdb then pdb.profiles[origName] = origSnap end
-                        EllesmereUI:ShowConfirmPopup({
-                            title       = "Reload Required",
-                            message     = "Preset applied. Reload to apply.",
-                            confirmText = "Reload Now",
-                            cancelText  = "Cancel",
-                            onConfirm   = function() ReloadUI() end,
-                        })
-                    end,
-                }
                 if EllesmereUI.WEEKLY_SPOTLIGHT then
                     local spot = EllesmereUI.WEEKLY_SPOTLIGHT
                     presetEntries[#presetEntries + 1] = {

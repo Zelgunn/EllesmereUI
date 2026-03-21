@@ -3372,10 +3372,45 @@ initFrame:SetScript("OnEvent", function(self)
             local MIN_CD_SEC = 30
             local MAX_CD_SEC = 660  -- 11 minutes
 
+            -- Priority sort order for the Custom Item sub-menu.
+            -- Items matching these names appear first in this order;
+            -- everything else sorts alphabetically after.
+            local ITEM_PRIORITY_NAMES = {
+                "Trinket Slot 1",
+                "Trinket Slot 2",
+                "Light's Potential",
+                "Potion of Recklessness",
+                "Silvermoon Health Potion",
+                "Lightfused Mana Potion",
+                "Healthstone",
+            }
+            local ITEM_PRIORITY = {}
+            for i, n in ipairs(ITEM_PRIORITY_NAMES) do
+                ITEM_PRIORITY[n:lower()] = i
+            end
+
             -- Collect candidate itemIDs from bags (fast, no tooltip needed)
             local _candidateItems = {}
             do
                 local seen = {}
+                -- Equipped trinkets (slots 13 and 14)
+                for slotIdx = 13, 14 do
+                    local trinketID = GetInventoryItemID("player", slotIdx)
+                    if trinketID and not seen[trinketID] and not BAG_ITEM_BLACKLIST[trinketID] then
+                        seen[trinketID] = true
+                        local spellName, spellID = C_Item.GetItemSpell(trinketID)
+                        if spellName and spellID then
+                            _candidateItems[#_candidateItems + 1] = {
+                                itemID = trinketID,
+                                spellName = spellName,
+                                spellID = spellID,
+                                isTrinket = slotIdx,
+                            }
+                            C_Item.RequestLoadItemDataByID(trinketID)
+                        end
+                    end
+                end
+                -- Bag items (excluding trinkets)
                 for bag = 0, 4 do
                     local numSlots = C_Container.GetContainerNumSlots(bag)
                     for slot = 1, numSlots do
@@ -3392,7 +3427,6 @@ initFrame:SetScript("OnEvent", function(self)
                                         spellName = spellName,
                                         spellID = spellID,
                                     }
-                                    -- Pre-request item data so tooltip info caches
                                     C_Item.RequestLoadItemDataByID(info.itemID)
                                 end
                             end
@@ -3431,14 +3465,21 @@ initFrame:SetScript("OnEvent", function(self)
                                 end
                             end
                         end
-                        if cdSec and cdSec >= MIN_CD_SEC and cdSec <= MAX_CD_SEC then
+                        if cand.isTrinket or (cdSec and cdSec >= MIN_CD_SEC and cdSec <= MAX_CD_SEC) then
                             local tex = C_Item.GetItemIconByID(cand.itemID)
                             local itemName = C_Item.GetItemNameByID(cand.itemID)
+                            local displayName
+                            if cand.isTrinket then
+                                displayName = (itemName or cand.spellName) .. " (Trinket " .. (cand.isTrinket - 12) .. ")"
+                            else
+                                displayName = itemName or cand.spellName
+                            end
                             results[#results + 1] = {
                                 itemID = cand.itemID,
-                                name = itemName or cand.spellName,
+                                name = displayName,
                                 icon = tex,
                                 spellID = cand.spellID,
+                                isTrinket = cand.isTrinket,
                             }
                         end
                         -- Item data loaded (even if it didn't qualify) -- resolved
@@ -3446,7 +3487,16 @@ initFrame:SetScript("OnEvent", function(self)
                         allResolved = false
                     end
                 end
-                table.sort(results, function(a, b) return a.name < b.name end)
+                -- Sort by priority list first, then alphabetically
+                local PRIORITY_COUNT = #ITEM_PRIORITY_NAMES
+                table.sort(results, function(a, b)
+                    local aKey = a.isTrinket and ("trinket slot " .. (a.isTrinket - 12)) or a.name:lower()
+                    local bKey = b.isTrinket and ("trinket slot " .. (b.isTrinket - 12)) or b.name:lower()
+                    local aPri = ITEM_PRIORITY[aKey] or (PRIORITY_COUNT + 1)
+                    local bPri = ITEM_PRIORITY[bKey] or (PRIORITY_COUNT + 1)
+                    if aPri ~= bPri then return aPri < bPri end
+                    return a.name < b.name
+                end)
                 _cachedBagItems = results
                 _bagScanComplete = allResolved
                 return allResolved
