@@ -3132,8 +3132,12 @@ BuildCDMBar = function(barIndex)
         end
     end
 
-    frame:Show()
-    EllesmereUI.SetElementVisibility(frame, true)
+    -- Respect barVisibility setting - don't force show if set to "never"
+    local visEnd = barData.barVisibility or "always"
+    if visEnd ~= "never" then
+        frame:Show()
+        EllesmereUI.SetElementVisibility(frame, true)
+    end
 end
 
 -- Compute stride respecting topRowCount override (only for numRows == 2)
@@ -3268,8 +3272,11 @@ LayoutCDMBar = function(barKey)
         return
     end
 
-    -- Bar has visible icons -- ensure it is visible
-    EllesmereUI.SetElementVisibility(frame, true)
+    -- Bar has visible icons -- ensure it is visible (unless visibility is "never")
+    local vis = barData.barVisibility or "always"
+    if vis ~= "never" then
+        EllesmereUI.SetElementVisibility(frame, true)
+    end
 
     local isHoriz = (grow == "RIGHT" or grow == "LEFT" or grow == "CENTER")
     local stride, _, customTopCount = ComputeTopRowStride(barData, count)
@@ -8455,7 +8462,11 @@ function ECME:CDMFinishSetup()
                                 frame:ClearAllPoints()
                                 frame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
                             end
-                            frame:Show()
+                            -- Respect barVisibility - don't show if set to "never"
+                            local visPreSize = barData.barVisibility or "always"
+                            if visPreSize ~= "never" then
+                                frame:Show()
+                            end
                         end
                     end
                 end
