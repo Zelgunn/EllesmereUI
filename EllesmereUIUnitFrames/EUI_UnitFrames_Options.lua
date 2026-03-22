@@ -1556,7 +1556,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Disabled overlay -- must render above ALL other child frames
         -- Parent to UIParent so strata isn't clamped by pf's strata
         local disabledOverlay = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        disabledOverlay:SetFrameStrata("TOOLTIP")
+        disabledOverlay:SetFrameStrata("FULLSCREEN_DIALOG")
         disabledOverlay:SetBackdrop(SOLID_BACKDROP)
         disabledOverlay:SetBackdropColor(0, 0, 0, 0.6)
         disabledOverlay:Hide()
