@@ -363,7 +363,8 @@ local _dragState = { visible = false, strataCache = {} }
 
 -- Grid show/hide state (show empty slots during spell drag)
 local _gridState = { shown = false, visPending = false, spellsPending = false }
-local _quickKeybindState = { open = false }
+local _quickKeybindState = { open = false, closePending = false, art = {}, FinishClose = nil }
+local EAB_UpdateQuickKeybindButtons -- forward-declared for early event hooks
 
 -- Set of frames we own (bar frames, not Blizzard frames).
 -- Blizzard-owned frames use the _extraFadeQueue path to avoid taint.
@@ -2577,6 +2578,85 @@ local function SetSquareTexture(texture, texPath)
     texture:SetAllPoints(texture:GetParent())
 end
 
+_quickKeybindState.art.ApplyButtonHighlight = function(btn)
+    local tex = btn and btn.QuickKeybindHighlightTexture
+    if not tex then return end
+
+    local p = EAB and EAB.db and EAB.db.profile
+    local useCC = p and p.highlightUseClassColor
+    local customC = (p and p.highlightCustomColor) or { r = 0.973, g = 0.839, b = 0.604, a = 1 }
+    local cr, cg, cb = customC.r, customC.g, customC.b
+    if useCC then
+        local _, ct = UnitClass("player")
+        if ct then
+            local cc = RAID_CLASS_COLORS[ct]
+            if cc then
+                cr, cg, cb = cc.r, cc.g, cc.b
+            end
+        end
+    end
+
+    -- QuickKeybind manages hover/idle opacity itself. We only replace the
+    -- Blizzard atlas with EUI's square highlight art and matching color.
+    SetSquareTexture(tex, HIGHLIGHT_TEXTURES[1])
+    tex:SetVertexColor(cr, cg, cb, 1)
+end
+
+_quickKeybindState.art.RefreshButton = function(btn, show)
+    if not btn or btn:IsForbidden() then return end
+    _quickKeybindState.art.ApplyButtonHighlight(btn)
+    if show ~= nil then
+        _quickKeybindState.art.ApplyButtonHighlightAlpha(btn, show)
+    end
+end
+
+_quickKeybindState.art.InitializeButton = function(btn, show)
+    _quickKeybindState.art.RefreshButton(btn, show)
+    _quickKeybindState.art.HookButton(btn)
+end
+
+_quickKeybindState.art.HookButton = function(btn)
+    if not btn or btn:IsForbidden() or btn._eabQuickKeybindArtHooked then return end
+    if btn.QuickKeybindHighlightTexture and btn.DoModeChange then
+        hooksecurefunc(btn, "DoModeChange", function(self, isInQuickbindMode)
+            _quickKeybindState.art.RefreshButton(self, isInQuickbindMode)
+        end)
+        btn._eabQuickKeybindArtHooked = true
+    end
+end
+
+_quickKeybindState.art.ApplyButtonHighlightAlpha = function(btn, show)
+    local tex = btn and btn.QuickKeybindHighlightTexture
+    if not tex then return end
+
+    if show then
+        local idleAlpha = 0.5
+        if btn.IsMouseOver and btn:IsMouseOver() then
+            tex:SetAlpha(1)
+        else
+            tex:SetAlpha(idleAlpha)
+        end
+    else
+        tex:SetAlpha(1)
+    end
+end
+
+_quickKeybindState.art.ForEachSpecialButton = function(fn)
+    if not fn then return end
+    if ExtraActionButton1 then
+        fn(ExtraActionButton1)
+    end
+end
+
+_quickKeybindState.ReassertButtonsAfterCombatChange = function()
+    if not _quickKeybindState.open then return end
+    C_Timer_After(0, function()
+        if _quickKeybindState.open and EAB_UpdateQuickKeybindButtons then
+            EAB_UpdateQuickKeybindButtons(true)
+        end
+    end)
+end
+
 local function HideTexture(texture)
     if not texture then return end
     texture:SetAlpha(0)
@@ -2624,6 +2704,7 @@ local function MakeButtonSquare(btn)
     SetSquareTexture(btn.Flash, HIGHLIGHT_TEXTURES[1])
     SetSquareTexture(btn.CheckedTexture, HIGHLIGHT_TEXTURES[1])
     SetSquareTexture(btn.Border, HIGHLIGHT_TEXTURES[1])
+    _quickKeybindState.art.InitializeButton(btn)
     HideTexture(btn.FlyoutBorderShadow)
     if btn.cooldown then
         btn.cooldown:ClearAllPoints()
@@ -2766,6 +2847,8 @@ local function UnmaskFrameTextures(frame, mask)
 end
 
 local function ApplyShapeToButton(btn, shape, brdOn, brdR, brdG, brdB, brdA, brdSize, zoom)
+    _quickKeybindState.art.RefreshButton(btn)
+
     if shape == "none" or shape == "cropped" then
         -- Remove shape mask if previously applied
         if btn._eabShapeMask then
@@ -2798,6 +2881,7 @@ local function ApplyShapeToButton(btn, shape, brdOn, brdR, brdG, brdB, brdA, brd
             if btn.CheckedTexture then pcall(btn.CheckedTexture.RemoveMaskTexture, btn.CheckedTexture, omask) end
             if btn.NewActionTexture then pcall(btn.NewActionTexture.RemoveMaskTexture, btn.NewActionTexture, omask) end
             if btn.Flash then pcall(btn.Flash.RemoveMaskTexture, btn.Flash, omask) end
+            if btn.QuickKeybindHighlightTexture then pcall(btn.QuickKeybindHighlightTexture.RemoveMaskTexture, btn.QuickKeybindHighlightTexture, omask) end
             if btn.Border then pcall(btn.Border.RemoveMaskTexture, btn.Border, omask) end
             local nt = btn.NormalTexture or btn:GetNormalTexture()
             if nt then pcall(nt.RemoveMaskTexture, nt, omask) end
@@ -2817,6 +2901,7 @@ local function ApplyShapeToButton(btn, shape, brdOn, brdR, brdG, brdB, brdA, brd
             if btn.CheckedTexture then pcall(btn.CheckedTexture.RemoveMaskTexture, btn.CheckedTexture, mask) end
             if btn.NewActionTexture then pcall(btn.NewActionTexture.RemoveMaskTexture, btn.NewActionTexture, mask) end
             if btn.Flash then pcall(btn.Flash.RemoveMaskTexture, btn.Flash, mask) end
+            if btn.QuickKeybindHighlightTexture then pcall(btn.QuickKeybindHighlightTexture.RemoveMaskTexture, btn.QuickKeybindHighlightTexture, mask) end
             if btn.Border then pcall(btn.Border.RemoveMaskTexture, btn.Border, mask) end
             local nt = btn.NormalTexture or btn:GetNormalTexture()
             if nt then pcall(nt.RemoveMaskTexture, nt, mask) end
@@ -2913,6 +2998,7 @@ local function ApplyShapeToButton(btn, shape, brdOn, brdR, brdG, brdB, brdA, brd
         if btn.CheckedTexture then pcall(btn.CheckedTexture.RemoveMaskTexture, btn.CheckedTexture, omask) end
         if btn.NewActionTexture then pcall(btn.NewActionTexture.RemoveMaskTexture, btn.NewActionTexture, omask) end
         if btn.Flash then pcall(btn.Flash.RemoveMaskTexture, btn.Flash, omask) end
+        if btn.QuickKeybindHighlightTexture then pcall(btn.QuickKeybindHighlightTexture.RemoveMaskTexture, btn.QuickKeybindHighlightTexture, omask) end
         if btn.Border then pcall(btn.Border.RemoveMaskTexture, btn.Border, omask) end
         local nt2 = btn.NormalTexture or btn:GetNormalTexture()
         if nt2 then pcall(nt2.RemoveMaskTexture, nt2, omask) end
@@ -2927,6 +3013,7 @@ local function ApplyShapeToButton(btn, shape, brdOn, brdR, brdG, brdB, brdA, brd
             if btn.CheckedTexture then pcall(btn.CheckedTexture.RemoveMaskTexture, btn.CheckedTexture, mask) end
             if btn.NewActionTexture then pcall(btn.NewActionTexture.RemoveMaskTexture, btn.NewActionTexture, mask) end
             if btn.Flash then pcall(btn.Flash.RemoveMaskTexture, btn.Flash, mask) end
+            if btn.QuickKeybindHighlightTexture then pcall(btn.QuickKeybindHighlightTexture.RemoveMaskTexture, btn.QuickKeybindHighlightTexture, mask) end
             if btn.Border then pcall(btn.Border.RemoveMaskTexture, btn.Border, mask) end
             if nt2 then pcall(nt2.RemoveMaskTexture, nt2, mask) end
         end
@@ -2968,6 +3055,7 @@ local function ApplyShapeToButton(btn, shape, brdOn, brdR, brdG, brdB, brdA, brd
     if btn.CheckedTexture then pcall(btn.CheckedTexture.AddMaskTexture, btn.CheckedTexture, overlayMask) end
     if btn.NewActionTexture then pcall(btn.NewActionTexture.AddMaskTexture, btn.NewActionTexture, overlayMask) end
     if btn.Flash then pcall(btn.Flash.AddMaskTexture, btn.Flash, overlayMask) end
+    if btn.QuickKeybindHighlightTexture then pcall(btn.QuickKeybindHighlightTexture.AddMaskTexture, btn.QuickKeybindHighlightTexture, overlayMask) end
     -- Hide Blizzard's item quality border (Dragonflight+) for custom shapes
     -- it uses a round atlas that doesn't match non-square shapes.
     if btn.Border then
@@ -3793,6 +3881,7 @@ local function AttachHoverHooks(barKey)
         state.isHovered = false
         C_Timer_After(0.1, function()
             if state.isHovered then return end
+            if _quickKeybindState.open then return end
             -- Keep bar visible while a spell flyout spawned from this bar is open
             if GetEABFlyout():IsVisible() and GetEABFlyout():IsMouseOver() then return end
             local s = EAB.db.profile.bars[barKey]
@@ -3809,6 +3898,7 @@ local function AttachHoverHooks(barKey)
         local flyFrame = GetEABFlyout():GetFrame()
         if flyFrame then
             flyFrame:HookScript("OnHide", function()
+                if _quickKeybindState.open then return end
                 if state.isHovered then return end
                 local s = EAB.db.profile.bars[barKey]
                 if s and s.mouseoverEnabled and state.fadeDir ~= "out" then
@@ -4330,9 +4420,15 @@ function EAB:ApplyHighlightTextures()
                         end
                     end
                 end
+                _quickKeybindState.art.RefreshButton(btn)
             end
         end
     end
+
+    -- Blizzard-owned special buttons do not flow through the standard bar
+    -- button setup, but QuickKeybind still resets their overlay atlas.
+    -- Keep their QuickKeybind highlight aligned with the EUI button art too.
+    _quickKeybindState.art.ForEachSpecialButton(_quickKeybindState.art.InitializeButton)
 end
 
 -------------------------------------------------------------------------------
@@ -6015,6 +6111,7 @@ function EAB:FinishSetup()
         local flyFrame = GetEABFlyout():GetFrame()
         if flyFrame then
             flyFrame:HookScript("OnHide", function()
+                if _quickKeybindState.open then return end
                 for key, state in pairs(hoverStates) do
                     if not state.isHovered then
                         local s = EAB.db.profile.bars[key]
@@ -6190,6 +6287,14 @@ function EAB:FinishSetup()
         ApplyAll()
         -- Restore any strata changes that couldn't be done in combat
         ResetDragState()
+    end)
+
+    self:RegisterEvent("PLAYER_REGEN_DISABLED", function()
+        _quickKeybindState.ReassertButtonsAfterCombatChange()
+    end)
+
+    self:RegisterEvent("PLAYER_REGEN_ENABLED", function()
+        _quickKeybindState.ReassertButtonsAfterCombatChange()
     end)
 
     self:RegisterEvent("PLAYER_ENTERING_WORLD", function()
@@ -6917,6 +7022,7 @@ local function SetupDataBars()
                             state.isHovered = false
                             C_Timer_After(0.1, function()
                                 if state.isHovered then return end
+                                if _quickKeybindState.open then return end
                                 if state.fadeDir ~= "out" then
                                     state.fadeDir = "out"
                                     FadeTo(frame, 0, s.mouseoverSpeed or 0.15)
@@ -7340,6 +7446,7 @@ AttachExtraBarHoverHooks = function(info)
         state.isHovered = false
         C_Timer_After(0.1, function()
             if state.isHovered then return end
+            if _quickKeybindState.open then return end
             local bs = EAB.db.profile.bars[info.key]
             if bs and bs.mouseoverEnabled and state.fadeDir ~= "out" then
                 state.fadeDir = "out"
@@ -7664,6 +7771,8 @@ local function SetupExtraBars()
         end  -- not isDataBar/isBlizzardMovable
     end
 
+    _quickKeybindState.art.ForEachSpecialButton(_quickKeybindState.art.InitializeButton)
+
     -- Register extra bars with unlock mode
     if EllesmereUI and EllesmereUI.RegisterUnlockElements then
         RegisterExtraBarsWithUnlockMode()
@@ -7706,12 +7815,13 @@ local function EAB_SetQuickKeybindEffects(btn, show)
     elseif btn.QuickKeybindHighlightTexture then
         btn.QuickKeybindHighlightTexture:SetShown(show)
     end
+    _quickKeybindState.art.ApplyButtonHighlightAlpha(btn, show)
     if btn.UpdateMouseWheelHandler then
         btn:UpdateMouseWheelHandler()
     end
 end
 
-local function EAB_UpdateQuickKeybindButtons(show)
+EAB_UpdateQuickKeybindButtons = function(show)
     for _, info in ipairs(BAR_CONFIG) do
         local buttons = barButtons[info.key]
         if buttons then
@@ -7746,8 +7856,16 @@ local function EAB_UpdateQuickKeybindVisibility(show)
             SafeEnableMouseMotionOnly(frame, true)
         end
 
+        local buttons = barButtons[key]
+        if buttons then
+            for _, btn in ipairs(buttons) do
+                if btn then
+                    _quickKeybindState.art.ApplyButtonHighlightAlpha(btn, show)
+                end
+            end
+        end
+
         if not info.isStance and not info.isPetBar then
-            local buttons = barButtons[key]
             if buttons then
                 for _, btn in ipairs(buttons) do
                     if btn then
@@ -7757,6 +7875,10 @@ local function EAB_UpdateQuickKeybindVisibility(show)
             end
         end
     end
+
+    _quickKeybindState.art.ForEachSpecialButton(function(btn)
+        _quickKeybindState.art.ApplyButtonHighlightAlpha(btn, show)
+    end)
 
     if show then
         for _, info in ipairs(BAR_CONFIG) do
@@ -7790,25 +7912,39 @@ end
 
 local _qkbHookFrame
 
+_quickKeybindState.FinishClose = function()
+    _quickKeybindState.closePending = false
+    EAB_UpdateQuickKeybindVisibility(false)
+end
+
 local function EAB_QuickKeybindOpen()
     if _quickKeybindState.open then return end
     if InCombatLockdown() then return end
+    _quickKeybindState.closePending = false
     _quickKeybindState.open = true
     EAB_UpdateQuickKeybindButtons(true)
     EAB_UpdateQuickKeybindVisibility(true)
 end
 
 local function EAB_QuickKeybindClose()
-    if not _quickKeybindState.open then return end
+    if not _quickKeybindState.open and not _quickKeybindState.closePending then return end
     if InCombatLockdown() then
-        -- Defer until combat ends; the PLAYER_REGEN_ENABLED handler on
-        -- _qkbHookFrame will retry once protected mutations are safe.
+        -- Drop the visual bind overlays immediately so Bar 1 does not look
+        -- stuck in QuickKeybind mode, then defer the protected visibility
+        -- cleanup until combat ends.
+        _quickKeybindState.open = false
+        _quickKeybindState.closePending = true
+        EAB_UpdateQuickKeybindButtons(false)
+        -- Mouseover fading is alpha-only and already operates during combat,
+        -- so restore that presentation immediately even though secure
+        -- visibility drivers still have to wait until combat ends.
+        EAB:RefreshMouseover()
         _qkbHookFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
         return
     end
     _quickKeybindState.open = false
     EAB_UpdateQuickKeybindButtons(false)
-    EAB_UpdateQuickKeybindVisibility(false)
+    _quickKeybindState.FinishClose()
 end
 
 -- Defer hook until QuickKeybindFrame exists (it loads after PLAYER_LOGIN).
@@ -7847,7 +7983,9 @@ _qkbHookFrame:SetScript("OnEvent", function(self, event)
         end)
     elseif event == "PLAYER_REGEN_ENABLED" then
         self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-        if _quickKeybindState.open
+        if _quickKeybindState.closePending then
+            _quickKeybindState.FinishClose()
+        elseif _quickKeybindState.open
             and not (QuickKeybindFrame and QuickKeybindFrame:IsShown()) then
             EAB_QuickKeybindClose()
         end
