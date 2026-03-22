@@ -6,7 +6,7 @@
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
-local PAGE_CURSOR     = "Cursor Circle"
+local PAGE_CURSOR     = "Cursor"
 local PAGE_UNLOCK     = "Unlock Mode"
 
 local SECTION_APPEARANCE   = "CURSOR"
@@ -531,34 +531,14 @@ initFrame:SetScript("OnEvent", function(self)
     end
 
     ---------------------------------------------------------------------------
-    --  Register the module
+    --  Expose globals for EllesmereUIBasics integration
     ---------------------------------------------------------------------------
-    EllesmereUI:RegisterModule("EllesmereUICursor", {
-        title       = "Cursor Circle",
-        description = "Add a custom texture to your mouse cursor with GCD and cast bar rings.",
-        pages       = { PAGE_CURSOR },
-        buildPage   = function(pageName, parent, yOffset)
-            if pageName == PAGE_CURSOR then
-                return BuildCursorPage(pageName, parent, yOffset)
-            end
-        end,
-        onReset = function()
-            if _G._ECL_AceDB then
-                _G._ECL_AceDB:ResetProfile()
-            end
-            RefreshAddon()
-            RefreshGCD()
-            RefreshCast()
-            if _G._ECL_ApplyTrail then _G._ECL_ApplyTrail() end
-        end,
-    })
-
-    ---------------------------------------------------------------------------
-    --  Slash command  /ecc
-    ---------------------------------------------------------------------------
-    SLASH_ECL1 = "/ecc"
-    SlashCmdList.ECL = function()
-        if InCombatLockdown and InCombatLockdown() then return end
-        EllesmereUI:ShowModule("EllesmereUICursor")
+    _G._EBS_BuildCursorPage = BuildCursorPage
+    _G._EBS_ResetCursor = function()
+        if _G._ECL_AceDB then _G._ECL_AceDB:ResetProfile() end
+        RefreshAddon()
+        RefreshGCD()
+        RefreshCast()
+        if _G._ECL_ApplyTrail then _G._ECL_ApplyTrail() end
     end
 end)

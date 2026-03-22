@@ -1,5 +1,9 @@
 local addonName, ns = ...
 
+local math_floor, math_ceil, math_max, math_min, math_abs =
+    math.floor, math.ceil, math.max, math.min, math.abs
+local string_format = string.format
+
 local oUF = ns.oUF or oUF
 local PP = EllesmereUI.PP
 if not oUF then
@@ -172,9 +176,10 @@ local defaults = {
             healthClassColored = true,
             customBgColor = { r = 0.067, g = 0.067, b = 0.067 },
             castbarHeight = 14,
+            castbarWidth = 0,
             showCastbar = true,
             showCastIcon = true,
-            castbarHideWhenInactive = false,
+            castbarHideWhenInactive = true,
             castSpellNameSize = 11,
             castSpellNameColor = { r = 1, g = 1, b = 1 },
             castDurationSize = 11,
@@ -351,6 +356,7 @@ local defaults = {
             healthClassColored = true,
             customBgColor = { r = 0.067, g = 0.067, b = 0.067 },
             castbarHeight = 14,
+            castbarWidth = 0,
             showCastbar = true,
             showCastIcon = true,
             castbarHideWhenInactive = true,
@@ -427,6 +433,10 @@ local defaults = {
             debuffAnchor = "bottomleft",
             debuffGrowth = "auto",
             maxDebuffs = 10,
+            showBuffs = false,
+            buffAnchor = "topleft",
+            buffGrowth = "auto",
+            maxBuffs = 4,
             textSize = 12,
             borderSize = 1,
             borderColor = { r = 0, g = 0, b = 0 },
@@ -460,12 +470,29 @@ local defaults = {
             healthClassColored = true,
             customBgColor = { r = 0.067, g = 0.067, b = 0.067 },
             castbarHeight = 14,
+            showCastbar = true,
+            showCastIcon = true,
+            castbarHideWhenInactive = false,
+            castSpellNameSize = 11,
+            castSpellNameColor = { r = 1, g = 1, b = 1 },
+            castDurationSize = 11,
+            castDurationColor = { r = 1, g = 1, b = 1 },
+            castbarFillColor = { r = 0.863, g = 0.820, b = 0.639 },
+            castbarClassColored = false,
             healthDisplay = "perhp",
             showPortrait = false,
             portraitMode = "2d",
             healthBarTexture = "none",
             healthBarOpacity = 90,
             powerBarOpacity = 100,
+            onlyPlayerDebuffs = true,
+            debuffAnchor = "bottomleft",
+            debuffGrowth = "auto",
+            maxDebuffs = 10,
+            showBuffs = false,
+            buffAnchor = "topleft",
+            buffGrowth = "auto",
+            maxBuffs = 4,
             textSize = 12,
             leftTextContent = "name",
             rightTextContent = "perhp",
@@ -491,7 +518,6 @@ local defaults = {
             targettarget = { point = "CENTER", relPoint = "CENTER", x = 383, y = -152.5 },
             focustarget = { point = "CENTER", relPoint = "CENTER", x = 50, y = -261 },
             boss = { point = "CENTER", relPoint = "CENTER", x = 661, y = 251 },
-            playerCastbar = { point = "CENTER", relPoint = "CENTER", x = 0, y = -250 },
             classPower = { point = "CENTER", relPoint = "CENTER", x = 0, y = -220 },
         },
         bossSpacing = 60,
@@ -827,7 +853,7 @@ do
     if UnitIsDeadOrGhost(unit) then return "DEAD" end
     local pct = UnitHealthPercent(unit, true, CurveConstants.ScaleTo100)
     if not pct then return "0" end
-    return string.format("%d", pct)
+    return string_format("%d", pct)
   end
   oUF.Tags.Events["perhpnosign"] = "UNIT_HEALTH UNIT_MAXHEALTH"
 end
@@ -1974,12 +2000,8 @@ end
 
 local function CreatePortrait(frame, side, frameHeight, unit)
     local portraitHeight = frameHeight or 46
-    local isAttached = (db.profile.portraitStyle or "attached") == "attached"
-
-    -- Check if portrait is hidden via portraitStyle == "none"
-    if (db.profile.portraitStyle or "attached") == "none" then
-        return nil
-    end
+    local portraitStyle = db.profile.portraitStyle or "attached"
+    local isAttached = (portraitStyle == "attached")
 
     -- Per-unit size/offset adjustments
     local uKey = UnitToSettingsKey(unit)
@@ -1988,7 +2010,7 @@ local function CreatePortrait(frame, side, frameHeight, unit)
     local pXOff = (uSettings and uSettings.portraitX) or 0
     local pYOff = (uSettings and uSettings.portraitY) or 0
     local baseHeight = portraitHeight
-    if not isAttached then pSizeAdj = pSizeAdj + 10; pYOff = pYOff + 5 end
+    if not isAttached and portraitStyle ~= "none" then pSizeAdj = pSizeAdj + 10; pYOff = pYOff + 5 end
     local adjustedHeight = baseHeight + pSizeAdj
     if adjustedHeight < 8 then adjustedHeight = 8 end
 
@@ -2010,7 +2032,11 @@ local function CreatePortrait(frame, side, frameHeight, unit)
     bgTex:SetColorTexture(0.1, 0.1, 0.1, 1)
     backdrop._bg = bgTex
 
-    if isAttached then
+    if portraitStyle == "none" then
+        -- Portrait disabled: anchor backdrop to frame corner (it stays hidden).
+        -- Avoids any dependency on frame.Health which may not exist yet.
+        PP.Point(backdrop, "TOPLEFT", frame, "TOPLEFT", 0, 0)
+    elseif isAttached then
         if effectiveSide == "left" then
             PP.Point(backdrop, "TOPLEFT", frame, "TOPLEFT", 0, 0)
         else
@@ -2082,11 +2108,16 @@ local function CreatePortrait(frame, side, frameHeight, unit)
     local mode
     do
         mode = (uSettings and uSettings.portraitMode) or db.profile.portraitMode or "2d"
-        -- "none" means portrait is disabled
-        if mode == "none" then
-            backdrop:Hide()
-            return nil
-        end
+    end
+    -- If portraitStyle or portraitMode is "none", hide the backdrop but keep
+    -- the structure alive so ReloadFrames can show it again without a /reload.
+    if portraitStyle == "none" or mode == "none" then
+        backdrop:Hide()
+        -- Return tex2D as a minimal placeholder so frame.Portrait is non-nil
+        -- and has a backdrop reference. It stays hidden (backdrop is hidden).
+        tex2D.backdrop = backdrop
+        tex2D.is2D = true
+        return tex2D
     end
     local active
     if mode == "class" then
@@ -2143,57 +2174,30 @@ local function CreatePortrait(frame, side, frameHeight, unit)
 end
 
 local function CreateCastBar(frame, unit, settings)
-    local castbarBg = CreateFrame("Frame", nil, frame)
-    local totalWidth = 0
     local settings = GetSettingsForUnit(unit)
-    local isAttached = (db.profile.portraitStyle or "attached") == "attached"
-    local showPortraitCB = (db.profile.portraitStyle or "attached") ~= "none" and settings.showPortrait ~= false
-    local powerHeightTotal = 0
-    local ppPos = settings.powerPosition or "below"
-    local ppIsAtt = (ppPos == "below" or ppPos == "above")
-    if settings.powerHeight and ppIsAtt then
-        powerHeightTotal = settings.powerHeight
-    end
-    local playerTargetHeight = settings.healthHeight + powerHeightTotal
-    local pSizeAdj = settings.portraitSize or 0
-    local adjPH = playerTargetHeight + pSizeAdj
-    if adjPH < 8 then adjPH = 8 end
-    local castBarOffset = 0
-    if not isAttached then pSizeAdj = pSizeAdj + 10 end
-    if not showPortraitCB or not isAttached then
-        totalWidth = settings.frameWidth
-    else
-        local pSide = settings.portraitSide or (unit == "player" and "left" or "right")
-        local eSide = pSide
-        if pSide == "top" then eSide = (unit == "player") and "left" or "right" end
-        totalWidth = adjPH + settings.frameWidth
-        if eSide == "left" then
-            castBarOffset = -(adjPH / 2)
-        else
-            castBarOffset = adjPH / 2
-        end
-    end
-    PP.Size(castbarBg, totalWidth, settings.castbarHeight or 14)
+    
+    -- Castbar is a standalone element parented to the oUF frame for
+    -- compatibility, but sized and positioned independently.
+    local castbarBg = CreateFrame("Frame", nil, frame)
 
-    local ppPos2 = settings.powerPosition or "below"
-    local ppHasHeight = (settings.powerHeight or 0) > 0
-    local anchorFrame = (ppPos2 == "below" and ppHasHeight and frame.Power) or frame.Health
-    local pcbX = 0
-    local pcbY = 0
+    -- Determine width and height from settings
+    local cbWidth, cbHeight
     if unit == "player" then
+        local owW = db.profile.player.playerCastbarWidth or 0
         local owH = db.profile.player.playerCastbarHeight or 0
-        if owH > 0 then
-            PP.Size(castbarBg, totalWidth, owH)
-        else
-            PP.Size(castbarBg, totalWidth, settings.castbarHeight or 14)
-        end
-        -- Player castbar is always locked to frame ? anchor from left edge of frame
-        local healthOff = (frame.Health and frame.Health._xOffset) or 0
-        castbarBg:SetPoint("TOPLEFT", anchorFrame, "BOTTOMLEFT", -healthOff, 0)
+        cbHeight = (owH > 0) and owH or (settings.castbarHeight or 14)
+        -- Width 0 means "match frame width" -- resolved at position time
+        cbWidth = (owW > 0) and owW or frame:GetWidth()
     else
-        local healthOff = (frame.Health and frame.Health._xOffset) or 0
-        castbarBg:SetPoint("TOPLEFT", anchorFrame, "BOTTOMLEFT", -healthOff + pcbX, pcbY)
+        cbHeight = settings.castbarHeight or 14
+        local owW = settings.castbarWidth or 0
+        cbWidth = (owW > 0) and owW or frame:GetWidth()
     end
+    PP.Size(castbarBg, cbWidth, cbHeight)
+
+    -- Default position: centered below the parent frame.
+    -- The unlock anchor system will reposition this on load.
+    castbarBg:SetPoint("TOP", frame, "BOTTOM", 0, 0)
 
     local bgTex = castbarBg:CreateTexture(nil, "BACKGROUND")
     PP.Point(bgTex, "TOPLEFT", castbarBg, "TOPLEFT", 0, 0)
@@ -2289,10 +2293,10 @@ local function CreateCastBar(frame, unit, settings)
 
     -- Cast spell icon (oUF sets castbar.Icon texture automatically)
     local cbH = castbarBg:GetHeight()
-    local iconSize = cbH + 1
+    local iconSize = cbH
     local iconFrame = CreateFrame("Frame", nil, castbarBg)
     iconFrame:SetSize(iconSize, iconSize)
-    PP.Point(iconFrame, "TOPRIGHT", castbarBg, "TOPLEFT", 1, 1)
+    PP.Point(iconFrame, "TOPRIGHT", castbarBg, "TOPLEFT", 0, 0)
     local iconBg = iconFrame:CreateTexture(nil, "BACKGROUND")
     iconBg:SetAllPoints()
     iconBg:SetColorTexture(0, 0, 0, 1)
@@ -2318,9 +2322,9 @@ local function SetupShowOnCastBar(frame, unit)
     -- frame-creation time.
     local function shouldHideWhenInactive()
         local s = GetSettingsForUnit(unit)
-        if not s then return (unit ~= "target") end
+        if not s then return true end
         local v = s.castbarHideWhenInactive
-        if v == nil then return (unit ~= "target") end
+        if v == nil then return true end
         return v
     end
 
@@ -2864,7 +2868,7 @@ local function StyleFocusFrame(frame, unit)
     local btbPos = settings.btbPosition or "bottom"
     local btbIsAttached = (btbPos == "top" or btbPos == "bottom")
     local btbExtra = (settings.bottomTextBar and btbIsAttached) and (settings.bottomTextBarHeight or 16) or 0
-    local focusFrameHeight = focusBarHeight + btbExtra + (settings.castbarHeight or 14)
+    local focusFrameHeight = focusBarHeight + btbExtra
     local totalWidth = 0
     local portraitHeight = 0
     local showPortrait = (db.profile.portraitStyle or "attached") ~= "none" and settings.showPortrait ~= false
@@ -2916,6 +2920,8 @@ local function StyleFocusFrame(frame, unit)
     PP.Size(frame, totalWidth, focusBarHeight)
 
     SetupShowOnCastBar(frame, "focus")
+
+    CreateTargetAuras(frame, unit)
 
     CreateUnifiedBorder(frame, unit)
     UpdateBordersForScale(frame, unit)
@@ -3383,6 +3389,11 @@ local function StyleBossFrame(frame, unit)
     end
 
     PP.Size(frame, totalWidth, bossBarHeight)
+
+    frame.Castbar = CreateCastBar(frame, unit, settings)
+    SetupShowOnCastBar(frame, unit)
+
+    CreateTargetAuras(frame, unit)
 
     CreateUnifiedBorder(frame, unit)
     UpdateBordersForScale(frame, unit)
@@ -3961,8 +3972,8 @@ local function CreateCustomClassPower(playerFrame, style)
         if n <= 0 then return end
         local efs = container:GetEffectiveScale()
         if efs <= 0 then efs = 1 end
-        local function Snap(v) return math.floor(v * efs + 0.5) / efs end
-        local intW = math.floor(targetW)
+        local function Snap(v) return math_floor(v * efs + 0.5) / efs end
+        local intW = math_floor(targetW)
         local gapPx = Snap(gap)
         local totalGapW = (n - 1) * gapPx
         local totalPipW = intW - totalGapW
@@ -4315,7 +4326,7 @@ local function ReloadFrames()
                                 castbarBg:SetSize(cbW, cbH)
                                 -- Resize cast icon to match castbar height
                                 if frame.Castbar._iconFrame then
-                                    frame.Castbar._iconFrame:SetSize(cbH + 1, cbH + 1)
+                                    frame.Castbar._iconFrame:SetSize(cbH, cbH)
                                     -- Icon only visible during active cast AND if showPlayerCastIcon is enabled
                                     if not frame.Castbar:IsShown() or settings.showPlayerCastIcon == false then
                                         frame.Castbar._iconFrame:Hide()
@@ -4688,7 +4699,7 @@ local function ReloadFrames()
                                 castbarBg:SetSize(totalWidth, settings.castbarHeight or 14)
                                 if frame.Castbar._iconFrame then
                                     local cbH = settings.castbarHeight or 14
-                                    frame.Castbar._iconFrame:SetSize(cbH + 1, cbH + 1)
+                                    frame.Castbar._iconFrame:SetSize(cbH, cbH)
                                     -- Icon only visible during active cast, always hide on settings update
                                     if not frame.Castbar:IsShown() then
                                         frame.Castbar._iconFrame:Hide()
@@ -5016,7 +5027,7 @@ local function ReloadFrames()
                             castbarBg:SetSize(totalWidth, settings.castbarHeight or 14)
                             if frame.Castbar._iconFrame then
                                 local cbH = settings.castbarHeight or 14
-                                frame.Castbar._iconFrame:SetSize(cbH + 1, cbH + 1)
+                                frame.Castbar._iconFrame:SetSize(cbH, cbH)
                                 -- Icon only visible during active cast, always hide on settings update
                                 if not frame.Castbar:IsShown() then
                                     frame.Castbar._iconFrame:Hide()
@@ -5066,6 +5077,88 @@ local function ReloadFrames()
                         SetFSFont(frame.Castbar.Time, dtSz)
                         local dtC = settings.castDurationColor or { r=1, g=1, b=1 }
                         frame.Castbar.Time:SetTextColor(dtC.r, dtC.g, dtC.b)
+                    end
+                end
+
+                -- Debuffs (focus)
+                if frame.Debuffs then
+                    local dAnc = settings.debuffAnchor or "bottomleft"
+                    if dAnc == "none" then
+                        if frame:IsElementEnabled("Debuffs") then
+                            frame:DisableElement("Debuffs")
+                        end
+                        frame.Debuffs:Hide()
+                        frame.Debuffs.num = 0
+                    else
+                        if not frame:IsElementEnabled("Debuffs") then
+                            frame:EnableElement("Debuffs")
+                        end
+                        frame.Debuffs:Show()
+                        frame.Debuffs.num = settings.maxDebuffs or 10
+                        frame.Debuffs.onlyShowPlayer = settings.onlyPlayerDebuffs and true or nil
+                        local dfp, dia, dgx, dgy, dox, doy = ResolveBuffLayout(dAnc, settings.debuffGrowth or "auto")
+                        local focusDbCbOff = 0
+                        if settings.showCastbar ~= false then
+                            if dAnc == "bottomleft" or dAnc == "bottomright" then
+                                local cbH = settings.castbarHeight or 14
+                                if cbH <= 0 then cbH = 14 end
+                                focusDbCbOff = -cbH
+                            end
+                        end
+                        local debuffKey = (dia or "") .. (dfp or "") .. (dox or 0) .. (doy or 0) .. (dgx or 0) .. (dgy or 0) .. (settings.maxDebuffs or 10) .. focusDbCbOff .. (settings.onlyPlayerDebuffs and "1" or "0")
+                        if frame.Debuffs._lastDebuffKey ~= debuffKey then
+                            frame.Debuffs._lastDebuffKey = debuffKey
+                            frame.Debuffs:ClearAllPoints()
+                            frame.Debuffs:SetPoint(dia, frame, dfp, dox * 1, doy * 1 + focusDbCbOff)
+                            frame.Debuffs.initialAnchor = dia
+                            frame.Debuffs.growthX = dgx
+                            frame.Debuffs.growthY = dgy
+                            if frame.Debuffs.ForceUpdate then
+                                frame.Debuffs:ForceUpdate()
+                            end
+                        end
+                    end
+                end
+
+                -- Buffs (focus)
+                if frame.Buffs then
+                    local showBuffs = settings.showBuffs ~= false
+                    if showBuffs then
+                        if not frame:IsElementEnabled("Buffs") then
+                            frame:EnableElement("Buffs")
+                        end
+                        frame.Buffs:Show()
+                        frame.Buffs.num = settings.maxBuffs or 4
+                        local bfp, bia, bgx, bgy, box, boy = ResolveBuffLayout(
+                            settings.buffAnchor, settings.buffGrowth
+                        )
+                        local focusBfCbOff = 0
+                        if settings.showCastbar ~= false then
+                            local bAnc = settings.buffAnchor or "topleft"
+                            if bAnc == "bottomleft" or bAnc == "bottomright" then
+                                local cbH = settings.castbarHeight or 14
+                                if cbH <= 0 then cbH = 14 end
+                                focusBfCbOff = -cbH
+                            end
+                        end
+                        local buffKey = (bia or "") .. (bfp or "") .. (box or 0) .. (boy or 0) .. (bgx or 0) .. (bgy or 0) .. (settings.maxBuffs or 4) .. focusBfCbOff
+                        if frame.Buffs._lastBuffKey ~= buffKey then
+                            frame.Buffs._lastBuffKey = buffKey
+                            frame.Buffs:ClearAllPoints()
+                            frame.Buffs:SetPoint(bia, frame, bfp, box * 1, boy * 1 + focusBfCbOff)
+                            frame.Buffs.initialAnchor = bia
+                            frame.Buffs.growthX = bgx
+                            frame.Buffs.growthY = bgy
+                            if frame.Buffs.ForceUpdate then
+                                frame.Buffs:ForceUpdate()
+                            end
+                        end
+                    else
+                        if frame:IsElementEnabled("Buffs") then
+                            frame:DisableElement("Buffs")
+                        end
+                        frame.Buffs:Hide()
+                        frame.Buffs.num = 0
                     end
                 end
 
@@ -5198,6 +5291,149 @@ local function ReloadFrames()
                         else
                             frame.Power._grayedOut = false
                         end
+                    end
+                end
+
+                -- Castbar (boss)
+                if frame.Castbar then
+                    local castbarBg = frame.Castbar:GetParent()
+                    if castbarBg then
+                        if settings.showCastbar ~= false then
+                            if not frame:IsElementEnabled("Castbar") then
+                                frame:EnableElement("Castbar")
+                            end
+                            local castBarOffset = 0
+                            if showPortrait then
+                                castBarOffset = (bossBarHeight / 2)
+                            end
+                            castbarBg:SetSize(totalWidth, settings.castbarHeight or 14)
+                            if frame.Castbar._iconFrame then
+                                local cbH = settings.castbarHeight or 14
+                                frame.Castbar._iconFrame:SetSize(cbH, cbH)
+                                if not frame.Castbar:IsShown() then
+                                    frame.Castbar._iconFrame:Hide()
+                                elseif settings.showCastIcon == false then
+                                    frame.Castbar._iconFrame:Hide()
+                                else
+                                    frame.Castbar._iconFrame:Show()
+                                end
+                            end
+                            castbarBg:ClearAllPoints()
+                            local bPpIsAtt2 = (bPpPos == "below" or bPpPos == "above")
+                            local cbAnchor = (bPpIsAtt2 and frame.Power) or frame.Health
+                            castbarBg:SetPoint("TOP", cbAnchor, "BOTTOM", castBarOffset, 0)
+                            if settings.castbarHideWhenInactive and not frame.Castbar:IsShown() then
+                                castbarBg:Hide()
+                            else
+                                castbarBg:Show()
+                            end
+                        else
+                            if frame:IsElementEnabled("Castbar") then
+                                frame:DisableElement("Castbar")
+                            end
+                            frame.Castbar:Hide()
+                            castbarBg:Hide()
+                        end
+                    end
+                    frame.Castbar._eufSettings = settings
+                    local bCbColor = castbarColor
+                    if settings.castbarFillColor then
+                        bCbColor = settings.castbarFillColor
+                    end
+                    frame.Castbar:SetStatusBarColor(bCbColor.r, bCbColor.g, bCbColor.b, castbarOpacity)
+                    if frame.Castbar.Text then
+                        local snSz = settings.castSpellNameSize or 11
+                        SetFSFont(frame.Castbar.Text, snSz)
+                        local snC = settings.castSpellNameColor or { r=1, g=1, b=1 }
+                        frame.Castbar.Text:SetTextColor(snC.r, snC.g, snC.b)
+                    end
+                    if frame.Castbar.Time then
+                        local dtSz = settings.castDurationSize or 11
+                        SetFSFont(frame.Castbar.Time, dtSz)
+                        local dtC = settings.castDurationColor or { r=1, g=1, b=1 }
+                        frame.Castbar.Time:SetTextColor(dtC.r, dtC.g, dtC.b)
+                    end
+                end
+
+                -- Debuffs (boss)
+                if frame.Debuffs then
+                    local dAnc = settings.debuffAnchor or "bottomleft"
+                    if dAnc == "none" then
+                        if frame:IsElementEnabled("Debuffs") then
+                            frame:DisableElement("Debuffs")
+                        end
+                        frame.Debuffs:Hide()
+                        frame.Debuffs.num = 0
+                    else
+                        if not frame:IsElementEnabled("Debuffs") then
+                            frame:EnableElement("Debuffs")
+                        end
+                        frame.Debuffs:Show()
+                        frame.Debuffs.num = settings.maxDebuffs or 10
+                        frame.Debuffs.onlyShowPlayer = settings.onlyPlayerDebuffs and true or nil
+                        local dfp, dia, dgx, dgy, dox, doy = ResolveBuffLayout(dAnc, settings.debuffGrowth or "auto")
+                        local liveDbCbOff = 0
+                        if settings.showCastbar ~= false then
+                            if dAnc == "bottomleft" or dAnc == "bottomright" then
+                                local cbH = settings.castbarHeight or 14
+                                if cbH <= 0 then cbH = 14 end
+                                liveDbCbOff = -cbH
+                            end
+                        end
+                        local debuffKey = (dia or "") .. (dfp or "") .. (dox or 0) .. (doy or 0) .. (dgx or 0) .. (dgy or 0) .. (settings.maxDebuffs or 10) .. liveDbCbOff .. (settings.onlyPlayerDebuffs and "1" or "0")
+                        if frame.Debuffs._lastDebuffKey ~= debuffKey then
+                            frame.Debuffs._lastDebuffKey = debuffKey
+                            frame.Debuffs:ClearAllPoints()
+                            frame.Debuffs:SetPoint(dia, frame, dfp, dox * 1, doy * 1 + liveDbCbOff)
+                            frame.Debuffs.initialAnchor = dia
+                            frame.Debuffs.growthX = dgx
+                            frame.Debuffs.growthY = dgy
+                            if frame.Debuffs.ForceUpdate then
+                                frame.Debuffs:ForceUpdate()
+                            end
+                        end
+                    end
+                end
+
+                -- Buffs (boss)
+                if frame.Buffs then
+                    local showBuffs = settings.showBuffs ~= false
+                    if showBuffs then
+                        if not frame:IsElementEnabled("Buffs") then
+                            frame:EnableElement("Buffs")
+                        end
+                        frame.Buffs:Show()
+                        frame.Buffs.num = settings.maxBuffs or 4
+                        local bfp, bia, bgx, bgy, box, boy = ResolveBuffLayout(
+                            settings.buffAnchor, settings.buffGrowth
+                        )
+                        local bossBfCbOff = 0
+                        if settings.showCastbar ~= false then
+                            local bAnc = settings.buffAnchor or "topleft"
+                            if bAnc == "bottomleft" or bAnc == "bottomright" then
+                                local cbH = settings.castbarHeight or 14
+                                if cbH <= 0 then cbH = 14 end
+                                bossBfCbOff = -cbH
+                            end
+                        end
+                        local buffKey = (bia or "") .. (bfp or "") .. (box or 0) .. (boy or 0) .. (bgx or 0) .. (bgy or 0) .. (settings.maxBuffs or 4) .. bossBfCbOff
+                        if frame.Buffs._lastBuffKey ~= buffKey then
+                            frame.Buffs._lastBuffKey = buffKey
+                            frame.Buffs:ClearAllPoints()
+                            frame.Buffs:SetPoint(bia, frame, bfp, box * 1, boy * 1 + bossBfCbOff)
+                            frame.Buffs.initialAnchor = bia
+                            frame.Buffs.growthX = bgx
+                            frame.Buffs.growthY = bgy
+                            if frame.Buffs.ForceUpdate then
+                                frame.Buffs:ForceUpdate()
+                            end
+                        end
+                    else
+                        if frame:IsElementEnabled("Buffs") then
+                            frame:DisableElement("Buffs")
+                        end
+                        frame.Buffs:Hide()
+                        frame.Buffs.num = 0
                     end
                 end
 
@@ -5385,6 +5621,26 @@ local function ApplyBlizzCastbarState()
         hooksecurefunc(blizzBar, "Show", function(self)
             if db.profile.player.showPlayerCastbar then self:Hide() end
         end)
+    end
+end
+
+local function UnitFrame_OnEnter(self)
+    local unit = self.unit
+    if not unit then return end
+    local unitKey = unit:match("^boss%d$") and "boss" or unit
+    local s = db and db.profile and db.profile[unitKey]
+    if s and (s.barVisibility or "always") == "mouseover" then
+        self:SetAlpha(1)
+    end
+end
+
+local function UnitFrame_OnLeave(self)
+    local unit = self.unit
+    if not unit then return end
+    local unitKey = unit:match("^boss%d$") and "boss" or unit
+    local s = db and db.profile and db.profile[unitKey]
+    if s and (s.barVisibility or "always") == "mouseover" then
+        self:SetAlpha(0)
     end
 end
 
@@ -5770,11 +6026,13 @@ function InitializeFrames()
                     bar._castbarWatcher = CreateFrame("Frame", nil, bar)
                 end
                 local cbElapsed = 0
+                local playerFrame = frames.player
                 bar._castbarWatcher:SetScript("OnUpdate", function(_, dt)
                     cbElapsed = cbElapsed + dt
                     if cbElapsed < 0.1 then return end
                     cbElapsed = 0
-                    local castbarBg = frames.player.Castbar and frames.player.Castbar:GetParent()
+                    local cb = playerFrame and playerFrame.Castbar
+                    local castbarBg = cb and cb:GetParent()
                     local nowVis = castbarBg and castbarBg:IsShown() and db.profile.player.showPlayerCastbar
                     if nowVis ~= bar._lastCastVis then
                         bar._lastCastVis = nowVis
@@ -6030,7 +6288,10 @@ function InitializeFrames()
     ---------------------------------------------------------------------------
     local _ufInCombat = InCombatLockdown()
     local function UpdateFrameVisibility()
-        if InCombatLockdown() then return end
+        -- Do NOT return early during combat lockdown. Alpha operations
+        -- (SetAlpha) are not restricted and must run on combat transitions.
+        -- Show/Hide and SetAttribute ARE restricted; those are guarded below.
+        local isLocked = InCombatLockdown()
         local enabled2 = db.profile.enabledFrames
         local inRaid = IsInRaid()
         local inParty = not inRaid and IsInGroup()
@@ -6039,19 +6300,35 @@ function InitializeFrames()
             local s = db.profile[unitKey]
             local frame = frames[unitKey]
             if frame and enabled2[unitKey] ~= false and s then
-                -- Check visibility options first
                 local hiddenByOpts = EllesmereUI and EllesmereUI.CheckVisibilityOptions and EllesmereUI.CheckVisibilityOptions(s)
-                local shouldShow = true
-                if hiddenByOpts then
-                    shouldShow = false
+                local vis = s.barVisibility or "always"
+
+                -- Combat-sensitive and mouseover modes use SetAlpha to show/hide
+                -- (SetAlpha is not a restricted API). The frame stays technically
+                -- shown so it can transition instantly; alpha controls visibility.
+                if vis == "in_combat" then
+                    frame:SetAlpha((not hiddenByOpts and _ufInCombat) and 1 or 0)
+                elseif vis == "out_of_combat" then
+                    frame:SetAlpha((not hiddenByOpts and not _ufInCombat) and 1 or 0)
+                elseif vis == "mouseover" then
+                    -- Hidden by default; OnEnter/OnLeave toggle alpha.
+                    frame:SetAlpha(0)
                 else
-                    local vis = s.barVisibility or "always"
-                    if vis == "never" then
+                    -- Non-combat modes: restore full alpha; Show/Hide controls
+                    -- visibility in the block below.
+                    frame:SetAlpha(1)
+                end
+
+                -- Show/Hide and SetAttribute are restricted during lockdown.
+                if not isLocked then
+                    local shouldShow
+                    if hiddenByOpts then
                         shouldShow = false
-                    elseif vis == "in_combat" then
-                        shouldShow = _ufInCombat
-                    elseif vis == "out_of_combat" then
-                        shouldShow = not _ufInCombat
+                    elseif vis == "never" then
+                        shouldShow = false
+                    elseif vis == "in_combat" or vis == "out_of_combat" or vis == "mouseover" then
+                        -- Frame is kept shown; alpha (above) drives visibility.
+                        shouldShow = true
                     elseif vis == "in_raid" then
                         shouldShow = inRaid
                     elseif vis == "in_party" then
@@ -6062,53 +6339,54 @@ function InitializeFrames()
                         -- "always" and "mouseover" both show (mouseover handled separately)
                         shouldShow = true
                     end
-                end
-                if shouldShow then
-                    if not frame:IsShown() and UnitExists(unitKey) then
-                        frame:SetAttribute("unit", unitKey)
-                        -- Re-enable oUF elements that were disabled on hide.
-                        -- Castbar is handled separately below to respect the
-                        -- user's show/hide setting ? never blindly re-enable it.
-                        for _, elem in ipairs({"Health", "Power", "Portrait", "Buffs", "Debuffs", "HealthPrediction"}) do
-                            if frame[elem] and not frame:IsElementEnabled(elem) then
-                                frame:EnableElement(elem)
-                            end
-                        end
-                        -- Restore castbar state based on saved setting
-                        if frame.Castbar then
-                            local wantsCastbar
-                            if unitKey == "player" then
-                                wantsCastbar = s.showPlayerCastbar
-                            else
-                                wantsCastbar = s.showCastbar ~= false
-                            end
-                            if wantsCastbar then
-                                if not frame:IsElementEnabled("Castbar") then
-                                    frame:EnableElement("Castbar")
+
+                    if shouldShow then
+                        if not frame:IsShown() and UnitExists(unitKey) then
+                            frame:SetAttribute("unit", unitKey)
+                            -- Re-enable oUF elements that were disabled on hide.
+                            -- Castbar is handled separately below to respect the
+                            -- user's show/hide setting -- never blindly re-enable it.
+                            for _, elem in ipairs({"Health", "Power", "Portrait", "Buffs", "Debuffs", "HealthPrediction"}) do
+                                if frame[elem] and not frame:IsElementEnabled(elem) then
+                                    frame:EnableElement(elem)
                                 end
-                            else
-                                if frame:IsElementEnabled("Castbar") then
-                                    frame:DisableElement("Castbar")
+                            end
+                            -- Restore castbar state based on saved setting
+                            if frame.Castbar then
+                                local wantsCastbar
+                                if unitKey == "player" then
+                                    wantsCastbar = s.showPlayerCastbar
+                                else
+                                    wantsCastbar = s.showCastbar ~= false
                                 end
-                                frame.Castbar:Hide()
-                                local castbarBg = frame.Castbar:GetParent()
-                                if castbarBg then castbarBg:Hide() end
+                                if wantsCastbar then
+                                    if not frame:IsElementEnabled("Castbar") then
+                                        frame:EnableElement("Castbar")
+                                    end
+                                else
+                                    if frame:IsElementEnabled("Castbar") then
+                                        frame:DisableElement("Castbar")
+                                    end
+                                    frame.Castbar:Hide()
+                                    local castbarBg = frame.Castbar:GetParent()
+                                    if castbarBg then castbarBg:Hide() end
+                                end
                             end
+                            frame:Show()
+                            frame:UpdateAllElements("GroupVisibility")
                         end
-                        frame:Show()
-                        frame:UpdateAllElements("GroupVisibility")
-                    end
-                else
-                    if frame:IsShown() then
-                        -- Disable oUF elements before hiding to prevent a
-                        -- single-frame flash when the unit attribute is cleared
-                        for _, elem in ipairs({"Health", "Power", "Portrait", "Castbar", "Buffs", "Debuffs", "HealthPrediction"}) do
-                            if frame[elem] and frame:IsElementEnabled(elem) then
-                                frame:DisableElement(elem)
+                    else
+                        if frame:IsShown() then
+                            -- Disable oUF elements before hiding to prevent a
+                            -- single-frame flash when the unit attribute is cleared
+                            for _, elem in ipairs({"Health", "Power", "Portrait", "Castbar", "Buffs", "Debuffs", "HealthPrediction"}) do
+                                if frame[elem] and frame:IsElementEnabled(elem) then
+                                    frame:DisableElement(elem)
+                                end
                             end
+                            frame:Hide()
+                            frame:SetAttribute("unit", nil)
                         end
-                        frame:Hide()
-                        frame:SetAttribute("unit", nil)
                     end
                 end
             end
@@ -6130,7 +6408,9 @@ function InitializeFrames()
     frames._visFrame:SetScript("OnEvent", function(_, event)
         if event == "PLAYER_REGEN_DISABLED" then
             _ufInCombat = true
-            -- Cannot modify secure frames during lockdown; defer until it lifts
+            -- Alpha-only update (SetAlpha is not restricted during lockdown).
+            -- Show/Hide paths inside UpdateFrameVisibility are guarded by isLocked.
+            UpdateFrameVisibility()
         elseif event == "PLAYER_REGEN_ENABLED" then
             _ufInCombat = false
             UpdateFrameVisibility()
@@ -6157,8 +6437,40 @@ function InitializeFrames()
         local backdrop = frame.Portrait.backdrop
         if not backdrop then return end
         local uSettings = db.profile[unitKey]
+        -- Refresh detached portrait border class color
         if uSettings and uSettings.detachedPortraitClassColor then
             ApplyDetachedPortraitShape(backdrop, uSettings, unitKey)
+        end
+        -- Refresh class icon texture so it shows the actual unit class (not WARRIOR fallback)
+        if backdrop._class and uSettings and (uSettings.portraitMode or "2d") == "class" then
+            local _, ct = UnitClass(unitKey)
+            if ct then
+                local classStyle = (uSettings and uSettings.classThemeStyle) or "modern"
+                ApplyClassIconTexture(backdrop._class, ct, classStyle)
+            end
+        end
+    end)
+
+    -- Deferred class portrait fix: at frame creation time UnitClass() may return nil
+    -- for dynamic units (target, focus) because no unit is selected yet on login/reload.
+    -- This causes the WARRIOR fallback. Re-apply the correct class icon once the
+    -- client has finished loading and unit data is available.
+    C_Timer.After(0, function()
+        for _, unitKey in ipairs({"player", "target", "focus"}) do
+            local frame = frames[unitKey]
+            if frame and frame.Portrait then
+                local backdrop = frame.Portrait.backdrop
+                if backdrop and backdrop._class then
+                    local uSettings = db.profile[unitKey]
+                    if uSettings and (uSettings.portraitMode or "2d") == "class" then
+                        local _, ct = UnitClass(unitKey)
+                        if ct then
+                            local classStyle = (uSettings and uSettings.classThemeStyle) or "modern"
+                            ApplyClassIconTexture(backdrop._class, ct, classStyle)
+                        end
+                    end
+                end
+            end
         end
     end)
 
@@ -6249,6 +6561,9 @@ function SetupOptionsPanel()
             pet = "Pet", targettarget = "Target of Target",
             focustarget = "Focus Target", boss = "Boss Frames",
             classPower = "Class Resource",
+            playerCastbar = "Player Cast Bar",
+            targetCastbar = "Target Cast Bar",
+            focusCastbar = "Focus Cast Bar",
         }
         local elements = {}
         local orderBase = 100
@@ -6263,9 +6578,11 @@ function SetupOptionsPanel()
                 order = orderBase + order,
                 getFrame = function(k)
                     if k == "boss" then return frames["boss1"] end
-                    if k == "playerCastbar" then
-                        if frames.player and frames.player.Castbar then
-                            return frames.player.Castbar:GetParent()
+                    -- Castbar elements: return the castbarBg frame
+                    if k == "playerCastbar" or k == "targetCastbar" or k == "focusCastbar" then
+                        local cbUnit = k:gsub("Castbar", "")
+                        if frames[cbUnit] and frames[cbUnit].Castbar then
+                            return frames[cbUnit].Castbar:GetParent()
                         end
                         return nil
                     end
@@ -6273,15 +6590,19 @@ function SetupOptionsPanel()
                     return frames[k]
                 end,
                 getSize = function(k)
-                    if k == "playerCastbar" then
-                        local pS = GetSettingsForUnit("player")
-                        local ppPos2 = pS.powerPosition or "below"
-                        local ppIsAtt2 = (ppPos2 == "below" or ppPos2 == "above")
-                        local ptH = pS.healthHeight + (ppIsAtt2 and pS.powerHeight or 0)
-                        local cbW = (pS.showPortrait ~= false and (db.profile.portraitStyle or "attached") == "attached") and (ptH + pS.frameWidth) or pS.frameWidth
-                        local cbH = db.profile.player.playerCastbarHeight
-                        if not cbH or cbH <= 0 then cbH = 14 end
-                        return cbW, cbH
+                    if k == "playerCastbar" or k == "targetCastbar" or k == "focusCastbar" then
+                        local cbUnit = k:gsub("Castbar", "")
+                        if frames[cbUnit] and frames[cbUnit].Castbar then
+                            local cbBg = frames[cbUnit].Castbar:GetParent()
+                            if cbBg then
+                                local w = cbBg:GetWidth()
+                                local h = cbBg:GetHeight()
+                                if w < 10 then w = 100 end
+                                if h < 5 then h = 14 end
+                                return w, h
+                            end
+                        end
+                        return 100, 14
                     end
                     if k == "classPower" then
                         if frames._classPowerBar then
@@ -6297,7 +6618,21 @@ function SetupOptionsPanel()
                     return GetFrameDimensions(k)
                 end,
                 setWidth = function(k, w)
-                    if k == "classPower" or k == "playerCastbar" then return end
+                    if k == "playerCastbar" then
+                        db.profile.player.playerCastbarWidth = math.max(math.floor(w + 0.5), 30)
+                        local cbBg = frames.player and frames.player.Castbar and frames.player.Castbar:GetParent()
+                        if cbBg then PP.Size(cbBg, db.profile.player.playerCastbarWidth, cbBg:GetHeight()) end
+                        return
+                    end
+                    if k == "targetCastbar" or k == "focusCastbar" then
+                        local cbUnit = k:gsub("Castbar", "")
+                        local s = GetSettingsForUnit(cbUnit)
+                        s.castbarWidth = math.max(math.floor(w + 0.5), 30)
+                        local cbBg = frames[cbUnit] and frames[cbUnit].Castbar and frames[cbUnit].Castbar:GetParent()
+                        if cbBg then PP.Size(cbBg, s.castbarWidth, cbBg:GetHeight()) end
+                        return
+                    end
+                    if k == "classPower" then return end
                     local unit = (k == "boss") and "boss1" or k
                     local s = GetSettingsForUnit(unit)
                     if not s then return end
@@ -6319,7 +6654,27 @@ function SetupOptionsPanel()
                     Rebuild()
                 end,
                 setHeight = function(k, h)
-                    if k == "classPower" or k == "playerCastbar" then return end
+                    if k == "playerCastbar" then
+                        local newH = math.max(math.floor(h + 0.5), 5)
+                        db.profile.player.playerCastbarHeight = newH
+                        local cbBg = frames.player and frames.player.Castbar and frames.player.Castbar:GetParent()
+                        if cbBg then PP.Size(cbBg, cbBg:GetWidth(), newH) end
+                        local ico = frames.player and frames.player.Castbar and frames.player.Castbar._iconFrame
+                        if ico then ico:SetSize(newH, newH) end
+                        return
+                    end
+                    if k == "targetCastbar" or k == "focusCastbar" then
+                        local cbUnit = k:gsub("Castbar", "")
+                        local s = GetSettingsForUnit(cbUnit)
+                        local newH = math.max(math.floor(h + 0.5), 5)
+                        s.castbarHeight = newH
+                        local cbBg = frames[cbUnit] and frames[cbUnit].Castbar and frames[cbUnit].Castbar:GetParent()
+                        if cbBg then PP.Size(cbBg, cbBg:GetWidth(), newH) end
+                        local ico = frames[cbUnit] and frames[cbUnit].Castbar and frames[cbUnit].Castbar._iconFrame
+                        if ico then ico:SetSize(newH, newH) end
+                        return
+                    end
+                    if k == "classPower" then return end
                     local unit = (k == "boss") and "boss1" or k
                     local s = GetSettingsForUnit(unit)
                     if not s then return end
@@ -6340,8 +6695,18 @@ function SetupOptionsPanel()
                 end,
                 savePos = function(k, point, relPoint, x, y)
                     db.profile.positions[k] = { point = point, relPoint = relPoint, x = x, y = y }
-                    local fr
-                    if k == "boss" then
+                    if EllesmereUI._unlockActive then return end
+                    -- Castbar elements: reposition the castbarBg
+                    if k == "playerCastbar" or k == "targetCastbar" or k == "focusCastbar" then
+                        local cbUnit = k:gsub("Castbar", "")
+                        if frames[cbUnit] and frames[cbUnit].Castbar then
+                            local cbBg = frames[cbUnit].Castbar:GetParent()
+                            if cbBg then
+                                cbBg:ClearAllPoints()
+                                cbBg:SetPoint(point, UIParent, relPoint, x, y)
+                            end
+                        end
+                    elseif k == "boss" then
                         local spacing = db.profile.bossSpacing or 60
                         for i = 1, 5 do
                             if frames["boss" .. i] then
@@ -6355,7 +6720,7 @@ function SetupOptionsPanel()
                             frames._classPowerBar:SetPoint(point, UIParent, relPoint, x, y)
                         end
                     else
-                        fr = frames[k]
+                        local fr = frames[k]
                         if fr then
                             fr:ClearAllPoints()
                             fr:SetPoint(point, UIParent, relPoint, x, y)
@@ -6368,7 +6733,17 @@ function SetupOptionsPanel()
                 applyPos = function(k)
                     local pos = db.profile.positions[k]
                     if not pos then return end
-                    if k == "boss" then
+                    -- Castbar elements: reposition the castbarBg
+                    if k == "playerCastbar" or k == "targetCastbar" or k == "focusCastbar" then
+                        local cbUnit = k:gsub("Castbar", "")
+                        if frames[cbUnit] and frames[cbUnit].Castbar then
+                            local cbBg = frames[cbUnit].Castbar:GetParent()
+                            if cbBg then
+                                cbBg:ClearAllPoints()
+                                cbBg:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
+                            end
+                        end
+                    elseif k == "boss" then
                         local spacing = db.profile.bossSpacing or 60
                         for i = 1, 5 do
                             if frames["boss" .. i] then
@@ -6406,7 +6781,38 @@ function SetupOptionsPanel()
             elements[#elements + 1] = MakeUFElement("classPower", 9)
         end
 
+        -- Castbar elements (registered when their castbar is enabled)
+        if db.profile.player.showPlayerCastbar then
+            elements[#elements + 1] = MakeUFElement("playerCastbar", 10)
+        end
+        if db.profile.target and db.profile.target.showCastbar ~= false then
+            elements[#elements + 1] = MakeUFElement("targetCastbar", 11)
+        end
+        if db.profile.focus and db.profile.focus.showCastbar ~= false then
+            elements[#elements + 1] = MakeUFElement("focusCastbar", 12)
+        end
+
         EllesmereUI:RegisterUnlockElements(elements)
+
+        -- Seed default anchor + width-match for castbars so they start
+        -- anchored to their parent frame with matched width out of the box.
+        if EllesmereUIDB then
+            if not EllesmereUIDB.unlockAnchors then EllesmereUIDB.unlockAnchors = {} end
+            if not EllesmereUIDB.unlockWidthMatch then EllesmereUIDB.unlockWidthMatch = {} end
+            local CB_DEFAULTS = {
+                { cb = "playerCastbar", parent = "player" },
+                { cb = "targetCastbar", parent = "target" },
+                { cb = "focusCastbar",  parent = "focus" },
+            }
+            for _, def in ipairs(CB_DEFAULTS) do
+                if not EllesmereUIDB.unlockAnchors[def.cb] then
+                    EllesmereUIDB.unlockAnchors[def.cb] = { target = def.parent, side = "BOTTOM" }
+                end
+                if not EllesmereUIDB.unlockWidthMatch[def.cb] then
+                    EllesmereUIDB.unlockWidthMatch[def.cb] = def.parent
+                end
+            end
+        end
     end
 end
 

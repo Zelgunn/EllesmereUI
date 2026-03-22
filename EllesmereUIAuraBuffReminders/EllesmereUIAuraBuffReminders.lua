@@ -12,6 +12,8 @@ local EABR = EllesmereUI.Lite.NewAddon("EllesmereUIAuraBuffReminders")
 local Known = function(id) return id and (IsPlayerSpell(id) or IsSpellKnown(id)) end
 local InCombat = function() return InCombatLockdown and InCombatLockdown() end
 local floor, max, min, abs = math.floor, math.max, math.min, math.abs
+local DEFAULT_GLOW_COLOR = {r=1, g=0.776, b=0.376}
+local DEFAULT_TEXT_COLOR = {r=1, g=1, b=1}
 
 -------------------------------------------------------------------------------
 --  Hunter's Mark combat reminder state
@@ -54,11 +56,12 @@ end
 local function GetABRUseShadow()
     return not EllesmereUI or not EllesmereUI.GetFontUseShadow or EllesmereUI.GetFontUseShadow()
 end
+local _cachedOutline
 local function SetABRFont(fs, font, size)
     if not (fs and fs.SetFont) then return end
-    local f = GetABROutline()
-    fs:SetFont(font, size, f)
-    if f == "" then fs:SetShadowOffset(1, -1); fs:SetShadowColor(0, 0, 0, 1)
+    if not _cachedOutline then _cachedOutline = GetABROutline() end
+    fs:SetFont(font, size, _cachedOutline)
+    if _cachedOutline == "" then fs:SetShadowOffset(1, -1); fs:SetShadowColor(0, 0, 0, 1)
     else fs:SetShadowOffset(0, 0) end
 end
 
@@ -1189,7 +1192,7 @@ local function ShowCombatIcon(iconIdx, spellID, texture, label)
     f._icon:SetTexture(texture or Tex(spellID) or 134400)
     if db and db.profile.display.showText then
         local p = db.profile.display
-        local tc = p.textColor or {r=1, g=1, b=1}
+        local tc = p.textColor or DEFAULT_TEXT_COLOR
         local fontPath = ResolveFontPath(p.textFont)
         local textSize = p.textSize or 11
         local xOff = p.textXOffset or 0
@@ -1263,7 +1266,7 @@ local function ShowCursorIcon(iconIdx, spellID, texture, label)
     f._icon:SetTexture(texture or Tex(spellID) or 134400)
     if db and db.profile.display.showText then
         local p = db.profile.display
-        local tc = p.textColor or {r=1, g=1, b=1}
+        local tc = p.textColor or DEFAULT_TEXT_COLOR
         local fontPath = ResolveFontPath(p.textFont)
         local textSize = p.textSize or 11
         local xOff = p.textXOffset or 0
@@ -1351,7 +1354,7 @@ local function GetOrCreateIcon(index)
     local btn = CreateFrame("Button", "EABR_Icon"..index, iconAnchor, "SecureActionButtonTemplate")
     btn:SetSize(ICON_SIZE, ICON_SIZE)
     btn:RegisterForClicks("LeftButtonDown", "LeftButtonUp", "MiddleButtonUp")
-    btn:SetPassThroughButtons("RightButton")
+    securecallfunction(btn.SetPassThroughButtons, btn, "RightButton")
     btn:SetFrameStrata(GetStrata())
     btn:Hide()
 
@@ -1387,7 +1390,7 @@ local function GetOrCreateTalentIcon(index)
     local btn = CreateFrame("Button", "EABR_TalentIcon"..index, talentIconAnchor, "SecureActionButtonTemplate")
     btn:SetSize(ICON_SIZE, ICON_SIZE)
     btn:RegisterForClicks("LeftButtonDown", "LeftButtonUp")
-    btn:SetPassThroughButtons("RightButton", "MiddleButton")
+    securecallfunction(btn.SetPassThroughButtons, btn, "RightButton", "MiddleButton")
     btn:SetFrameStrata(GetStrata())
     btn:Hide()
     local icon = btn:CreateTexture(nil, "ARTWORK")
@@ -1501,11 +1504,11 @@ local function ShowIcon(iconIdx, setupFn, dismissKey)
     setupFn(btn)
     local p = db.profile.display
     local glowType = p.glowType or 0
-    local gc = p.glowColor or {r=1, g=0.776, b=0.376}
+    local gc = p.glowColor or DEFAULT_GLOW_COLOR
     RemoveGlow(btn)
     ApplyGlow(btn, glowType, gc.r, gc.g, gc.b)
     if p.showText then
-        local tc = p.textColor or {r=1, g=1, b=1}
+        local tc = p.textColor or DEFAULT_TEXT_COLOR
         local fontPath = ResolveFontPath(p.textFont)
         local textSize = p.textSize or 11
         local xOff = p.textXOffset or 0
@@ -1543,11 +1546,11 @@ local function ShowTalentIcon(iconIdx, setupFn)
     setupFn(btn)
     local p = db.profile.display
     local glowType = p.glowType or 0
-    local gc = p.glowColor or {r=1, g=0.776, b=0.376}
+    local gc = p.glowColor or DEFAULT_GLOW_COLOR
     RemoveGlow(btn)
     ApplyGlow(btn, glowType, gc.r, gc.g, gc.b)
     if p.showText then
-        local tc = p.textColor or {r=1, g=1, b=1}
+        local tc = p.textColor or DEFAULT_TEXT_COLOR
         local fontPath = ResolveFontPath(p.textFont)
         local textSize = p.textSize or 11
         local xOff = p.textXOffset or 0
@@ -2039,6 +2042,7 @@ local _refreshMissing = {}
 local _refreshTalentMissing = {}
 
 local function Refresh()
+    _cachedOutline = nil
     if not db then return end
     if euiPanelOpen then HideCombatIcons(); HideAllIcons(); return end
 
@@ -2265,7 +2269,9 @@ local function RegisterUnlockElements()
             end,
             savePos = function(key, point, relPoint, x, y)
                 db.profile.unlockPos = {point=point, relPoint=relPoint, x=x, y=y}
-                ApplyUnlockPos()
+                if not EllesmereUI._unlockActive then
+                    ApplyUnlockPos()
+                end
             end,
             loadPos = function()
                 return db.profile.unlockPos
@@ -2403,7 +2409,7 @@ local function BeaconApplyGlow(f, show)
         local p = db and db.profile.display
         local glowType = p and p.glowType or 0
         if glowType > 0 then
-            local gc = p and p.glowColor or {r=1, g=0.776, b=0.376}
+            local gc = p and p.glowColor or DEFAULT_GLOW_COLOR
             ApplyGlow(f, glowType, gc.r, gc.g, gc.b)
         end
         _beaconGlowState[f._spellID] = true
@@ -2418,7 +2424,7 @@ end
 local function BeaconApplyText(f)
     local p = db and db.profile.display
     if p and p.showText then
-        local tc = p.textColor or {r=1, g=1, b=1}
+        local tc = p.textColor or DEFAULT_TEXT_COLOR
         local fontPath = ResolveFontPath(p.textFont)
         local textSize = p.textSize or 11
         local xOff = p.textXOffset or 0

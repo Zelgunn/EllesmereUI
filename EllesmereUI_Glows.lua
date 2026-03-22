@@ -43,7 +43,7 @@ local BG_GLOW_L, BG_GLOW_R = 0.00781250, 0.50781250
 local BG_GLOW_T, BG_GLOW_B = 0.27734375, 0.52734375
 local SHINE_TEX    = [[Interface\Artifacts\Artifacts]]
 local SHINE_COORDS = { 0.8115234375, 0.9169921875, 0.8798828125, 0.9853515625 }
-local SHINE_SIZES  = { 7, 6, 5, 4 }
+local SPARKLE_LAYER_SIZES = { 7, 6, 5, 4 }
 
 -------------------------------------------------------------------------------
 --  Procedural Ants Engine
@@ -217,16 +217,36 @@ end
 
 -------------------------------------------------------------------------------
 --  Auto-Cast Shine Engine
---  4 layers of N sparkle dots orbit the perimeter at different speeds.
+--  4 layers of sparkle dots orbit the perimeter at staggered speeds.
+--  Each layer has dotsPerLayer dots evenly spaced. Layer k orbits k times
+--  slower than layer 1, creating a cascading sparkle effect.
 -------------------------------------------------------------------------------
+
+-- Compute x,y offset from TOPLEFT for a point at distance `dist`
+-- around the perimeter (clockwise from top-left corner).
+local function _OrbitXY(dist, w, h)
+    if dist < w then
+        return dist, 0
+    end
+    dist = dist - w
+    if dist < h then
+        return w, -dist
+    end
+    dist = dist - h
+    if dist < w then
+        return w - dist, -h
+    end
+    return 0, -(h - (dist - w))
+end
+
 local function _AutoCastOnUpdate(self, elapsed)
     local d = self._euiAcData
     if not d then return end
-    local timers = d.timers
-    local pK1 = d.period
-    for k = 1, 4 do
-        timers[k] = timers[k] + elapsed / (pK1 * k)
-        if timers[k] > 1 then timers[k] = timers[k] - 1 end
+    local layerPhase = d.layerPhase
+    local basePeriod = d.period
+    for layer = 1, 4 do
+        layerPhase[layer] = layerPhase[layer] + elapsed / (basePeriod * layer)
+        if layerPhase[layer] > 1 then layerPhase[layer] = layerPhase[layer] - 1 end
     end
     d._accum = (d._accum or 0) + elapsed
     if d._accum < 0.033 then return end
@@ -245,68 +265,58 @@ local function _AutoCastOnUpdate(self, elapsed)
         end
         if w * h == 0 then return end
         d.w = w; d.h = h
-        local perim = 2 * (w + h)
-        d.perim = perim
-        d.rightLim = h + w
-        d.bottomLim = h * 2 + w
-        d.space = perim / d.N
-        -- Precompute per-dot base offsets (space * i) to avoid multiplication each frame
-        local offsets = d.offsets
-        if not offsets then offsets = {}; d.offsets = offsets end
-        for i = 1, d.N do offsets[i] = d.space * i end
+        d.perim = 2 * (w + h)
+        d.spacing = d.perim / d.dotsPerLayer
     end
     local perim = d.perim
-    local rightLim = d.rightLim
-    local bottomLim = d.bottomLim
-    local offsets = d.offsets
-    local dots = d.dots
-    local N = d.N
-    local texIdx = 0
-    for k = 1, 4 do
-        local tK = timers[k] * perim
-        for i = 1, N do
-            texIdx = texIdx + 1
-            local pos = (offsets[i] + tK) % perim
-            local dot = dots[texIdx]
+    local spacing = d.spacing
+    local sparkles = d.sparkles
+    local dotsPerLayer = d.dotsPerLayer
+    local idx = 0
+    for layer = 1, 4 do
+        local phase = layerPhase[layer] * perim
+        for i = 1, dotsPerLayer do
+            idx = idx + 1
+            local dist = (spacing * i + phase) % perim
+            local px, py = _OrbitXY(dist, w, h)
+            local dot = sparkles[idx]
             dot:ClearAllPoints()
-            if pos > bottomLim then
-                dot:SetPoint("CENTER", self, "BOTTOMRIGHT", -(pos - bottomLim), 0)
-            elseif pos > rightLim then
-                dot:SetPoint("CENTER", self, "TOPRIGHT", 0, -(pos - rightLim))
-            elseif pos > h then
-                dot:SetPoint("CENTER", self, "TOPLEFT", pos - h, 0)
-            else
-                dot:SetPoint("CENTER", self, "BOTTOMLEFT", 0, pos)
-            end
+            dot:SetPoint("CENTER", self, "TOPLEFT", px, py)
         end
     end
 end
 
 local function StartAutoCastShine(wrapper, sz, cr, cg, cb, scale)
     scale = scale or 1.0
-    local N = 4
-    local totalDots = N * 4
+    local dotsPerLayer = 4
+    local totalDots = dotsPerLayer * 4
     if not wrapper._euiAcData then
-        wrapper._euiAcData = { dots = {}, timers = { 0, 0.25, 0.5, 0.75 }, N = N, period = 2, w = 0, h = 0 }
+        wrapper._euiAcData = {
+            sparkles = {},
+            layerPhase = { 0, 0.25, 0.5, 0.75 },
+            dotsPerLayer = dotsPerLayer,
+            period = 2,
+            w = 0, h = 0,
+        }
     end
     local d = wrapper._euiAcData
-    d.N = N
-    d.timers[1] = 0; d.timers[2] = 0.25; d.timers[3] = 0.5; d.timers[4] = 0.75
+    d.dotsPerLayer = dotsPerLayer
+    d.layerPhase[1] = 0; d.layerPhase[2] = 0.25; d.layerPhase[3] = 0.5; d.layerPhase[4] = 0.75
     for idx = 1, totalDots do
-        if not d.dots[idx] then
+        if not d.sparkles[idx] then
             local dot = wrapper:CreateTexture(nil, "OVERLAY", nil, 7)
             dot:SetTexture(SHINE_TEX)
             dot:SetTexCoord(SHINE_COORDS[1], SHINE_COORDS[2], SHINE_COORDS[3], SHINE_COORDS[4])
             dot:SetDesaturated(true); dot:SetBlendMode("ADD")
-            d.dots[idx] = dot
+            d.sparkles[idx] = dot
         end
-        local layer = ceil(idx / N)
-        local baseSz = (SHINE_SIZES[layer] or 4) * scale
-        d.dots[idx]:SetSize(baseSz, baseSz)
-        d.dots[idx]:SetVertexColor(cr, cg, cb, 1)
-        d.dots[idx]:Show()
+        local layer = ceil(idx / dotsPerLayer)
+        local baseSz = (SPARKLE_LAYER_SIZES[layer] or 4) * scale
+        d.sparkles[idx]:SetSize(baseSz, baseSz)
+        d.sparkles[idx]:SetVertexColor(cr, cg, cb, 1)
+        d.sparkles[idx]:Show()
     end
-    for idx = totalDots + 1, #d.dots do d.dots[idx]:Hide() end
+    for idx = totalDots + 1, #d.sparkles do d.sparkles[idx]:Hide() end
     d.w = 0; d.h = 0; d.fallbackSz = sz or 0
     wrapper:SetScript("OnUpdate", _AutoCastOnUpdate)
 end
@@ -314,7 +324,7 @@ end
 local function StopAutoCastShine(wrapper)
     wrapper:SetScript("OnUpdate", nil)
     if wrapper._euiAcData then
-        for _, dot in ipairs(wrapper._euiAcData.dots) do dot:Hide() end
+        for _, dot in ipairs(wrapper._euiAcData.sparkles) do dot:Hide() end
     end
 end
 

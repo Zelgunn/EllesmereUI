@@ -17,18 +17,21 @@ local ResolveBorderThickness   = ns.ResolveBorderThickness
 local EAB                      = ns.EAB
 
 -- Layout constants
-local FLYOUT_BTN_SPACING = 4
+local FLYOUT_SLOT_GAP = 4
 
--- All known flyout IDs in retail WoW
-local KNOWN_FLYOUT_IDS = {
-    1, 8, 9, 10, 11, 12, 66, 67, 84, 92, 93, 96,
-    103, 106, 217, 219, 220, 222, 223, 224, 225, 226, 227, 229,
+-- Fallback flyout IDs (safety net for flyouts not found via action slot scan)
+local EXTRA_FLYOUT_SET = {
+    [1]=true,   [8]=true,   [9]=true,   [10]=true,  [11]=true,  [12]=true,
+    [66]=true,  [67]=true,  [84]=true,  [92]=true,  [93]=true,  [96]=true,
+    [103]=true, [106]=true, [217]=true, [219]=true, [220]=true,
+    [222]=true, [223]=true, [224]=true, [225]=true, [226]=true,
+    [227]=true, [229]=true,
 }
 
--- Flyout button mixin (individual spell buttons inside the flyout menu)
-local EABFlyoutBtnMixin = {}
+-- Individual spell slot inside the flyout menu
+local FlyoutSlotMixin = {}
 
-function EABFlyoutBtnMixin:Setup()
+function FlyoutSlotMixin:Setup()
     self:SetAttribute("type", "spell")
     self:RegisterForClicks("AnyUp", "AnyDown")
     self:SetScript("OnEnter", self.OnEnter)
@@ -36,7 +39,7 @@ function EABFlyoutBtnMixin:Setup()
     self:SetScript("PostClick", self.PostClick)
 end
 
-function EABFlyoutBtnMixin:OnEnter()
+function FlyoutSlotMixin:OnEnter()
     if GetCVarBool("UberTooltips") then
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT", 4, 4)
         if GameTooltip:SetSpellByID(self.spellID) then
@@ -51,11 +54,11 @@ function EABFlyoutBtnMixin:OnEnter()
     end
 end
 
-function EABFlyoutBtnMixin:OnLeave()
+function FlyoutSlotMixin:OnLeave()
     GameTooltip:Hide()
 end
 
-function EABFlyoutBtnMixin:OnDataChanged()
+function FlyoutSlotMixin:OnDataChanged()
     local fid = self:GetAttribute("flyoutID")
     local idx = self:GetAttribute("flyoutIndex")
     local sid, overrideSid, known, name = GetFlyoutSlotInfo(fid, idx)
@@ -64,27 +67,27 @@ function EABFlyoutBtnMixin:OnDataChanged()
     self.icon:SetDesaturated(not known)
     self.spellID = sid
     self.spellName = name
-    self:Refresh()
+    self:RefreshAll()
 end
 
-function EABFlyoutBtnMixin:PostClick()
-    self:RefreshState()
+function FlyoutSlotMixin:PostClick()
+    self:RefreshChecked()
 end
 
-function EABFlyoutBtnMixin:Refresh()
+function FlyoutSlotMixin:RefreshAll()
     self:RefreshCooldown()
-    self:RefreshState()
+    self:RefreshChecked()
     self:RefreshUsable()
     self:RefreshCount()
 end
 
-function EABFlyoutBtnMixin:RefreshCooldown()
+function FlyoutSlotMixin:RefreshCooldown()
     if self.spellID then
         ActionButton_UpdateCooldown(self)
     end
 end
 
-function EABFlyoutBtnMixin:RefreshState()
+function FlyoutSlotMixin:RefreshChecked()
     if self.spellID then
         self:SetChecked(C_Spell.IsCurrentSpell(self.spellID) and true)
     else
@@ -92,20 +95,20 @@ function EABFlyoutBtnMixin:RefreshState()
     end
 end
 
-function EABFlyoutBtnMixin:RefreshUsable()
+function FlyoutSlotMixin:RefreshUsable()
     local ico = self.icon
     local sid = self.spellID
     if sid then
         local usable, oom = C_Spell.IsSpellUsable(sid)
         if oom then
             ico:SetDesaturated(true)
-            ico:SetVertexColor(0.4, 0.4, 1.0)
+            ico:SetVertexColor(0.35, 0.4, 0.95)
         elseif usable then
             ico:SetDesaturated(false)
             ico:SetVertexColor(1, 1, 1)
         else
             ico:SetDesaturated(true)
-            ico:SetVertexColor(0.4, 0.4, 0.4)
+            ico:SetVertexColor(0.45, 0.45, 0.45)
         end
     else
         ico:SetDesaturated(false)
@@ -113,7 +116,7 @@ function EABFlyoutBtnMixin:RefreshUsable()
     end
 end
 
-function EABFlyoutBtnMixin:RefreshCount()
+function FlyoutSlotMixin:RefreshCount()
     local sid = self.spellID
     if sid and C_Spell.IsConsumableSpell(sid) then
         local ct = C_Spell.GetSpellCastCount(sid)
@@ -123,171 +126,168 @@ function EABFlyoutBtnMixin:RefreshCount()
     end
 end
 
--- Flyout frame mixin (the container that holds all flyout buttons)
-local EABFlyoutFrameMixin = {}
+-- Container frame that holds all flyout spell slots
+local FlyoutContainerMixin = {}
 
--- Secure snippet: toggles the flyout open/closed, positions buttons
-local SECURE_TOGGLE = [[
-    local flyoutID = ...
-    local caller = self:GetAttribute("caller")
+-- Secure snippet: opens/closes the flyout, positions spell slots
+local SEC_OPEN_FLYOUT = [[
+    local fid = ...
+    local src = self:GetAttribute("caller")
 
-    -- Toggle off if already open on the same button
-    if self:IsShown() and caller == self:GetParent() then
+    -- Close if already open on the same button
+    if self:IsShown() and src == self:GetParent() then
         self:Hide()
         return
     end
 
-    -- Sync this flyout's data if we haven't seen it before
-    if not EAB_FLYOUT_DATA[flyoutID] then
-        self:SetAttribute("_pendingSyncID", flyoutID)
+    -- Lazy-sync unknown flyout data
+    if not _FO_CACHE[fid] then
+        self:SetAttribute("_pendingSyncID", fid)
         self:CallMethod("EnsureFlyoutSynced")
     end
 
-    local data = EAB_FLYOUT_DATA[flyoutID]
-    local slotCount = data and data.numSlots or 0
-    local known = data and data.isKnown or false
+    local info = _FO_CACHE[fid]
+    local numEntries = info and info.numSlots or 0
+    local learned = info and info.isKnown or false
 
-    self:SetParent(caller)
+    self:SetParent(src)
 
-    if slotCount == 0 or not known then
+    if numEntries < 1 or not learned then
         self:Hide()
         return
     end
 
-    local dir = caller:GetAttribute("flyoutDirection") or "UP"
-    self:SetAttribute("direction", dir)
+    local orient = src:GetAttribute("flyoutDirection") or "UP"
+    self:SetAttribute("direction", orient)
 
-    -- Match flyout button size to the caller button
-    local cW = caller:GetWidth()
-    local cH = caller:GetHeight()
+    local bW = src:GetWidth()
+    local bH = src:GetHeight()
 
-    local prev = nil
-    local shown = 0
+    local anchor = nil
+    local visible = 0
 
-    for i = 1, slotCount do
-        if data[i].isKnown then
-            shown = shown + 1
-            local btn = EAB_FLYOUT_BTNS[shown]
-            btn:SetWidth(cW)
-            btn:SetHeight(cH)
-            btn:ClearAllPoints()
+    for s = 1, numEntries do
+        if info[s].isKnown then
+            visible = visible + 1
+            local slot = _FO_SLOTS[visible]
+            slot:SetWidth(bW)
+            slot:SetHeight(bH)
+            slot:ClearAllPoints()
 
-            if dir == "UP" then
-                if prev then
-                    btn:SetPoint("BOTTOM", prev, "TOP", 0, EAB_FLYOUT_SPACING)
+            if orient == "LEFT" then
+                if anchor then
+                    slot:SetPoint("RIGHT", anchor, "LEFT", -_FO_GAP, 0)
                 else
-                    btn:SetPoint("BOTTOM", self, "BOTTOM", 0, 0)
+                    slot:SetPoint("RIGHT", self, "RIGHT", 0, 0)
                 end
-            elseif dir == "DOWN" then
-                if prev then
-                    btn:SetPoint("TOP", prev, "BOTTOM", 0, -EAB_FLYOUT_SPACING)
+            elseif orient == "RIGHT" then
+                if anchor then
+                    slot:SetPoint("LEFT", anchor, "RIGHT", _FO_GAP, 0)
                 else
-                    btn:SetPoint("TOP", self, "TOP", 0, 0)
+                    slot:SetPoint("LEFT", self, "LEFT", 0, 0)
                 end
-            elseif dir == "LEFT" then
-                if prev then
-                    btn:SetPoint("RIGHT", prev, "LEFT", -EAB_FLYOUT_SPACING, 0)
+            elseif orient == "DOWN" then
+                if anchor then
+                    slot:SetPoint("TOP", anchor, "BOTTOM", 0, -_FO_GAP)
                 else
-                    btn:SetPoint("RIGHT", self, "RIGHT", 0, 0)
+                    slot:SetPoint("TOP", self, "TOP", 0, 0)
                 end
-            elseif dir == "RIGHT" then
-                if prev then
-                    btn:SetPoint("LEFT", prev, "RIGHT", EAB_FLYOUT_SPACING, 0)
+            else -- UP (default)
+                if anchor then
+                    slot:SetPoint("BOTTOM", anchor, "TOP", 0, _FO_GAP)
                 else
-                    btn:SetPoint("LEFT", self, "LEFT", 0, 0)
+                    slot:SetPoint("BOTTOM", self, "BOTTOM", 0, 0)
                 end
             end
 
-            btn:SetAttribute("spell", data[i].spellID)
-            btn:SetAttribute("flyoutID", flyoutID)
-            btn:SetAttribute("flyoutIndex", i)
-            btn:Enable()
-            btn:Show()
-            btn:CallMethod("OnDataChanged")
+            slot:SetAttribute("spell", info[s].spellID)
+            slot:SetAttribute("flyoutID", fid)
+            slot:SetAttribute("flyoutIndex", s)
+            slot:Enable()
+            slot:Show()
+            slot:CallMethod("OnDataChanged")
 
-            prev = btn
+            anchor = slot
         end
     end
 
-    -- Hide unused buttons
-    for i = shown + 1, #EAB_FLYOUT_BTNS do
-        EAB_FLYOUT_BTNS[i]:Hide()
+    -- Hide surplus slots
+    for s = visible + 1, #_FO_SLOTS do
+        _FO_SLOTS[s]:Hide()
     end
 
-    if shown == 0 then
+    if visible < 1 then
         self:Hide()
         return
     end
 
-    local vert = false
+    local isVert = (orient == "UP" or orient == "DOWN")
 
     self:ClearAllPoints()
-    if dir == "UP" then
-        self:SetPoint("BOTTOM", caller, "TOP", 0, EAB_FLYOUT_SPACING)
-        vert = true
-    elseif dir == "DOWN" then
-        self:SetPoint("TOP", caller, "BOTTOM", 0, -EAB_FLYOUT_SPACING)
-        vert = true
-    elseif dir == "LEFT" then
-        self:SetPoint("RIGHT", caller, "LEFT", -EAB_FLYOUT_SPACING, 0)
-    elseif dir == "RIGHT" then
-        self:SetPoint("LEFT", caller, "RIGHT", EAB_FLYOUT_SPACING, 0)
+    if orient == "LEFT" then
+        self:SetPoint("RIGHT", src, "LEFT", -_FO_GAP, 0)
+    elseif orient == "RIGHT" then
+        self:SetPoint("LEFT", src, "RIGHT", _FO_GAP, 0)
+    elseif orient == "DOWN" then
+        self:SetPoint("TOP", src, "BOTTOM", 0, -_FO_GAP)
+    else
+        self:SetPoint("BOTTOM", src, "TOP", 0, _FO_GAP)
     end
 
-    if vert then
-        self:SetWidth(cW)
-        self:SetHeight((cH + EAB_FLYOUT_SPACING) * shown - EAB_FLYOUT_SPACING)
+    if isVert then
+        self:SetWidth(bW)
+        self:SetHeight((bH + _FO_GAP) * visible - _FO_GAP)
     else
-        self:SetWidth((cW + EAB_FLYOUT_SPACING) * shown - EAB_FLYOUT_SPACING)
-        self:SetHeight(cH)
+        self:SetWidth((bW + _FO_GAP) * visible - _FO_GAP)
+        self:SetHeight(bH)
     end
 
     self:CallMethod("OnFlyoutOpened")
     self:Show()
 ]]
 
-function EABFlyoutFrameMixin:Init()
-    self.btns = {}
+function FlyoutContainerMixin:Init()
+    self.slots = {}
 
     -- Initialize secure environment tables
     self:Execute(([[
-        EAB_FLYOUT_DATA = newtable()
-        EAB_FLYOUT_BTNS = newtable()
-        EAB_FLYOUT_SPACING = %d
-    ]]):format(FLYOUT_BTN_SPACING))
+        _FO_CACHE = newtable()
+        _FO_SLOTS = newtable()
+        _FO_GAP = %d
+    ]]):format(FLYOUT_SLOT_GAP))
 
-    self:SetAttribute("Toggle", SECURE_TOGGLE)
+    self:SetAttribute("Toggle", SEC_OPEN_FLYOUT)
     self:SetAttribute("_onhide", [[ self:Hide(true) ]])
 
     self:SyncAllFlyouts()
 end
 
-function EABFlyoutFrameMixin:SyncAllFlyouts()
+function FlyoutContainerMixin:SyncAllFlyouts()
     -- Discover flyout IDs from all action slots (covers any flyout, including new ones)
     local seen = {}
-    local maxSlots = 0
+    local maxEntries = 0
     for slot = 1, 180 do
         local aType, aID = GetActionInfo(slot)
         if aType == "flyout" and aID and not seen[aID] then
             seen[aID] = true
             local n = self:SyncFlyoutData(aID)
-            if n > maxSlots then maxSlots = n end
+            if n > maxEntries then maxEntries = n end
         end
     end
-    -- Also sync the known list as a safety net for unbound flyouts
-    for _, fid in ipairs(KNOWN_FLYOUT_IDS) do
+    -- Also sync the fallback set as a safety net for unbound flyouts
+    for fid in pairs(EXTRA_FLYOUT_SET) do
         if not seen[fid] then
             local n = self:SyncFlyoutData(fid)
-            if n > maxSlots then maxSlots = n end
+            if n > maxEntries then maxEntries = n end
         end
     end
-    self:EnsureButtons(maxSlots)
+    self:EnsureSlots(maxEntries)
 end
 
-function EABFlyoutFrameMixin:SyncSingleFlyout(flyoutID)
+function FlyoutContainerMixin:SyncSingleFlyout(flyoutID)
     local n = self:SyncFlyoutData(flyoutID)
-    if n > #self.btns then
-        self:EnsureButtons(n)
+    if n > #self.slots then
+        self:EnsureSlots(n)
         return true
     end
     return false
@@ -295,24 +295,24 @@ end
 
 -- Called from the secure toggle via CallMethod when an unknown flyout ID is encountered.
 -- Reads the pending ID from an attribute (secure env can't pass args to CallMethod).
-function EABFlyoutFrameMixin:EnsureFlyoutSynced()
+function FlyoutContainerMixin:EnsureFlyoutSynced()
     local fid = self:GetAttribute("_pendingSyncID")
     if not fid then return end
     self:SyncSingleFlyout(fid)
 end
 
-function EABFlyoutFrameMixin:SyncFlyoutData(flyoutID)
+function FlyoutContainerMixin:SyncFlyoutData(flyoutID)
     local _, _, numSlots, isKnown = GetFlyoutInfo(flyoutID)
 
     self:Execute(([[
-        local fid = %d
-        local ns = %d
+        local id = %d
+        local ct = %d
         local kn = %q == "true"
-        local d = EAB_FLYOUT_DATA[fid] or newtable()
-        d.numSlots = ns
-        d.isKnown = kn
-        EAB_FLYOUT_DATA[fid] = d
-        for i = ns + 1, #d do d[i].isKnown = false end
+        local rec = _FO_CACHE[id] or newtable()
+        rec.numSlots = ct
+        rec.isKnown = kn
+        _FO_CACHE[id] = rec
+        for j = ct + 1, #rec do rec[j].isKnown = false end
     ]]):format(flyoutID, numSlots, tostring(isKnown)))
 
     for slot = 1, numSlots do
@@ -324,48 +324,48 @@ function EABFlyoutFrameMixin:SyncFlyoutData(flyoutID)
             end
         end
         self:Execute(([[
-            local d = EAB_FLYOUT_DATA[%d][%d] or newtable()
-            d.spellID = %d
-            d.isKnown = %q == "true"
-            EAB_FLYOUT_DATA[%d][%d] = d
+            local rec = _FO_CACHE[%d][%d] or newtable()
+            rec.spellID = %d
+            rec.isKnown = %q == "true"
+            _FO_CACHE[%d][%d] = rec
         ]]):format(flyoutID, slot, sid, tostring(slotKnown), flyoutID, slot))
     end
 
     return numSlots
 end
 
-function EABFlyoutFrameMixin:EnsureButtons(count)
-    for i = #self.btns + 1, count do
-        local btn = self:MakeFlyoutButton(i)
+function FlyoutContainerMixin:EnsureSlots(count)
+    for i = #self.slots + 1, count do
+        local btn = self:CreateFlyoutSlot(i)
         self:SetFrameRef("_eabFlySlot", btn)
-        self:Execute([[ tinsert(EAB_FLYOUT_BTNS, self:GetFrameRef("_eabFlySlot")) ]])
-        self.btns[i] = btn
+        self:Execute([[ tinsert(_FO_SLOTS, self:GetFrameRef("_eabFlySlot")) ]])
+        self.slots[i] = btn
     end
 end
 
--- Secure snippet for flyout button clicks: close the flyout on key-up
-local FLYBTN_PRE = [[ if not down then return nil, "close" end ]]
-local FLYBTN_POST = [[ if message == "close" then control:Hide() end ]]
+-- Secure snippet for spell slot clicks: dismiss flyout on key-up
+local SEC_SLOT_PRE  = [[ if not down then return nil, "dismiss" end ]]
+local SEC_SLOT_POST = [[ if message == "dismiss" then control:Hide() end ]]
 
-function EABFlyoutFrameMixin:MakeFlyoutButton(idx)
+function FlyoutContainerMixin:CreateFlyoutSlot(idx)
     local name = "EABFlyoutBtn" .. idx
     local btn = CreateFrame("CheckButton", name, self,
         "SmallActionButtonTemplate, SecureActionButtonTemplate")
-    Mixin(btn, EABFlyoutBtnMixin)
+    Mixin(btn, FlyoutSlotMixin)
     btn:Setup()
-    self:WrapScript(btn, "OnClick", FLYBTN_PRE, FLYBTN_POST)
+    self:WrapScript(btn, "OnClick", SEC_SLOT_PRE, SEC_SLOT_POST)
     return btn
 end
 
-function EABFlyoutFrameMixin:ForVisible(method, ...)
-    for _, btn in ipairs(self.btns) do
+function FlyoutContainerMixin:ForVisible(method, ...)
+    for _, btn in ipairs(self.slots) do
         if btn:IsShown() then btn[method](btn, ...) end
     end
 end
 
--- Style flyout buttons to match the parent bar's appearance.
+-- Style flyout slots to match the parent bar's appearance.
 -- Called from the secure toggle via CallMethod after the flyout opens.
-function EABFlyoutFrameMixin:OnFlyoutOpened()
+function FlyoutContainerMixin:OnFlyoutOpened()
     local caller = self:GetParent()
     if not caller then return end
 
@@ -402,34 +402,32 @@ function EABFlyoutFrameMixin:OnFlyoutOpened()
         end
     end
 
-    for _, btn in ipairs(self.btns) do
+    for _, btn in ipairs(self.slots) do
         if btn:IsShown() then
             -- Strip default SmallActionButton art
-            self:StripFlyoutButtonArt(btn)
+            self:StripSlotArt(btn)
 
             if shape ~= "none" and shape ~= "cropped" and SHAPE_MASKS[shape] then
-                -- Apply shape mask to flyout button
-                self:ApplyFlyoutShape(btn, shape, brdOn, sbR, sbG, sbB, sbA, brdSz, zoom)
+                -- Apply shape mask to flyout slot
+                self:ApplySlotShape(btn, shape, brdOn, sbR, sbG, sbB, sbA, brdSz, zoom)
             else
                 -- Square/cropped: apply borders and zoom
-                self:ApplyFlyoutSquare(btn, brdOn, cr, cg, cb, ca, brdSz, zoom, shape == "cropped")
+                self:ApplySlotSquare(btn, brdOn, cr, cg, cb, ca, brdSz, zoom, shape == "cropped")
             end
 
             -- Apply pushed/highlight/misc texture animations to match the bar
             -- Only outside combat SetPushedTexture is restricted on secure buttons in combat.
-            -- The textures persist after being set, so this only needs to run once per button.
+            -- The textures persist after being set, so this only needs to run once per slot.
             if not InCombatLockdown() then
-                self:ApplyFlyoutAnimations(btn, prof)
+                self:ApplySlotAnimations(btn, prof)
             end
         end
     end
 end
 
--- Apply pushed/highlight/misc button texture animations to a flyout button,
+-- Apply pushed/highlight/misc button texture animations to a flyout slot,
 -- matching the global animation settings used on all action bar buttons.
--- NOTE: called via CallMethod (restricted env) cannot use file-local upvalues.
--- All texture operations are inlined; texture paths are read from the EAB profile.
-function EABFlyoutFrameMixin:ApplyFlyoutAnimations(btn, prof)
+function FlyoutContainerMixin:ApplySlotAnimations(btn, prof)
     local useCC = prof.pushedUseClassColor
     local customC = prof.pushedCustomColor or { r = 0.973, g = 0.839, b = 0.604, a = 1 }
     local cr, cg, cb, ca = customC.r, customC.g, customC.b, customC.a or 1
@@ -516,8 +514,8 @@ function EABFlyoutFrameMixin:ApplyFlyoutAnimations(btn, prof)
     end
 end
 
--- Remove default SmallActionButton template art from a flyout button
-function EABFlyoutFrameMixin:StripFlyoutButtonArt(btn)
+-- Remove default SmallActionButton template art from a flyout slot
+function FlyoutContainerMixin:StripSlotArt(btn)
     if btn._eabFlyStripped then return end
     local nt = btn.NormalTexture or btn:GetNormalTexture()
     if nt then nt:SetAlpha(0) end
@@ -530,7 +528,7 @@ function EABFlyoutFrameMixin:StripFlyoutButtonArt(btn)
         btn.IconMask:SetSize(0.001, 0.001)
     end
     if btn.FlyoutBorderShadow then btn.FlyoutBorderShadow:SetAlpha(0) end
-    -- Ensure icon fills the button
+    -- Ensure icon fills the slot
     local icon = btn.icon or btn.Icon
     if icon then
         icon:ClearAllPoints()
@@ -539,8 +537,8 @@ function EABFlyoutFrameMixin:StripFlyoutButtonArt(btn)
     btn._eabFlyStripped = true
 end
 
--- Apply square borders and zoom to a flyout button
-function EABFlyoutFrameMixin:ApplyFlyoutSquare(btn, brdOn, cr, cg, cb, ca, brdSz, zoom, cropped)
+-- Apply square borders and zoom to a flyout slot
+function FlyoutContainerMixin:ApplySlotSquare(btn, brdOn, cr, cg, cb, ca, brdSz, zoom, cropped)
     local PP = EllesmereUI and EllesmereUI.PP
     -- Remove shape mask if previously applied
     if btn._eabShapeMask then
@@ -582,8 +580,8 @@ function EABFlyoutFrameMixin:ApplyFlyoutSquare(btn, brdOn, cr, cg, cb, ca, brdSz
     end
 end
 
--- Apply shape mask, border, and zoom to a flyout button
-function EABFlyoutFrameMixin:ApplyFlyoutShape(btn, shape, brdOn, brdR, brdG, brdB, brdA, brdSz, zoom)
+-- Apply shape mask, border, and zoom to a flyout slot
+function FlyoutContainerMixin:ApplySlotShape(btn, shape, brdOn, brdR, brdG, brdB, brdA, brdSz, zoom)
     local PP = EllesmereUI and EllesmereUI.PP
     local maskTex = SHAPE_MASKS[shape]
     if not maskTex then return end
@@ -672,12 +670,12 @@ end
 local EABFlyout = CreateFrame("Frame")
 
 -- Secure snippet: intercepts flyout-type action clicks on registered buttons
-local INTERCEPT_CLICK = [[
-    local aType, aID = GetActionInfo(self:GetEffectiveAttribute("action", button))
-    if aType == "flyout" then
+local SEC_CLICK_HOOK = [[
+    local actionKind, actionVal = GetActionInfo(self:GetEffectiveAttribute("action", button))
+    if actionKind == "flyout" then
         if not down then
             control:SetAttribute("caller", self:GetFrameRef("_eabFlyOwner") or self)
-            control:RunAttribute("Toggle", aID)
+            control:RunAttribute("Toggle", actionVal)
         end
         return false
     end
@@ -687,7 +685,7 @@ function EABFlyout:GetFrame()
     if self._frame then return self._frame end
 
     local f = CreateFrame("Frame", nil, nil, "SecureHandlerShowHideTemplate")
-    Mixin(f, EABFlyoutFrameMixin)
+    Mixin(f, FlyoutContainerMixin)
     f:Init()
     f:HookScript("OnShow", function() self:OnShown() end)
     f:HookScript("OnHide", function() self:OnHidden() end)
@@ -707,7 +705,7 @@ function EABFlyout:RegisterButton(button, owner)
     if owner then
         SecureHandlerSetFrameRef(button, "_eabFlyOwner", owner)
     end
-    f:WrapScript(button, "OnClick", INTERCEPT_CLICK)
+    f:WrapScript(button, "OnClick", SEC_CLICK_HOOK)
 end
 
 function EABFlyout:OnEvent(event, arg1)
@@ -720,7 +718,7 @@ function EABFlyout:OnEvent(event, arg1)
                 self._frame:SyncSingleFlyout(arg1)
             end
         end
-        if self._frame then self._frame:ForVisible("Refresh") end
+        if self._frame then self._frame:ForVisible("RefreshAll") end
     elseif event == "PET_STABLE_UPDATE" then
         if InCombatLockdown() then
             self._pendingSync = true
@@ -735,7 +733,7 @@ function EABFlyout:OnEvent(event, arg1)
         end
         self:UnregisterEvent("PLAYER_REGEN_ENABLED")
     elseif event == "CURRENT_SPELL_CAST_CHANGED" then
-        if self._frame then self._frame:ForVisible("RefreshState") end
+        if self._frame then self._frame:ForVisible("RefreshChecked") end
     elseif event == "SPELL_UPDATE_COOLDOWN" then
         if self._frame then self._frame:ForVisible("RefreshCooldown") end
     elseif event == "SPELL_UPDATE_USABLE" then

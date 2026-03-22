@@ -33,7 +33,7 @@ local statuses = {}        -- name -> true if enabled
 -- Returns a table with :RegisterEvent / :UnregisterEvent mixed in.
 function EUILite.NewAddon(name)
     if addons[name] then
-        error("EUILite.NewAddon: addon '" .. name .. "' already exists.", 2)
+        return addons[name]
     end
     local addon = { name = name, enabledState = true }
     addons[name] = addon
@@ -200,21 +200,12 @@ function EUILite.NewDB(svName, defaults, defaultToCharKey)
     end
     local profile = profileData.addons[folder]
 
-    -- One-time flat-SV migration: if the centralized slot is empty and the
-    -- global SV contains flat (non-AceDB) data, copy it into the slot.
-    -- This handles addons that previously wrote directly to _G[svName]
-    -- (e.g. Nameplates) before the centralized profile system existed.
-    if not next(profile) then
-        local globalSV = _G[svName]
-        if globalSV and type(globalSV) == "table" and not globalSV.profiles and not globalSV.profileKeys then
-            for k, v in pairs(globalSV) do
-                if type(v) == "table" then
-                    profile[k] = DeepCopy(v)
-                else
-                    profile[k] = v
-                end
-            end
-        end
+    -- If a beta-exit wipe just happened this session, nuke the child SV
+    -- global so old data on disk cannot be re-imported. The global is
+    -- vestigial (all data lives in EllesmereUIDB); writing {} ensures
+    -- WoW saves a clean file at logout.
+    if EllesmereUI and EllesmereUI._showResetPopup then
+        _G[svName] = {}
     end
 
     -- Merge defaults into profile (fills missing keys only)

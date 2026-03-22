@@ -563,7 +563,6 @@ do
             local presetName
             if presetKey == "custom" then presetName = "Custom"
             elseif presetKey == "ellesmereui" then presetName = "EllesmereUI"
-            elseif presetKey == "spinthewheel" then presetName = "Spin the Wheel"
             elseif presetKey and type(presetKey) == "string" and presetKey:sub(1, 5) == "user:" then presetName = presetKey:sub(6)
             else presetName = presetKey or "" end
             specPopup._subtitle:SetText("Select which specs you want " .. presetName .. " to be assigned to")
@@ -599,7 +598,6 @@ do
                             local dName
                             if pKey == "custom" then dName = "Custom"
                             elseif pKey == "ellesmereui" then dName = "EllesmereUI"
-                            elseif pKey == "spinthewheel" then dName = "Spin the Wheel"
                             elseif pKey:sub(1, 5) == "user:" then dName = pKey:sub(6)
                             else dName = pKey end
                             lockedSpecs[sID] = dName
@@ -786,7 +784,6 @@ do
                 if not key then return "" end
                 if key == "custom" then return "Custom" end
                 if key == "ellesmereui" then return "EllesmereUI" end
-                if key == "spinthewheel" then return "Spin the Wheel" end
                 if key:sub(1, 5) == "user:" then return key:sub(6) end
                 return key
             end

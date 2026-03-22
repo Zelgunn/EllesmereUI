@@ -11,6 +11,8 @@ local PP = EllesmereUI.PP
 local UnitHealth, UnitHealthMax = UnitHealth, UnitHealthMax
 local UnitGetTotalAbsorbs = UnitGetTotalAbsorbs
 local C_UnitAuras = C_UnitAuras
+local C_UnitAuras_GetAuraAppDisplayCount = C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount
+local C_UnitAuras_GetAuraDuration = C_UnitAuras and C_UnitAuras.GetAuraDuration
 local UnitName, UnitGUID = UnitName, UnitGUID
 local UnitIsUnit, UnitCanAttack = UnitIsUnit, UnitCanAttack
 local UnitIsEnemy, UnitIsTapDenied = UnitIsEnemy, UnitIsTapDenied
@@ -23,6 +25,7 @@ local GetTime = GetTime
 local C_NamePlate = C_NamePlate
 local GetRaidTargetIndex, SetRaidTargetIconTexture = GetRaidTargetIndex, SetRaidTargetIconTexture
 local C_CVar, NamePlateConstants, Enum = C_CVar, NamePlateConstants, Enum
+local _, PLAYER_CLASS = UnitClass("player")
 local function GetFont()
     if EllesmereUI and EllesmereUI.GetFontPath then
         return EllesmereUI.GetFontPath("nameplates")
@@ -157,6 +160,7 @@ local defaults = {
     showAllDebuffs = false,
     borderStyle = "ellesmere",
     borderColor = { r = 0.067, g = 0.067, b = 0.067 },
+    simpleBorderSize = 6,
     pandemicGlow = false,
     pandemicGlowStyle = 1,
     pandemicGlowColor = { r = 1.0, g = 0.800, b = 0.329 },
@@ -1066,6 +1070,14 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
         local bot = Mk(); bot:SetHeight(BORDER_CORNER); bot:SetPoint("BOTTOMLEFT", bl, "BOTTOMRIGHT", 0, 0); bot:SetPoint("BOTTOMRIGHT", br, "BOTTOMLEFT", 0, 0); bot:SetTexCoord(0.5, 0.5, 0.5, 1)
         local lft = Mk(); lft:SetWidth(BORDER_CORNER); lft:SetPoint("TOPLEFT", tl, "BOTTOMLEFT", 0, 0); lft:SetPoint("BOTTOMLEFT", bl, "TOPLEFT", 0, 0); lft:SetTexCoord(0, 0.5, 0.5, 0.5)
         local rgt = Mk(); rgt:SetWidth(BORDER_CORNER); rgt:SetPoint("TOPRIGHT", tr, "BOTTOMRIGHT", 0, 0); rgt:SetPoint("BOTTOMRIGHT", br, "TOPRIGHT", 0, 0); rgt:SetTexCoord(0.5, 1, 0.5, 0.5)
+        f._corners = { tl, tr, bl, br }
+        f._hEdges  = { top, bot }
+        f._vEdges  = { lft, rgt }
+        function f:ApplySize(sz)
+            for _, c in ipairs(self._corners) do c:SetSize(sz, sz) end
+            for _, e in ipairs(self._hEdges)  do e:SetHeight(sz) end
+            for _, e in ipairs(self._vEdges)  do e:SetWidth(sz) end
+        end
         return f
     end
 
@@ -1092,7 +1104,12 @@ local frameCache = CreateFramePool("Frame", UIParent, nil, nil, false, function(
         for _, tex in ipairs(plate.borderFrame._texs) do tex:SetVertexColor(cr, cg, cb) end
         for _, tex in ipairs(plate._simpleBorderFrame._texs) do tex:SetVertexColor(cr, cg, cb) end
     end
+    function plate:ApplySimpleBorderSize()
+        local sz = (p and p.simpleBorderSize) or defaults.simpleBorderSize
+        plate._simpleBorderFrame:ApplySize(sz)
+    end
     plate:ApplyBorderStyle()
+    plate:ApplySimpleBorderSize()
     -- Target glow, target arrows, and focus overlay are lazy-created on
     -- demand (EnsureGlow / EnsureArrows / EnsureFocusOverlay) since only
     -- 1 plate at a time ever shows them. This saves ~14 objects per plate.
@@ -1400,6 +1417,13 @@ function ns.RefreshBorderColor()
         end
     end
 end
+function ns.RefreshSimpleBorderSize()
+    for _, plate in pairs(ns.plates) do
+        if plate.ApplySimpleBorderSize then
+            plate:ApplySimpleBorderSize()
+        end
+    end
+end
 function ns.RefreshNameplateYOffset()
     local yOff = GetNameplateYOffset()
     for _, plate in pairs(ns.plates) do
@@ -1576,6 +1600,14 @@ local function SetupAuraCVars()
         SetCVar("nameplateTargetBehindMaxDistance", 30)
         SetCVar("clampTargetNameplateToScreen", 1)
         SetCVar("nameplateUseClassColorForFriendlyPlayerUnitNames", (db.classColorFriendly ~= false) and 1 or 0)
+    end
+    -- Hide realm names on friendly nameplates inside instances
+    if NamePlateFriendlyFrameOptions and TextureLoadingGroupMixin then
+        if NamePlateFriendlyFrameOptions.updateNameUsesGetUnitName then
+            local wrapper = { textures = NamePlateFriendlyFrameOptions }
+            NamePlateFriendlyFrameOptions.updateNameUsesGetUnitName = 0
+            TextureLoadingGroupMixin.RemoveTexture(wrapper, "updateNameUsesGetUnitName")
+        end
     end
     -- Apply stacking state via the Midnight bitfield CVar
     ns.RefreshStackingMotion()
@@ -1779,8 +1811,7 @@ local function UpdateClassPowerOnPlate(plate)
         -- Stagger color thresholds: green < 30%, yellow 30-60%, red > 60%
         if isSecretVal then
             -- Secret value: can't compare, use class color
-            local _, pClass = UnitClass("player")
-            local cpColor = CP_CLASS_COLORS[pClass] or CP_DEFAULT_COLOR
+            local cpColor = CP_CLASS_COLORS[PLAYER_CLASS] or CP_DEFAULT_COLOR
             if not GetClassPowerClassColors() then
                 local cc = GetClassPowerCustomColor()
                 cpColor = { cc.r, cc.g, cc.b }
@@ -1825,8 +1856,7 @@ local function UpdateClassPowerOnPlate(plate)
         bar:SetMinMaxValues(0, maxI)
         bar:SetValue(cur)
 
-        local _, pClass = UnitClass("player")
-        local cpColor = CP_CLASS_COLORS[pClass] or CP_DEFAULT_COLOR
+        local cpColor = CP_CLASS_COLORS[PLAYER_CLASS] or CP_DEFAULT_COLOR
         if not GetClassPowerClassColors() then
             local cc = GetClassPowerCustomColor()
             cpColor = { cc.r, cc.g, cc.b }
@@ -1861,8 +1891,7 @@ local function UpdateClassPowerOnPlate(plate)
         bar:SetMinMaxValues(0, maxF)
         bar:SetValue(cur)
 
-        local _, pClass = UnitClass("player")
-        local cpColor = CP_CLASS_COLORS[pClass] or CP_DEFAULT_COLOR
+        local cpColor = CP_CLASS_COLORS[PLAYER_CLASS] or CP_DEFAULT_COLOR
         if not GetClassPowerClassColors() then
             local cc = GetClassPowerCustomColor()
             cpColor = { cc.r, cc.g, cc.b }
@@ -1921,10 +1950,9 @@ local function UpdateClassPowerOnPlate(plate)
     local groupW = pipPositions[maxP] + scaledW
     local halfGroup = PP.Scale(groupW / 2)
 
-    local _, pClass = UnitClass("player")
     local cpColor = CP_DEFAULT_COLOR
     if GetClassPowerClassColors() then
-        cpColor = CP_CLASS_COLORS[pClass] or CP_DEFAULT_COLOR
+        cpColor = CP_CLASS_COLORS[PLAYER_CLASS] or CP_DEFAULT_COLOR
     else
         local cc = GetClassPowerCustomColor()
         cpColor = { cc.r, cc.g, cc.b }
@@ -2055,8 +2083,7 @@ local ApplyClassPowerSetting
 -- Enable/disable the class power watcher
 local function EnableClassPowerWatcher()
     if classPowerWatcher then return end  -- already active
-    local _, playerClass = UnitClass("player")
-    local info = CLASS_POWER_MAP[playerClass]
+    local info = CLASS_POWER_MAP[PLAYER_CLASS]
     if not info then return end  -- class has no trackable resource
 
     -- Resolve spec-specific entries: if info has numeric specID keys, look up current spec
@@ -2759,18 +2786,18 @@ function NameplateFrame:SetUnit(unit, nameplate)
             self.castTarget:SetTextColor(1, 1, 1, 1)
         end
     else
-        local ctc = (db and db.castTargetColor) or defaults.castTargetColor
+        local ctc = (p and p.castTargetColor) or defaults.castTargetColor
         self.castTarget:SetTextColor(ctc.r, ctc.g, ctc.b, 1)
     end
     -- Aura duration text settings (unified across debuffs, buffs, CCs)
-    local auraDurSize = (db and db.auraDurationTextSize) or defaults.auraDurationTextSize
-    local auraDurColor = (db and db.auraDurationTextColor) or defaults.auraDurationTextColor
-    local auraStackSize = (db and db.auraStackTextSize) or defaults.auraStackTextSize
-    local auraStackColor = (db and db.auraStackTextColor) or defaults.auraStackTextColor
+    local auraDurSize = (p and p.auraDurationTextSize) or defaults.auraDurationTextSize
+    local auraDurColor = (p and p.auraDurationTextColor) or defaults.auraDurationTextColor
+    local auraStackSize = (p and p.auraStackTextSize) or defaults.auraStackTextSize
+    local auraStackColor = (p and p.auraStackTextColor) or defaults.auraStackTextColor
     -- Aura timer positions (per-type: debuffs, buffs, CCs with "none" to hide)
-    local debuffTPos = (db and db.debuffTimerPosition) or (db and db.auraTextPosition) or defaults.debuffTimerPosition
-    local buffTPos   = (db and db.buffTimerPosition)   or (db and db.auraTextPosition) or defaults.buffTimerPosition
-    local ccTPos     = (db and db.ccTimerPosition)     or (db and db.auraTextPosition) or defaults.ccTimerPosition
+    local debuffTPos = (p and p.debuffTimerPosition) or (p and p.auraTextPosition) or defaults.debuffTimerPosition
+    local buffTPos   = (p and p.buffTimerPosition)   or (p and p.auraTextPosition) or defaults.buffTimerPosition
+    local ccTPos     = (p and p.ccTimerPosition)     or (p and p.auraTextPosition) or defaults.ccTimerPosition
 
     -- Helper: apply timer position to a duration text fontstring
     -- For "none", uses SetHideCountdownNumbers(true) to tell the Blizzard cooldown
@@ -3473,8 +3500,6 @@ function NameplateFrame:UpdateAuras(updateInfo)
     if C_UnitAuras and C_UnitAuras.GetUnitAuras then
         local allDebuffs = C_UnitAuras.GetUnitAuras(unit, "HARMFUL|PLAYER")
         if allDebuffs then
-            local GetCount = C_UnitAuras.GetAuraApplicationDisplayCount
-            local GetDur = C_UnitAuras.GetAuraDuration
             for _, aura in ipairs(allDebuffs) do
                 if dIdx > 4 then break end
                 local id = aura and aura.auraInstanceID
@@ -3482,12 +3507,12 @@ function NameplateFrame:UpdateAuras(updateInfo)
                         local slot = self.debuffs[dIdx]
                         slot.icon:SetTexture(aura.icon)
                         slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-                        if GetCount then
-                            slot.count:SetText(GetCount(unit, id, 2, 1000) or "")
+                        if C_UnitAuras_GetAuraAppDisplayCount then
+                            slot.count:SetText(C_UnitAuras_GetAuraAppDisplayCount(unit, id, 2, 1000) or "")
                         end
                         local cd = slot.cd
-                        if cd and GetDur then
-                            local durObj = GetDur(unit, id)
+                        if cd and C_UnitAuras_GetAuraDuration then
+                            local durObj = C_UnitAuras_GetAuraDuration(unit, id)
                             if durObj and cd.SetCooldownFromDurationObject then
                                 if cd.SetDrawSwipe then cd:SetDrawSwipe(true) end
                                 cd:SetCooldownFromDurationObject(durObj)
@@ -3532,8 +3557,6 @@ function NameplateFrame:UpdateAuras(updateInfo)
         local allBuffs = C_UnitAuras.GetUnitAuras(unit, "HELPFUL|INCLUDE_NAME_PLATE_ONLY")
         local bIdx = 1
         if allBuffs then
-            local GetCount = C_UnitAuras.GetAuraApplicationDisplayCount
-            local GetDur = C_UnitAuras.GetAuraDuration
             for _, aura in ipairs(allBuffs) do
                 if bIdx > 4 then break end
                 local id = aura and aura.auraInstanceID
@@ -3541,12 +3564,12 @@ function NameplateFrame:UpdateAuras(updateInfo)
                     local slot = self.buffs[bIdx]
                     slot.icon:SetTexture(aura.icon)
                     slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-                    if GetCount then
-                        slot.count:SetText(GetCount(unit, id, 2, 1000) or "")
+                    if C_UnitAuras_GetAuraAppDisplayCount then
+                        slot.count:SetText(C_UnitAuras_GetAuraAppDisplayCount(unit, id, 2, 1000) or "")
                     end
                     local cd = slot.cd
-                    if cd and GetDur then
-                        local durObj = GetDur(unit, id)
+                    if cd and C_UnitAuras_GetAuraDuration then
+                        local durObj = C_UnitAuras_GetAuraDuration(unit, id)
                         if durObj and cd.SetCooldownFromDurationObject then
                             if cd.SetDrawSwipe then cd:SetDrawSwipe(true) end
                             cd:SetCooldownFromDurationObject(durObj)
@@ -3566,7 +3589,6 @@ function NameplateFrame:UpdateAuras(updateInfo)
     if C_UnitAuras and C_UnitAuras.GetUnitAuras then
         local ccAuras = C_UnitAuras.GetUnitAuras(unit, "HARMFUL|CROWD_CONTROL")
         if ccAuras then
-            local GetDur = C_UnitAuras.GetAuraDuration
             for _, aura in ipairs(ccAuras) do
                 if ccShown >= 2 then break end
                 if aura and aura.auraInstanceID and aura.icon then
@@ -3576,8 +3598,8 @@ function NameplateFrame:UpdateAuras(updateInfo)
                     slot.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
                     slot.icon:Show()
                     local cd = slot.cd
-                    if cd and GetDur then
-                        local durObj = GetDur(unit, aura.auraInstanceID)
+                    if cd and C_UnitAuras_GetAuraDuration then
+                        local durObj = C_UnitAuras_GetAuraDuration(unit, aura.auraInstanceID)
                         if durObj and cd.SetCooldownFromDurationObject then
                             if cd.SetDrawSwipe then cd:SetDrawSwipe(true) end
                             cd:SetCooldownFromDurationObject(durObj)

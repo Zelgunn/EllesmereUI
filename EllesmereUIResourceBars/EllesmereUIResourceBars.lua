@@ -832,16 +832,19 @@ local function RegisterUnlockElements()
             if not point then return end
             local s = getSettings()
             s.unlockPos = { point = point, relPoint = relPoint or point, x = x, y = y }
-            local f = frame_fn()
-            if f then
-                f:ClearAllPoints()
-                f:SetPoint(point, UIParent, relPoint or point, x, y)
+            if not EllesmereUI._unlockActive then
+                local f = frame_fn()
+                if f then
+                    f:ClearAllPoints()
+                    f:SetPoint(point, UIParent, relPoint or point, x, y)
+                end
             end
         end
         local function loadPos()
             local pos = getSettings().unlockPos
             if not pos then return nil end
-            return { point = pos.point, relPoint = pos.relPoint or pos.point, x = pos.x, y = pos.y }
+            local pt = pos.point
+            return { point = pt, relPoint = pos.relPoint or pt, x = pos.x, y = pos.y }
         end
         local function clearPos()
             local s = getSettings()
@@ -856,8 +859,9 @@ local function RegisterUnlockElements()
             if not pos then return end
             local f = frame_fn()
             if f then
+                local pt = pos.point
                 f:ClearAllPoints()
-                f:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
+                f:SetPoint(pt, UIParent, pos.relPoint or pt, pos.x, pos.y)
             end
         end
         return savePos, loadPos, clearPos, applyPos
@@ -893,21 +897,7 @@ local function RegisterUnlockElements()
         elements[#elements + 1] = MK({
             key = "ERB_Power", label = "Power Bar", group = "Resource Bars", order = 501,
             getFrame = function() return primaryBar end,
-            getSize  = function()
-                local s = S()
-                local h = s.height
-                local expandDelta = 0
-                if s.expandIfNoResource then
-                    local secRes = GetSecondaryResource()
-                    if not secRes then
-                        local sp2 = ERB.db.profile.secondary
-                        expandDelta = sp2 and sp2.pipHeight or 20
-                        h = h + expandDelta
-                    end
-                end
-                -- Centralized grow system handles positioning; no mover offset needed
-                return s.width, h
-            end,
+            getSize  = function() local s = S(); return s.width, s.height end,
             setWidth = function(_, w) S().width = w; Rebuild() end,
             setHeight = function(_, h) S().height = h; Rebuild() end,
             isAnchored = function() local s = S(); return s.anchorTo and s.anchorTo ~= "none" end,
@@ -953,7 +943,7 @@ local function RegisterUnlockElements()
             if not point then return end
             local cb = S()
             cb.unlockPos = { point = point, relPoint = relPoint or point, x = x, y = y }
-            if castBarFrame then
+            if not EllesmereUI._unlockActive and castBarFrame then
                 castBarFrame:ClearAllPoints()
                 castBarFrame:SetPoint(point, UIParent, relPoint or point, x, y)
             end
@@ -961,7 +951,8 @@ local function RegisterUnlockElements()
         local function castLoad()
             local pos = S().unlockPos
             if not pos then return nil end
-            return { point = pos.point, relPoint = pos.relPoint or pos.point, x = pos.x, y = pos.y }
+            local pt = pos.point
+            return { point = pt, relPoint = pos.relPoint or pt, x = pos.x, y = pos.y }
         end
         local function castClear()
             local cb = S()
@@ -972,8 +963,9 @@ local function RegisterUnlockElements()
             local pos = S().unlockPos
             if not pos then return end
             if castBarFrame then
+                local pt = pos.point
                 castBarFrame:ClearAllPoints()
-                castBarFrame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
+                castBarFrame:SetPoint(pt, UIParent, pos.relPoint or pt, pos.x, pos.y)
             end
         end
         elements[#elements + 1] = MK({
@@ -1354,20 +1346,26 @@ local function BuildBars()
         else
             -- Clear any mouse-tracking OnUpdate from a previous anchor
             ApplyBarAnchor(healthBar, "none")
-            local function ApplyHealthBarTransform()
-                local ox = healthBar["_barAnim_ox"] or hp.offsetX or 0
-                local oy = healthBar["_barAnim_oy"] or hp.offsetY or -64
-                local w = healthBar["_barAnim_w"] or hp.width or 214
-                local h2 = healthBar["_barAnim_h"] or hp.height or 16
-                local ow, oh = OrientedSize(w, h2, hpOri)
-                healthBar:ClearAllPoints()
-                healthBar:SetPoint("CENTER", mainFrame, "CENTER", ox, oy)
+            if EllesmereUI._unlockActive then
+                -- During unlock mode, only update size -- position is managed by the mover
+                local ow, oh = OrientedSize(hp.width or 214, hp.height or 16, hpOri)
                 healthBar:SetSize(ow, oh)
+            else
+                local function ApplyHealthBarTransform()
+                    local ox = healthBar["_barAnim_ox"] or hp.offsetX or 0
+                    local oy = healthBar["_barAnim_oy"] or hp.offsetY or -64
+                    local w = healthBar["_barAnim_w"] or hp.width or 214
+                    local h2 = healthBar["_barAnim_h"] or hp.height or 16
+                    local ow, oh = OrientedSize(w, h2, hpOri)
+                    healthBar:ClearAllPoints()
+                    healthBar:SetPoint("CENTER", mainFrame, "CENTER", ox, oy)
+                    healthBar:SetSize(ow, oh)
+                end
+                SmoothBarAnimate(healthBar, "ox", hp.offsetX or 0, function() ApplyHealthBarTransform() end)
+                SmoothBarAnimate(healthBar, "oy", hp.offsetY or -64, function() ApplyHealthBarTransform() end)
+                SmoothBarAnimate(healthBar, "w", hp.width or 214, function() ApplyHealthBarTransform() end)
+                SmoothBarAnimate(healthBar, "h", hp.height or 16, function() ApplyHealthBarTransform() end)
             end
-            SmoothBarAnimate(healthBar, "ox", hp.offsetX or 0, function() ApplyHealthBarTransform() end)
-            SmoothBarAnimate(healthBar, "oy", hp.offsetY or -64, function() ApplyHealthBarTransform() end)
-            SmoothBarAnimate(healthBar, "w", hp.width or 214, function() ApplyHealthBarTransform() end)
-            SmoothBarAnimate(healthBar, "h", hp.height or 16, function() ApplyHealthBarTransform() end)
         end
         healthBar:ApplyBorder(hp.borderSize, hp.borderR, hp.borderG, hp.borderB, hp.borderA)
 
@@ -1447,21 +1445,27 @@ local function BuildBars()
         else
             -- Clear any mouse-tracking OnUpdate from a previous anchor
             ApplyBarAnchor(primaryBar, "none")
-            local function ApplyPowerBarTransform()
-                local ox = primaryBar["_barAnim_ox"] or pp.offsetX or 0
-                local oy = primaryBar["_barAnim_oy"] or pp.offsetY or -54
-                local w = primaryBar["_barAnim_w"] or pp.width or 214
-                local h2 = primaryBar["_barAnim_h"] or ppHeight or 4
-                local ow, oh = OrientedSize(w, h2, ppOri)
-                primaryBar:ClearAllPoints()
-                -- Internal layout: shift up by half expand delta within mainFrame
-                primaryBar:SetPoint("CENTER", mainFrame, "CENTER", ox, oy + ppExpandDelta * 0.5)
+            if EllesmereUI._unlockActive then
+                -- During unlock mode, only update size -- position is managed by the mover
+                local ow, oh = OrientedSize(pp.width or 214, ppHeight or 4, ppOri)
                 primaryBar:SetSize(ow, oh)
+            else
+                local function ApplyPowerBarTransform()
+                    local ox = primaryBar["_barAnim_ox"] or pp.offsetX or 0
+                    local oy = primaryBar["_barAnim_oy"] or pp.offsetY or -54
+                    local w = primaryBar["_barAnim_w"] or pp.width or 214
+                    local h2 = primaryBar["_barAnim_h"] or ppHeight or 4
+                    local ow, oh = OrientedSize(w, h2, ppOri)
+                    primaryBar:ClearAllPoints()
+                    -- Internal layout: shift up by half expand delta within mainFrame
+                    primaryBar:SetPoint("CENTER", mainFrame, "CENTER", ox, oy + ppExpandDelta * 0.5)
+                    primaryBar:SetSize(ow, oh)
+                end
+                SmoothBarAnimate(primaryBar, "ox", pp.offsetX or 0, function() ApplyPowerBarTransform() end)
+                SmoothBarAnimate(primaryBar, "oy", pp.offsetY or -54, function() ApplyPowerBarTransform() end)
+                SmoothBarAnimate(primaryBar, "w", pp.width or 214, function() ApplyPowerBarTransform() end)
+                SmoothBarAnimate(primaryBar, "h", ppHeight or 4, function() ApplyPowerBarTransform() end)
             end
-            SmoothBarAnimate(primaryBar, "ox", pp.offsetX or 0, function() ApplyPowerBarTransform() end)
-            SmoothBarAnimate(primaryBar, "oy", pp.offsetY or -54, function() ApplyPowerBarTransform() end)
-            SmoothBarAnimate(primaryBar, "w", pp.width or 214, function() ApplyPowerBarTransform() end)
-            SmoothBarAnimate(primaryBar, "h", ppHeight or 4, function() ApplyPowerBarTransform() end)
         end
         primaryBar:ApplyBorder(pp.borderSize, pp.borderR, pp.borderG, pp.borderB, pp.borderA)
 
@@ -1503,7 +1507,6 @@ local function BuildBars()
     if sp.enabled ~= false and cachedSecondary then
         if not secondaryFrame then
             secondaryFrame = CreateFrame("Frame", "ERB_SecondaryFrame", mainFrame)
-            secondaryFrame:SetClipsChildren(true)
             secondaryFrame:SetFrameStrata("MEDIUM")
             secondaryFrame:SetFrameLevel(10)
         end
@@ -1563,19 +1566,24 @@ local function BuildBars()
             end
         else
             ApplyBarAnchor(secondaryFrame, "none")
-            local function ApplySecondaryBarTransform()
-                local ox = secondaryFrame["_barAnim_ox"] or sp.offsetX or 0
-                local oy = secondaryFrame["_barAnim_oy"] or sp.offsetY or -38
-                local w  = secondaryFrame["_barAnim_w"] or frameW
-                local h2 = secondaryFrame["_barAnim_h"] or frameH
-                secondaryFrame:ClearAllPoints()
-                secondaryFrame:SetPoint("CENTER", mainFrame, "CENTER", ox, oy)
-                secondaryFrame:SetSize(w, h2)
+            if EllesmereUI._unlockActive then
+                -- During unlock mode, only update size -- position is managed by the mover
+                secondaryFrame:SetSize(frameW, frameH)
+            else
+                local function ApplySecondaryBarTransform()
+                    local ox = secondaryFrame["_barAnim_ox"] or sp.offsetX or 0
+                    local oy = secondaryFrame["_barAnim_oy"] or sp.offsetY or -38
+                    local w  = secondaryFrame["_barAnim_w"] or frameW
+                    local h2 = secondaryFrame["_barAnim_h"] or frameH
+                    secondaryFrame:ClearAllPoints()
+                    secondaryFrame:SetPoint("CENTER", mainFrame, "CENTER", ox, oy)
+                    secondaryFrame:SetSize(w, h2)
+                end
+                SmoothBarAnimate(secondaryFrame, "ox", sp.offsetX or 0, function() ApplySecondaryBarTransform() end)
+                SmoothBarAnimate(secondaryFrame, "oy", sp.offsetY or -38, function() ApplySecondaryBarTransform() end)
+                SmoothBarAnimate(secondaryFrame, "w", frameW, function() ApplySecondaryBarTransform() end)
+                SmoothBarAnimate(secondaryFrame, "h", frameH, function() ApplySecondaryBarTransform() end)
             end
-            SmoothBarAnimate(secondaryFrame, "ox", sp.offsetX or 0, function() ApplySecondaryBarTransform() end)
-            SmoothBarAnimate(secondaryFrame, "oy", sp.offsetY or -38, function() ApplySecondaryBarTransform() end)
-            SmoothBarAnimate(secondaryFrame, "w", frameW, function() ApplySecondaryBarTransform() end)
-            SmoothBarAnimate(secondaryFrame, "h", frameH, function() ApplySecondaryBarTransform() end)
         end
 
         -- Create/reuse pips or bar
@@ -1795,31 +1803,35 @@ local function UpdateHealthBar()
     healthBar:SetMinMaxValues(0, mx)
 
     local curTainted = issecretvalue and issecretvalue(cur)
-    local pctRaw = UnitHealthPercent and UnitHealthPercent("player", true, CurveConstants and CurveConstants.ScaleTo100) or 0
-    local pctTainted = issecretvalue and issecretvalue(pctRaw)
-    local pct01 = (not pctTainted) and (pctRaw / 100) or 1
+    -- Percent used for text display; derived from raw values (avoids secret-value issues).
+    local pctRaw = (not curTainted and mx > 0) and (cur / mx * 100) or 0
 
-    -- Color: dark theme and custom colored are handled in BuildBars,
-    -- but we need to re-apply class color + low health lerp dynamically.
-    -- When threshold is enabled, always re-apply color so we can swap
-    -- between normal and threshold colors each tick.
-    local applyThreshold = hp.thresholdEnabled and not pctTainted and pctRaw <= (hp.thresholdPct or 30)
-    if applyThreshold then
-        healthBar:GetStatusBarTexture():SetVertexColor(
-            hp.thresholdR or 1, hp.thresholdG or 0.2, hp.thresholdB or 0.2, hp.thresholdA or 1)
-    elseif hp.thresholdEnabled or (not hp.darkTheme and not hp.customColored) then
-        -- Re-apply normal color (needed every tick when threshold is enabled
-        -- so the bar reverts when health rises above the threshold)
+    -- Color: threshold via ColorCurve, matching the power bar implementation.
+    -- WoW evaluates the curve on the C side (secret-value-safe) and returns a Color object.
+    local ft = healthBar:GetStatusBarTexture()
+    if hp.thresholdEnabled and ft and UnitHealthPercent then
+        local baseR, baseG, baseB
         if hp.darkTheme then
-            healthBar:GetStatusBarTexture():SetVertexColor(DARK_FILL_R, DARK_FILL_G, DARK_FILL_B, DARK_FILL_A)
+            baseR, baseG, baseB = DARK_FILL_R, DARK_FILL_G, DARK_FILL_B
         elseif hp.customColored then
-            healthBar:GetStatusBarTexture():SetVertexColor(hp.fillR, hp.fillG, hp.fillB, hp.fillA)
+            baseR, baseG, baseB = hp.fillR, hp.fillG, hp.fillB
         else
-            local r, g, b
             local cc = CLASS_COLORS[cachedClass]
-            if cc then r, g, b = cc[1], cc[2], cc[3] else r, g, b = 0.15, 0.75, 0.30 end
-            healthBar:GetStatusBarTexture():SetVertexColor(r, g, b, 1)
+            if cc then baseR, baseG, baseB = cc[1], cc[2], cc[3] else baseR, baseG, baseB = 0.15, 0.75, 0.30 end
         end
+        local tR, tG, tB = hp.thresholdR or 1, hp.thresholdG or 0.2, hp.thresholdB or 0.2
+        local curve = GetBarThresholdCurve(baseR, baseG, baseB, tR, tG, tB, hp.thresholdPct or 30)
+        if curve then
+            local ok, colorResult = pcall(UnitHealthPercent, "player", false, curve)
+            if ok and colorResult and colorResult.GetRGBA then
+                ft:SetVertexColor(colorResult:GetRGBA())
+            end
+        end
+    elseif ft and not hp.darkTheme and not hp.customColored then
+        local r, g, b
+        local cc = CLASS_COLORS[cachedClass]
+        if cc then r, g, b = cc[1], cc[2], cc[3] else r, g, b = 0.15, 0.75, 0.30 end
+        ft:SetVertexColor(r, g, b, 1)
     end
 
     -- Smooth animation
@@ -2510,6 +2522,7 @@ end
 -------------------------------------------------------------------------------
 local SMOOTH_SPEED = 8
 local _runeThrottle = 0
+local _hpColorThrottle = 0
 
 local function OnUpdate(self, dt)
     -- Smooth bar animation (health)
@@ -2523,6 +2536,36 @@ local function OnUpdate(self, dt)
                 cur = Lerp(cur, tgt, min(1, dt * SMOOTH_SPEED))
                 healthBar._smoothCurrent = cur
                 healthBar:SetValue(cur)
+            end
+        end
+        -- Poll threshold color at ~20fps so it reacts without waiting for UNIT_HEALTH.
+        -- Only runs when the health bar is visible AND threshold coloring is enabled.
+        _hpColorThrottle = _hpColorThrottle + dt
+        if _hpColorThrottle >= 0.05 then
+            _hpColorThrottle = 0
+            local hp = ERB.db.profile.health
+            if hp and hp.thresholdEnabled and UnitHealthPercent then
+                local ft = healthBar:GetStatusBarTexture()
+                if ft then
+                    local baseR, baseG, baseB
+                    if hp.darkTheme then
+                        baseR, baseG, baseB = DARK_FILL_R, DARK_FILL_G, DARK_FILL_B
+                    elseif hp.customColored then
+                        baseR, baseG, baseB = hp.fillR, hp.fillG, hp.fillB
+                    else
+                        local cc = CLASS_COLORS[cachedClass]
+                        if cc then baseR, baseG, baseB = cc[1], cc[2], cc[3]
+                        else baseR, baseG, baseB = 0.15, 0.75, 0.30 end
+                    end
+                    local tR, tG, tB = hp.thresholdR or 1, hp.thresholdG or 0.2, hp.thresholdB or 0.2
+                    local curve = GetBarThresholdCurve(baseR, baseG, baseB, tR, tG, tB, hp.thresholdPct or 30)
+                    if curve then
+                        local ok, colorResult = pcall(UnitHealthPercent, "player", false, curve)
+                        if ok and colorResult and colorResult.GetRGBA then
+                            ft:SetVertexColor(colorResult:GetRGBA())
+                        end
+                    end
+                end
             end
         end
     end
@@ -2895,8 +2938,10 @@ BuildCastBar = function()
         end
     else
         castBarFrame:SetSize(totalW, h)
-        castBarFrame:ClearAllPoints()
-        castBarFrame:SetPoint("CENTER", UIParent, "CENTER", cb.anchorX, cb.anchorY)
+        if not EllesmereUI._unlockActive then
+            castBarFrame:ClearAllPoints()
+            castBarFrame:SetPoint("CENTER", UIParent, "CENTER", cb.anchorX, cb.anchorY)
+        end
     end
 
     -- Border: update the dedicated child border frame

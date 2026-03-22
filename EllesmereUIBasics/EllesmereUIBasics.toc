@@ -1,0 +1,22 @@
+## Interface: 120000, 120001
+## Title: |cff0cd29fEllesmereUI|r Basics
+## Category: |cff0cd29fEllesmere|rUI
+## Group: EllesmereUI
+## Notes: Chat, Minimap, Friends List, Quest Tracker, and Cursor skinning
+## Author: Ellesmere
+## Version: 5.3.5
+## Dependencies: EllesmereUI
+## SavedVariables: EllesmereUIBasicsDB
+## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
+
+# Main Lua
+EllesmereUIBasics.lua
+EllesmereUIBasics_Chat.lua
+EllesmereUIBasics_QuestTracker.lua
+EllesmereUIBasics_Cursor.lua
+
+# Options
+EUI_Basics_Chat_Options.lua
+EUI_Basics_QuestTracker_Options.lua
+EUI_Basics_Cursor_Options.lua
+EUI_Basics_Options.lua

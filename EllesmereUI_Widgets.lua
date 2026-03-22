@@ -4903,44 +4903,80 @@ local function BuildSyncIcon(opts)
 
     local ar, ag, ab = EllesmereUI.GetAccentColor()
 
-    -- "Apply to All" clickable text button
+    -- "Apply to:" prefix label + "All" clickable link
     local applyBtn = CreateFrame("Button", nil, region)
     applyBtn:SetFrameLevel(region:GetFrameLevel() + 4)
 
-    local applyText = applyBtn:CreateFontString(nil, "OVERLAY")
-    applyText:SetFont(EXPRESSWAY, 11, "")
-    applyText:SetTextColor(ar, ag, ab, 1)
-    applyText:SetText("Apply to All")
-    applyText:SetPoint("LEFT", applyBtn, "LEFT", 0, 0)
+    local prefixText = applyBtn:CreateFontString(nil, "OVERLAY")
+    prefixText:SetFont(EXPRESSWAY, 11, "")
+    prefixText:SetTextColor(ar, ag, ab, 1)
+    prefixText:SetText("Apply to:")
+    prefixText:SetPoint("LEFT", applyBtn, "LEFT", 0, 0)
 
-    -- "Apply to Multiple" link (only when multiApply opts are provided)
+    local allBtn = CreateFrame("Button", nil, region)
+    allBtn:SetFrameLevel(region:GetFrameLevel() + 4)
+    local allText = allBtn:CreateFontString(nil, "OVERLAY")
+    allText:SetFont(EXPRESSWAY, 11, "")
+    allText:SetTextColor(ar, ag, ab, 1)
+    allText:SetText("All")
+    allText:SetPoint("CENTER", allBtn, "CENTER", 0, 0)
+    allBtn:SetSize(20, 14)
+    allBtn:SetPoint("LEFT", prefixText, "RIGHT", 4, 0)
+
+    -- Hover: lighten links 50% toward white
+    local function Lighten(r, g, b)
+        return r + (1 - r) * 0.75, g + (1 - g) * 0.75, b + (1 - b) * 0.75
+    end
+    allBtn:SetScript("OnEnter", function()
+        local r, g, b = EllesmereUI.GetAccentColor()
+        allText:SetTextColor(Lighten(r, g, b))
+    end)
+    allBtn:SetScript("OnLeave", function()
+        local r, g, b = EllesmereUI.GetAccentColor()
+        allText:SetTextColor(r, g, b, 1)
+    end)
+
+    -- " | Multiple" link (only when multiApply opts are provided)
     local multiBtn, multiText, sepText
     if opts.multiApply then
-        sepText = applyBtn:CreateFontString(nil, "OVERLAY")
+        sepText = region:CreateFontString(nil, "OVERLAY")
         sepText:SetFont(EXPRESSWAY, 11, "")
         sepText:SetTextColor(0.45, 0.45, 0.45, 0.7)
-        sepText:SetText(" | ")
-        sepText:SetPoint("LEFT", applyText, "RIGHT", 0, 0)
+        sepText:SetText("|")
+        sepText:SetPoint("LEFT", allBtn, "RIGHT", 4, 0)
 
         multiBtn = CreateFrame("Button", nil, region)
         multiBtn:SetFrameLevel(region:GetFrameLevel() + 4)
         multiText = multiBtn:CreateFontString(nil, "OVERLAY")
         multiText:SetFont(EXPRESSWAY, 11, "")
         multiText:SetTextColor(ar, ag, ab, 1)
-        multiText:SetText("Apply to Multiple")
+        multiText:SetText("Multiple")
         multiText:SetPoint("CENTER", multiBtn, "CENTER", 0, 0)
-        multiBtn:SetSize(100, 14)  -- initial estimate, corrected below
-        -- Anchor multiBtn right after the separator
-        multiBtn:SetPoint("LEFT", sepText, "RIGHT", 0, 0)
+        multiBtn:SetSize(50, 14)
+        multiBtn:SetPoint("LEFT", sepText, "RIGHT", 4, 0)
+
+        multiBtn:SetScript("OnEnter", function()
+            local r, g, b = EllesmereUI.GetAccentColor()
+            multiText:SetTextColor(Lighten(r, g, b))
+        end)
+        multiBtn:SetScript("OnLeave", function()
+            local r, g, b = EllesmereUI.GetAccentColor()
+            multiText:SetTextColor(r, g, b, 1)
+        end)
     end
 
-    -- Size the button to the text + 2px padding each side (set after first render via OnUpdate)
+    -- Size buttons to their text
     applyBtn:SetSize(80, 14)  -- initial estimate, corrected below
     local function ResizeBtn()
-        local tw = applyText:GetStringWidth()
-        local th = applyText:GetStringHeight()
-        if tw and tw > 0 then
-            applyBtn:SetSize(tw + 4, th + 4)
+        local pw = prefixText:GetStringWidth()
+        local ph = prefixText:GetStringHeight()
+        if pw and pw > 0 then
+            applyBtn:SetSize(pw + 4, ph + 4)
+        end
+        local aw = allText:GetStringWidth()
+        local ah = allText:GetStringHeight()
+        if aw and aw > 0 then
+            allBtn:SetSize(aw + 4, ah + 4)
         end
         if multiBtn and multiText then
             local mw = multiText:GetStringWidth()
@@ -4966,7 +5002,8 @@ local function BuildSyncIcon(opts)
         label:ClearAllPoints()
         PP.Point(label, "LEFT", region, "LEFT", labelXOff, labelY)
         applyBtn:SetAlpha(s)
-        if s <= 0 then applyBtn:Hide() else applyBtn:Show() end
+        allBtn:SetAlpha(s)
+        if s <= 0 then applyBtn:Hide(); allBtn:Hide() else applyBtn:Show(); allBtn:Show() end
         if multiBtn then
             multiBtn:SetAlpha(s)
             if s <= 0 then multiBtn:Hide() else multiBtn:Show() end
@@ -5002,7 +5039,7 @@ local function BuildSyncIcon(opts)
     -- ----------------------------------------------------------------
     --  Button scripts
     -- ----------------------------------------------------------------
-    applyBtn:SetScript("OnClick", function()
+    allBtn:SetScript("OnClick", function()
         if opts.onClick then opts.onClick() end
         -- White border flash on all targets
         local targets = opts.flashTargets
@@ -5029,7 +5066,8 @@ local function BuildSyncIcon(opts)
     EllesmereUI.RegisterWidgetRefresh(function()
         -- Re-color accent in case it changed
         local r, g, b = EllesmereUI.GetAccentColor()
-        applyText:SetTextColor(r, g, b, 1)
+        prefixText:SetTextColor(r, g, b, 1)
+        allText:SetTextColor(r, g, b, 1)
         if multiText then multiText:SetTextColor(r, g, b, 1) end
         ResizeBtn()
 
@@ -5049,7 +5087,8 @@ local function BuildSyncIcon(opts)
                 end
                 EllesmereUI._deferredDriftChecks[function()
                     local r2, g2, b2 = EllesmereUI.GetAccentColor()
-                    applyText:SetTextColor(r2, g2, b2, 1)
+                    prefixText:SetTextColor(r2, g2, b2, 1)
+                    allText:SetTextColor(r2, g2, b2, 1)
                     if multiText then multiText:SetTextColor(r2, g2, b2, 1) end
                     ResizeBtn()
                     AnimateTo(opts.isSynced() and 0 or 1)
@@ -5065,7 +5104,8 @@ local function BuildSyncIcon(opts)
             end
             EllesmereUI._deferredDriftChecks[function()
                 local r2, g2, b2 = EllesmereUI.GetAccentColor()
-                applyText:SetTextColor(r2, g2, b2, 1)
+                prefixText:SetTextColor(r2, g2, b2, 1)
+                allText:SetTextColor(r2, g2, b2, 1)
                 if multiText then multiText:SetTextColor(r2, g2, b2, 1) end
                 ResizeBtn()
                 AnimateTo(opts.isSynced() and 0 or 1)
@@ -5132,13 +5172,13 @@ function EllesmereUI.BuildVisOptsCBDropdown(parentFrame, ddW, fLevel, items, get
     local ddLbl = ddBtn:CreateFontString(nil, "OVERLAY")
     local fontPath = EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("options") or "Fonts\\FRIZQT__.TTF"
     ddLbl:SetFont(fontPath, 13, "")
-    ddLbl:SetTextColor(1, 1, 1, 0.7)
+    ddLbl:SetTextColor(1, 1, 1, EllesmereUI.DD_TXT_A)
     ddLbl:SetJustifyH("LEFT")
     ddLbl:SetWordWrap(false)
     ddLbl:SetMaxLines(1)
     ddLbl:SetPoint("LEFT", ddBtn, "LEFT", 12, 0)
-    ddLbl:SetPoint("RIGHT", ddBtn, "RIGHT", -24, 0)
     local arrow = EllesmereUI.MakeDropdownArrow(ddBtn, 12, PP)
+    ddLbl:SetPoint("RIGHT", arrow, "LEFT", -5, 0)
 
     local menu
     local function SummaryLabel()
@@ -5245,35 +5285,44 @@ function EllesmereUI.BuildVisOptsCBDropdown(parentFrame, ddW, fLevel, items, get
         ddBtn._ddMenu = menu
     end
 
+    local function ApplyNormal()
+        ddLbl:SetTextColor(1, 1, 1, EllesmereUI.DD_TXT_A)
+        ddBrd:SetColor(1, 1, 1, EllesmereUI.DD_BRD_A)
+        ddBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_A)
+    end
+    local function ApplyHover()
+        ddLbl:SetTextColor(1, 1, 1, EllesmereUI.DD_TXT_HA)
+        ddBrd:SetColor(1, 1, 1, EllesmereUI.DD_BRD_HA)
+        ddBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_HA)
+    end
     ddBtn:SetScript("OnEnter", function()
-        ddLbl:SetTextColor(1, 1, 1, 1)
-        ddBrd:SetColor(1, 1, 1, EllesmereUI.DD_BRD_HA or 0.25)
-        ddBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_HA or 0.92)
+        ApplyHover()
     end)
     ddBtn:SetScript("OnLeave", function()
         if not (menu and menu:IsShown()) then
-            ddLbl:SetTextColor(1, 1, 1, 0.7)
-            ddBrd:SetColor(1, 1, 1, EllesmereUI.DD_BRD_A)
-            ddBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_A)
+            ApplyNormal()
         end
     end)
 
-    local blocker
     local function ShowMenu()
         EnsureMenu()
         if menu:IsShown() then
             menu:Hide()
             return
         end
+        -- Match the panel's effective scale since menu lives on UIParent
+        local btnScale = ddBtn:GetEffectiveScale()
+        local uiScale = UIParent:GetEffectiveScale()
+        menu:SetScale(btnScale / uiScale)
+        ApplyHover()
         menu:Show()
-        blocker = CreateFrame("Button", nil, UIParent)
-        blocker:SetFrameStrata("FULLSCREEN")
-        blocker:SetFrameLevel(199)
-        blocker:SetAllPoints(UIParent)
-        blocker:SetScript("OnClick", function() menu:Hide() end)
-        blocker:Show()
-        local wasDown = false
         menu:SetScript("OnUpdate", function(self)
+            -- Close when left-clicking outside the menu and button
+            if not self:IsMouseOver() and not ddBtn:IsMouseOver() and IsMouseButtonDown("LeftButton") then
+                self:Hide()
+                return
+            end
+            -- Close when the dropdown button scrolls out of the visible area
             local scrollFrame = EllesmereUI._scrollFrame
             if scrollFrame then
                 if ddBtn._inScrollChild == nil then
@@ -5298,9 +5347,13 @@ function EllesmereUI.BuildVisOptsCBDropdown(parentFrame, ddW, fLevel, items, get
                 end
             end
         end)
-        menu:HookScript("OnHide", function()
-            menu:SetScript("OnUpdate", nil)
-            if blocker then blocker:Hide(); blocker:SetParent(nil); blocker = nil end
+        menu:SetScript("OnHide", function(self)
+            self:SetScript("OnUpdate", nil)
+            if ddBtn:IsMouseOver() then
+                ApplyHover()
+            else
+                ApplyNormal()
+            end
         end)
     end
 

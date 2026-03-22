@@ -309,6 +309,12 @@ local TBB_DEFAULT_BAR = {
     stackThresholdMaxEnabled = false,
     stackThresholdMax = 10,
     stackThresholdTicks = "",
+    pandemicGlow = false,
+    pandemicGlowStyle = 1,
+    pandemicGlowColor = { r = 1, g = 1, b = 0 },
+    pandemicGlowLines = 8,
+    pandemicGlowThickness = 2,
+    pandemicGlowSpeed = 4,
 }
 ns.TBB_DEFAULT_BAR = TBB_DEFAULT_BAR
 
@@ -510,6 +516,14 @@ local function CreateTrackedBuffBarFrame(parent, idx)
     bdrContainer:SetFrameLevel(wrapFrame:GetFrameLevel() + 5)
     bdrContainer:Hide()
     wrapFrame._barBorder = bdrContainer
+
+    -- Pandemic glow overlay: covers the whole bar, above border
+    local panGlowOverlay = CreateFrame("Frame", nil, wrapFrame)
+    panGlowOverlay:SetAllPoints(wrapFrame)
+    panGlowOverlay:SetFrameLevel(wrapFrame:GetFrameLevel() + 6)
+    panGlowOverlay:SetAlpha(0)
+    panGlowOverlay:EnableMouse(false)
+    wrapFrame._pandemicGlowOverlay = panGlowOverlay
 
     -- Hidden Cooldown widget for DurationObject mirroring
     local cd = CreateFrame("Cooldown", nil, bar, "CooldownFrameTemplate")
@@ -1259,12 +1273,11 @@ local function UpdateTBBStacks(bar, cfg)
             if blzChild and blzChild.Applications and blzChild.Applications:IsShown() then
                 local appsText = blzChild.Applications.Applications
                 if appsText then
-                    local ok, txt = pcall(appsText.GetText, appsText)
-                    if ok and txt then
+                    local txt = appsText:GetText()
+                    if txt then
                         bar._stacksText:SetText(txt)
                         bar._stacksText:Show()
-                        local nOk, n = pcall(tonumber, txt)
-                        bar._stackCount = (nOk and n) or 0
+                        bar._stackCount = tonumber(txt) or 0
                         return
                     end
                 end
@@ -1314,8 +1327,8 @@ local function UpdateTBBStacks(bar, cfg)
     if blzChild and blzChild.Applications and blzChild.Applications:IsShown() then
         local appsText = blzChild.Applications.Applications
         if appsText then
-            local ok, txt = pcall(appsText.GetText, appsText)
-            if ok and txt then
+            local txt = appsText:GetText()
+            if txt then
                 bar._stacksText:SetText(txt)
                 bar._stacksText:Show()
                 local apps
@@ -1334,8 +1347,7 @@ local function UpdateTBBStacks(bar, cfg)
                 end
                 bar._stackCount = apps or 0
                 if not apps then
-                    local nOk, n = pcall(tonumber, txt)
-                    if nOk and n then bar._stackCount = n end
+                    bar._stackCount = tonumber(txt) or 0
                 end
                 return
             end
@@ -1403,7 +1415,7 @@ function ns.UpdateTrackedBuffBarTimers()
     -- Self-heal placeholder mode if user navigated away from Buff Bars
     if ns._tbbPlaceholderMode then
         local ap = EllesmereUI and EllesmereUI.GetActivePage and EllesmereUI:GetActivePage()
-        if ap ~= "Buff Bars" then
+        if ap ~= "Tracking Bars" then
             ns._tbbPlaceholderMode = false
             if ns.HideTBBPlaceholders then ns.HideTBBPlaceholders() end
         end
@@ -1665,7 +1677,7 @@ function ns.UpdateTrackedBuffBarTimers()
                                     rawRemaining = calcRem
                                     rawDur = rd
                                 end
-                            elseif type(rs) == "number" and type(rd) == "number" and rd > 0 then
+                            elseif rd > 0 then
                                 rawRemaining = math.max(0, (rs + rd) - now)
                                 rawDur = rd
                             end
@@ -1792,6 +1804,64 @@ function ns.UpdateTrackedBuffBarTimers()
                         if bar._timerText then bar._timerText:Hide() end
                         if bar._spark then bar._spark:Hide() end
                     end
+
+                    -- Pandemic glow on tracked buff bars
+                    if cfg.pandemicGlow and durObj and ns.cdmPandemicCurve then
+                        -- Determine glow target: icon if shown, otherwise the bar overlay
+                        local glowTarget
+                        if bar._icon and bar._icon:IsShown() then
+                            if not bar._pandemicGlowOnIcon then
+                                if not bar._icon._pandemicOverlay then
+                                    local ov = CreateFrame("Frame", nil, bar._icon)
+                                    ov:SetAllPoints(bar._icon)
+                                    ov:SetFrameLevel(bar._icon:GetFrameLevel() + 2)
+                                    ov:SetAlpha(0)
+                                    ov:EnableMouse(false)
+                                    bar._icon._pandemicOverlay = ov
+                                end
+                            end
+                            glowTarget = bar._icon._pandemicOverlay
+                            bar._pandemicGlowOnIcon = true
+                        else
+                            glowTarget = bar._pandemicGlowOverlay
+                            bar._pandemicGlowOnIcon = false
+                        end
+                        local style = cfg.pandemicGlowStyle or 1
+                        -- When glowing the bar overlay (no icon), only Pixel Glow (1)
+                        -- and Auto-Cast Shine (4) render properly on a wide rectangle.
+                        -- Fall back to Pixel Glow for icon-shaped styles.
+                        if not bar._pandemicGlowOnIcon and style ~= 1 and style ~= 4 then
+                            style = 1
+                        end
+                        if not bar._pandemicGlowActive or bar._pandemicGlowStyleIdx ~= style or bar._pandemicGlowTarget ~= glowTarget then
+                            if bar._pandemicGlowActive and bar._pandemicGlowTarget and bar._pandemicGlowTarget ~= glowTarget then
+                                ns.StopNativeGlow(bar._pandemicGlowTarget)
+                            end
+                            local c = cfg.pandemicGlowColor or { r = 1, g = 1, b = 0 }
+                            local glowOpts = (style == 1) and {
+                                N = cfg.pandemicGlowLines or 8,
+                                th = cfg.pandemicGlowThickness or 2,
+                                period = cfg.pandemicGlowSpeed or 4,
+                            } or nil
+                            ns.StartNativeGlow(glowTarget, style, c.r or 1, c.g or 1, c.b or 0, glowOpts)
+                            bar._pandemicGlowActive = true
+                            bar._pandemicGlowStyleIdx = style
+                            bar._pandemicGlowTarget = glowTarget
+                        end
+                        glowTarget:SetAlpha(
+                            C_CurveUtil.EvaluateColorValueFromBoolean(
+                                durObj:IsZero(), 0,
+                                durObj:EvaluateRemainingPercent(ns.cdmPandemicCurve)))
+                        ns.activeCdmPandemicBars[bar] = durObj
+                    elseif bar._pandemicGlowActive then
+                        if bar._pandemicGlowTarget then
+                            ns.StopNativeGlow(bar._pandemicGlowTarget)
+                        end
+                        bar._pandemicGlowActive = false
+                        bar._pandemicGlowStyleIdx = nil
+                        bar._pandemicGlowTarget = nil
+                        ns.activeCdmPandemicBars[bar] = nil
+                    end
                 end
                 -- Feed threshold overlay each tick (secret-safe, no comparison)
                 FeedTBBThresholdOverlay(bar)
@@ -1805,6 +1875,13 @@ function ns.UpdateTrackedBuffBarTimers()
                 end
             else
                 -- Buff not active, hide the bar and clear state
+                if bar._pandemicGlowActive then
+                    if bar._pandemicGlowTarget then ns.StopNativeGlow(bar._pandemicGlowTarget) end
+                    bar._pandemicGlowActive = false
+                    bar._pandemicGlowStyleIdx = nil
+                    bar._pandemicGlowTarget = nil
+                    ns.activeCdmPandemicBars[bar] = nil
+                end
                 if bar:IsShown() then bar:Hide() end
                 if bar._stacksText then bar._stacksText:Hide() end
                 bar._resolvedAuraID = nil
@@ -1868,7 +1945,7 @@ function ns.RegisterTBBUnlockElements()
         if bar then
             elements[#elements + 1] = MK({
                 key = "TBB_" .. posKey,
-                label = "Buff Bar: " .. (cfg.name or ("Bar " .. idx)),
+                label = "Tracking Bar: " .. (cfg.name or ("Bar " .. idx)),
                 group = "Cooldown Manager",
                 order = 650,
                 isHidden = function()
@@ -1898,12 +1975,14 @@ function ns.RegisterTBBUnlockElements()
                     local p = ECME.db.profile
                     if not p.tbbPositions then p.tbbPositions = {} end
                     p.tbbPositions[posKey] = { point = point, relPoint = relPoint, x = x, y = y }
-                    local f = tbbFrames[idx]
-                    if f then
-                        f:ClearAllPoints()
-                        f:SetPoint(point, UIParent, relPoint or point, x, y)
+                    if not EllesmereUI._unlockActive then
+                        local f = tbbFrames[idx]
+                        if f then
+                            f:ClearAllPoints()
+                            f:SetPoint(point, UIParent, relPoint or point, x, y)
+                        end
+                        ns.BuildTrackedBuffBars()
                     end
-                    ns.BuildTrackedBuffBars()
                 end,
                 loadPos = function()
                     local p = ECME.db.profile

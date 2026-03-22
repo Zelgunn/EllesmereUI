@@ -35,14 +35,31 @@ ns.friendlyPlates = friendlyPlates
 local FRIENDLY_BAR_W = 150
 local FRIENDLY_PLATE_Y_OFFSET = -18
 
+local function IsInFollowerDungeon()
+    if C_LFGInfo and C_LFGInfo.IsInLFGFollowerDungeon and C_LFGInfo.IsInLFGFollowerDungeon() then
+        return true
+    end
+    -- Delves (difficultyID 208) also have follower NPCs
+    local _, _, difficultyID = GetInstanceInfo()
+    if difficultyID == 208 then
+        return true
+    end
+    return false
+end
+
 local function IsFriendlyEnabled()
+    if IsInFollowerDungeon() then return false end
     local fp = FP()
-    return fp and (fp.friendlyNameOnly == false)
+    if not fp or fp.showFriendlyPlayers == false then return false end
+    return (fp.friendlyNameOnly == false)
 end
 
 local function IsNameOnlyMode()
+    if IsInFollowerDungeon() then return false end
     local fp = FP()
-    return not fp or (fp.friendlyNameOnly ~= false)
+    if not fp then return false end
+    if fp.showFriendlyPlayers == false then return false end
+    return (fp.friendlyNameOnly ~= false)
 end
 
 local function IsFriendlyNPCEnabled()
@@ -77,6 +94,17 @@ end
 
 local function ApplyFriendlyFontOverride()
     SaveOriginalFonts()
+    -- Restore to known-good originals first so we read the correct height
+    -- even if Blizzard reset the font objects after a CVar change.
+    if fontOverrideApplied then
+        if origNamePlateFont and SystemFont_NamePlate and SystemFont_NamePlate.SetFont then
+            SystemFont_NamePlate:SetFont(origNamePlateFont.file, origNamePlateFont.height, origNamePlateFont.flags or "")
+        end
+        if origNamePlateOutlined and SystemFont_NamePlate_Outlined and SystemFont_NamePlate_Outlined.SetFont then
+            SystemFont_NamePlate_Outlined:SetFont(origNamePlateOutlined.file, origNamePlateOutlined.height, origNamePlateOutlined.flags or "OUTLINE")
+        end
+        fontOverrideApplied = false
+    end
     local font = GetFont()
     if SystemFont_NamePlate and SystemFont_NamePlate.SetFont then
         local _, h, flags = SystemFont_NamePlate:GetFont()
@@ -884,6 +912,27 @@ function ns.UpdateFriendlyNameplateSystem()
     local shouldEnable = IsFriendlyEnabled()       -- health-bar mode
     local nameOnly     = IsNameOnlyMode()           -- name-only mode
 
+    -- In follower dungeons, force-hide all friendly nameplates via CVars
+    if IsInFollowerDungeon() then
+        if SetCVar then
+            pcall(SetCVar, "nameplateShowFriendlyPlayers", 0)
+            pcall(SetCVar, "nameplateShowFriends", 0)
+            pcall(SetCVar, "nameplateShowFriendlyNPCs", 0)
+            pcall(SetCVar, "nameplateShowFriendlyNpcs", 0)
+        end
+    else
+        -- Restore user's preferred friendly CVar state
+        local fp = FP()
+        if fp and SetCVar then
+            local showPlayers = (fp.showFriendlyPlayers ~= false)
+            local showNPCs = (fp.showFriendlyNPCs == true)
+            pcall(SetCVar, "nameplateShowFriendlyPlayers", showPlayers and 1 or 0)
+            pcall(SetCVar, "nameplateShowFriends", showPlayers and 1 or 0)
+            pcall(SetCVar, "nameplateShowFriendlyNPCs", showNPCs and 1 or 0)
+            pcall(SetCVar, "nameplateShowFriendlyNpcs", showNPCs and 1 or 0)
+        end
+    end
+
     if shouldEnable and not friendlyEnabled then
         -- Switching TO health-bar mode
         RestoreFriendlyFontOverride()               -- undo any font override
@@ -986,6 +1035,9 @@ initFrame:SetScript("OnEvent", function(self, event)
         self:UnregisterEvent("PLAYER_LOGIN")
         ns.UpdateFriendlyNameplateSystem()
     elseif event == "PLAYER_ENTERING_WORLD" then
+        -- Re-evaluate the friendly system on every zone transition so
+        -- follower dungeons (and similar) correctly disable/enable it.
+        ns.UpdateFriendlyNameplateSystem()
         -- Sweep every zone transition / reload to pick up any plates that
         -- were missed during the initial enable or that appeared between
         -- PLAYER_LOGIN and the world being fully rendered.

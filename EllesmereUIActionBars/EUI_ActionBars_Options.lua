@@ -547,6 +547,14 @@ initFrame:SetScript("OnEvent", function(self)
             local btnW  = self._baseBtnW
             local btnH  = self._baseBtnH
 
+            -- Override with user-set button size from DB
+            if settings.buttonWidth and settings.buttonWidth > 0 then
+                btnW = settings.buttonWidth
+            end
+            if settings.buttonHeight and settings.buttonHeight > 0 then
+                btnH = settings.buttonHeight
+            end
+
             -- How many buttons are visible (from our DB settings)
             local numVisible = settings.overrideNumIcons or settings.numIcons or info.count
             if numVisible < 1 then numVisible = info.count end
@@ -999,7 +1007,9 @@ initFrame:SetScript("OnEvent", function(self)
             local wasMO = s.mouseoverEnabled
             s.mouseoverEnabled  = (v == "mouseover")
             if v == "mouseover" then
-                s._savedBarAlpha = s.mouseoverAlpha or 1
+                if not wasMO then
+                    s._savedBarAlpha = s.mouseoverAlpha or 1
+                end
                 s.mouseoverAlpha = 0
             elseif wasMO and s._savedBarAlpha then
                 s.mouseoverAlpha = s._savedBarAlpha
@@ -1070,6 +1080,8 @@ initFrame:SetScript("OnEvent", function(self)
         BuildVisRow("MicroBar", "MICRO MENU")
         _, h = W:Spacer(parent, y, 12);  y = y - h
         BuildVisRow("BagBar", "BAG BAR")
+        _, h = W:Spacer(parent, y, 12);  y = y - h
+        BuildVisRow("QueueStatus", "QUEUE STATUS EYECON")
 
         return math.abs(y)
     end
@@ -1093,7 +1105,9 @@ initFrame:SetScript("OnEvent", function(self)
             local wasMO = s.mouseoverEnabled
             s.mouseoverEnabled  = (v == "mouseover")
             if v == "mouseover" then
-                s._savedBarAlpha = s.mouseoverAlpha or 1
+                if not wasMO then
+                    s._savedBarAlpha = s.mouseoverAlpha or 1
+                end
                 s.mouseoverAlpha = 0
             elseif wasMO and s._savedBarAlpha then
                 s.mouseoverAlpha = s._savedBarAlpha
@@ -1350,7 +1364,9 @@ initFrame:SetScript("OnEvent", function(self)
                 local wasMO = s.mouseoverEnabled
                 s.mouseoverEnabled = (v == "mouseover")
                 if v == "mouseover" then
-                    s._savedBarAlpha = s.mouseoverAlpha or 1
+                    if not wasMO then
+                        s._savedBarAlpha = s.mouseoverAlpha or 1
+                    end
                     s.mouseoverAlpha = 0
                 elseif wasMO and s._savedBarAlpha then
                     s.mouseoverAlpha = s._savedBarAlpha
@@ -1398,6 +1414,63 @@ initFrame:SetScript("OnEvent", function(self)
                 rightRgn._control = cbDD
                 rightRgn._lastInline = nil
                 EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
+            end
+            -- Sync icon: Visibility (left region)
+            do
+                local rgn = visRow1._leftRegion
+                EllesmereUI.BuildSyncIcon({
+                    region  = rgn,
+                    tooltip = "Apply Visibility to all Bars",
+                    onClick = function()
+                        local src = SB()
+                        local v = src.barVisibility or "always"
+                        for _, key in ipairs(GROUP_BAR_ORDER) do
+                            local dst = EAB.db.profile.bars[key]
+                            dst.barVisibility    = v
+                            dst.alwaysHidden     = src.alwaysHidden
+                            dst.mouseoverEnabled = src.mouseoverEnabled
+                            dst.mouseoverAlpha   = src.mouseoverAlpha
+                            dst._savedBarAlpha   = src._savedBarAlpha
+                            dst.combatHideEnabled = src.combatHideEnabled
+                            dst.combatShowEnabled = src.combatShowEnabled
+                        end
+                        EAB:ApplyAlwaysHidden()
+                        EAB:RefreshMouseover()
+                        EAB:ApplyCombatVisibility()
+                        EllesmereUI:RefreshPage()
+                    end,
+                    isSynced = function()
+                        local v = SB().barVisibility or "always"
+                        for _, key in ipairs(GROUP_BAR_ORDER) do
+                            if (EAB.db.profile.bars[key].barVisibility or "always") ~= v then return false end
+                        end
+                        return true
+                    end,
+                    flashTargets = function() return { rgn } end,
+                    multiApply = {
+                        elementKeys   = GROUP_BAR_ORDER,
+                        elementLabels = SHORT_LABELS,
+                        getCurrentKey = function() return SelectedKey() end,
+                        onApply       = function(checkedKeys)
+                            local src = SB()
+                            local v = src.barVisibility or "always"
+                            for _, key in ipairs(checkedKeys) do
+                                local dst = EAB.db.profile.bars[key]
+                                dst.barVisibility    = v
+                                dst.alwaysHidden     = src.alwaysHidden
+                                dst.mouseoverEnabled = src.mouseoverEnabled
+                                dst.mouseoverAlpha   = src.mouseoverAlpha
+                                dst._savedBarAlpha   = src._savedBarAlpha
+                                dst.combatHideEnabled = src.combatHideEnabled
+                                dst.combatShowEnabled = src.combatShowEnabled
+                            end
+                            EAB:ApplyAlwaysHidden()
+                            EAB:RefreshMouseover()
+                            EAB:ApplyCombatVisibility()
+                            EllesmereUI:RefreshPage()
+                        end,
+                    },
+                })
             end
         end
 
@@ -1717,8 +1790,21 @@ initFrame:SetScript("OnEvent", function(self)
                 MakeCogBtn(rightRgn, growCogShow)
             end
 
-            -- Row 3: Vertical Orientation | (empty)
+            -- Row 3: Vertical Orientation | Show Paging Arrows (MainBar only)
             do
+                local rightWidget
+                if SelectedKey() == "MainBar" then
+                    rightWidget = { type="toggle", text="Show Paging Arrows",
+                      getValue=function() return SGet("showPagingArrows") or false end,
+                      setValue=function(v)
+                          SSet("showPagingArrows", v, function(k)
+                              if ns.LayoutPagingFrame then ns.LayoutPagingFrame() end
+                          end)
+                      end,
+                      tooltip="Show page up/down arrows next to Action Bar 1 for cycling through action bar pages 1-6." }
+                else
+                    rightWidget = { type="label", text="" }
+                end
                 local orientRow
                 orientRow, h = W:DualRow(parent, y,
                     { type="toggle", text="Vertical Orientation",
@@ -1736,7 +1822,7 @@ initFrame:SetScript("OnEvent", function(self)
                           EllesmereUI:RefreshPage()
                       end,
                       tooltip="Toggle between horizontal and vertical bar layout." },
-                    { type="label", text="" });  y = y - h
+                    rightWidget);  y = y - h
                 -- Sync icon: Orientation (left)
                 do
                     local rgn = orientRow._leftRegion
@@ -1775,6 +1861,62 @@ initFrame:SetScript("OnEvent", function(self)
                             end,
                         },
                     })
+                end
+
+                -- Inline cog: Paging Arrows settings (right region, MainBar only)
+                if SelectedKey() == "MainBar" then
+                    local rRgn = orientRow._rightRegion
+                    local pagingOff = function() return not (SGet("showPagingArrows") or false) end
+
+                    local _, pagingCogShow = EllesmereUI.BuildCogPopup({
+                        title = "Paging Arrow Settings",
+                        rows = {
+                            { type="toggle", label="Show Arrows on Right",
+                              get=function() return SGet("pagingArrowsRight") or false end,
+                              set=function(v)
+                                  SSet("pagingArrowsRight", v, function()
+                                      if ns.LayoutPagingFrame then ns.LayoutPagingFrame() end
+                                  end)
+                              end },
+                        },
+                    })
+                    local pagingCogBtn = CreateFrame("Button", nil, rRgn)
+                    pagingCogBtn:SetSize(26, 26)
+                    pagingCogBtn:SetPoint("RIGHT", rRgn._lastInline or rRgn._control, "LEFT", -9, 0)
+                    rRgn._lastInline = pagingCogBtn
+                    pagingCogBtn:SetFrameLevel(rRgn:GetFrameLevel() + 5)
+                    pagingCogBtn:SetAlpha(pagingOff() and 0.15 or 0.4)
+                    local pagingCogTex = pagingCogBtn:CreateTexture(nil, "OVERLAY")
+                    pagingCogTex:SetAllPoints()
+                    pagingCogTex:SetTexture(EllesmereUI.COGS_ICON)
+                    pagingCogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
+                    pagingCogBtn:SetScript("OnLeave", function(self)
+                        self:SetAlpha(pagingOff() and 0.15 or 0.4)
+                    end)
+                    pagingCogBtn:SetScript("OnClick", function(self) pagingCogShow(self) end)
+
+                    local pagingCogBlock = CreateFrame("Frame", nil, pagingCogBtn)
+                    pagingCogBlock:SetAllPoints()
+                    pagingCogBlock:SetFrameLevel(pagingCogBtn:GetFrameLevel() + 10)
+                    pagingCogBlock:EnableMouse(true)
+                    pagingCogBlock:SetScript("OnEnter", function()
+                        EllesmereUI.ShowWidgetTooltip(pagingCogBtn, EllesmereUI.DisabledTooltip("Show Paging Arrows"))
+                    end)
+                    pagingCogBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
+
+                    EllesmereUI.RegisterWidgetRefresh(function()
+                        local off = pagingOff()
+                        if off then
+                            pagingCogBtn:SetAlpha(0.15)
+                            pagingCogBlock:Show()
+                        else
+                            pagingCogBtn:SetAlpha(0.4)
+                            pagingCogBlock:Hide()
+                        end
+                    end)
+                    local pagingCogInitOff = pagingOff()
+                    pagingCogBtn:SetAlpha(pagingCogInitOff and 0.15 or 0.4)
+                    if pagingCogInitOff then pagingCogBlock:Show() else pagingCogBlock:Hide() end
                 end
             end
 
@@ -2416,10 +2558,10 @@ initFrame:SetScript("OnEvent", function(self)
                   end },
                 { type="toggle", text="Disable Tooltips",
                   getValue=function()
-                      return EAB.db and EAB.db.profile.disableTooltips or false
+                      return SGet("disableTooltips") or false
                   end,
                   setValue=function(v)
-                      if EAB.db then EAB.db.profile.disableTooltips = v end
+                      SSet("disableTooltips", v)
                   end });  y = y - h
             -- Sync icon: Out of Range Coloring (left region)
             do
@@ -2502,6 +2644,42 @@ initFrame:SetScript("OnEvent", function(self)
                 rangeBlock:SetShown(RangeDisabled())
             end
 
+            -- Sync icon: Disable Tooltips (right region)
+            do
+                local rgn = rangeRow._rightRegion
+                EllesmereUI.BuildSyncIcon({
+                    region  = rgn,
+                    tooltip = "Apply Disable Tooltips to all Bars",
+                    onClick = function()
+                        local v = SB().disableTooltips or false
+                        for _, key in ipairs(GROUP_BAR_ORDER) do
+                            EAB.db.profile.bars[key].disableTooltips = v
+                        end
+                        EllesmereUI:RefreshPage()
+                    end,
+                    isSynced = function()
+                        local v = SB().disableTooltips or false
+                        for _, key in ipairs(GROUP_BAR_ORDER) do
+                            if (EAB.db.profile.bars[key].disableTooltips or false) ~= v then return false end
+                        end
+                        return true
+                    end,
+                    flashTargets = function() return { rgn } end,
+                    multiApply = {
+                        elementKeys   = GROUP_BAR_ORDER,
+                        elementLabels = SHORT_LABELS,
+                        getCurrentKey = function() return SelectedKey() end,
+                        onApply       = function(checkedKeys)
+                            local v = SB().disableTooltips or false
+                            for _, key in ipairs(checkedKeys) do
+                                EAB.db.profile.bars[key].disableTooltips = v
+                            end
+                            EllesmereUI:RefreshPage()
+                        end,
+                    },
+                })
+            end
+
             _, h = W:Spacer(parent, y, 20);  y = y - h
 
             -------------------------------------------------------------------
@@ -2509,7 +2687,7 @@ initFrame:SetScript("OnEvent", function(self)
             -------------------------------------------------------------------
             textSectionHeader, h = W:SectionHeader(parent, SECTION_TEXT, y);  y = y - h
 
-            -- Row 1: Hide Keybind Text (left) | Keybind Text colorpicker (right)
+            -- Row 1: Hide Keybind Text (left) | Keybind Text Size slider + inline swatch (right)
             row, h = W:DualRow(parent, y,
                 { type="toggle", text="Hide Keybind Text",
                   getValue=function()
@@ -2519,17 +2697,12 @@ initFrame:SetScript("OnEvent", function(self)
                       SSet("hideKeybind", v, function(k) EAB:ApplyFontsForBar(k) end)
                       SUpdatePreview()
                   end },
-                { type="colorpicker", text="Keybind Text",
-                  getValue=function()
-                      local c = SGet("keybindFontColor")
-                      if not c then return 1, 1, 1, 1 end
-                      return c.r, c.g, c.b, 1
-                  end,
-                  setValue=function(r, g, b)
-                      SSetColor("keybindFontColor", r, g, b, nil, function(k) EAB:ApplyFontsForBar(k) end)
+                { type="slider", text="Keybind Text Size", min=6, max=24, step=1, trackWidth=120,
+                  getValue=function() return SVal("keybindFontSize", 12) end,
+                  setValue=function(v)
+                      SSet("keybindFontSize", v, function(k) EAB:ApplyFontsForBar(k) end)
                       SUpdatePreview()
-                  end,
-                  hasAlpha=false });  y = y - h
+                  end });  y = y - h
             keybindRow = row
             -- Sync icon: Hide Keybind Text (left region)
             do
@@ -2592,8 +2765,18 @@ initFrame:SetScript("OnEvent", function(self)
                     isSynced = function()
                         local s = SB()
                         local sz = s.keybindFontSize or 12
+                        local c = s.keybindFontColor
+                        local ox = s.keybindOffsetX or 0
+                        local oy = s.keybindOffsetY or 0
                         for _, key in ipairs(GROUP_BAR_ORDER) do
-                            if (EAB.db.profile.bars[key].keybindFontSize or 12) ~= sz then return false end
+                            local b = EAB.db.profile.bars[key]
+                            if (b.keybindFontSize or 12) ~= sz then return false end
+                            if (b.keybindOffsetX or 0) ~= ox then return false end
+                            if (b.keybindOffsetY or 0) ~= oy then return false end
+                            if c then
+                                local bc = b.keybindFontColor
+                                if not bc or bc.r ~= c.r or bc.g ~= c.g or bc.b ~= c.b then return false end
+                            end
                         end
                         return true
                     end,
@@ -2621,19 +2804,30 @@ initFrame:SetScript("OnEvent", function(self)
                 })
             end
 
-            -- Inline cog on Keybind Text (right) for Size + X/Y offsets
+            -- Inline color swatch + directions cog for Keybind Text (right region)
             do
-                local rightRgn = keybindRow._rightRegion
-                local _, kbSizeCogShowRaw = EllesmereUI.BuildCogPopup({
-                    title = "Keybind Text Settings",
+                local rgn = keybindRow._rightRegion
+                local ctrl = rgn._control
+                local kbSwatch, kbUpdateSwatch = EllesmereUI.BuildColorSwatch(
+                    rgn, keybindRow:GetFrameLevel() + 3,
+                    function()
+                        local c = SGet("keybindFontColor")
+                        if not c then return 1, 1, 1 end
+                        return c.r, c.g, c.b
+                    end,
+                    function(r, g, b)
+                        SSetColor("keybindFontColor", r, g, b, nil, function(k) EAB:ApplyFontsForBar(k) end)
+                        SUpdatePreview()
+                    end,
+                    false, 20)
+                PP.Point(kbSwatch, "RIGHT", ctrl, "LEFT", -12, 0)
+                rgn._lastInline = kbSwatch
+                EllesmereUI.RegisterWidgetRefresh(function() kbUpdateSwatch() end)
+
+                local _, kbCogShowRaw = EllesmereUI.BuildCogPopup({
+                    title = "Keybind Text Offsets",
                     rows = {
-                        { type="slider", label="Size", min=6, max=24, step=1,
-                          get=function() return SVal("keybindFontSize", 12) end,
-                          set=function(v)
-                              SSet("keybindFontSize", v, function(k) EAB:ApplyFontsForBar(k) end)
-                              SUpdatePreview()
-                          end },
-                        { type="slider", label="X Offset", min=-20, max=20, step=1,
+                        { type="slider", label="X Offset", min=-50, max=20, step=1,
                           get=function() return SVal("keybindOffsetX", 0) end,
                           set=function(v)
                               SSet("keybindOffsetX", v, function(k) EAB:ApplyFontsForBar(k) end)
@@ -2647,34 +2841,23 @@ initFrame:SetScript("OnEvent", function(self)
                           end },
                     },
                 })
-                local kbSizeCogShow = kbSizeCogShowRaw
-                MakeCogBtn(rightRgn, kbSizeCogShow, nil, EllesmereUI.RESIZE_ICON)
+                MakeCogBtn(rgn, kbCogShowRaw, kbSwatch, EllesmereUI.DIRECTIONS_ICON)
             end
 
-            -- Row 2: Charges Text colorpicker (left) | Cooldown Text colorpicker (right)
+            -- Row 2: Charges Text Size slider + inline swatch (left) | Cooldown Text Size slider + inline swatch (right)
             chargesRow, h = W:DualRow(parent, y,
-                { type="colorpicker", text="Charges Text",
-                  getValue=function()
-                      local c = SGet("countFontColor")
-                      if not c then return 1, 1, 1, 1 end
-                      return c.r, c.g, c.b, 1
-                  end,
-                  setValue=function(r, g, b)
-                      SSetColor("countFontColor", r, g, b, nil, function(k) EAB:ApplyFontsForBar(k) end)
+                { type="slider", text="Charges Text Size", min=6, max=24, step=1, trackWidth=120,
+                  getValue=function() return SVal("countFontSize", 12) end,
+                  setValue=function(v)
+                      SSet("countFontSize", v, function(k) EAB:ApplyFontsForBar(k) end)
                       SUpdatePreview()
-                  end,
-                  hasAlpha=false },
-                { type="colorpicker", text="Cooldown Text",
-                  getValue=function()
-                      local c = SGet("cooldownTextColor")
-                      if not c then return 1, 1, 1, 1 end
-                      return c.r, c.g, c.b, 1
-                  end,
-                  setValue=function(r, g, b)
-                      SSetColor("cooldownTextColor", r, g, b, nil, function(k) EAB:ApplyCooldownFontsForBar(k) end)
+                  end },
+                { type="slider", text="Cooldown Text Size", min=6, max=24, step=1, trackWidth=120,
+                  getValue=function() return SVal("cooldownFontSize", 12) end,
+                  setValue=function(v)
+                      SSet("cooldownFontSize", v, function(k) EAB:ApplyCooldownFontsForBar(k) end)
                       SUpdatePreview()
-                  end,
-                  hasAlpha=false });  y = y - h
+                  end });  y = y - h
             -- Sync icon: Charges Text (left region)
             do
                 local rgn = chargesRow._leftRegion
@@ -2699,8 +2882,18 @@ initFrame:SetScript("OnEvent", function(self)
                     isSynced = function()
                         local s = SB()
                         local sz = s.countFontSize or 12
+                        local c = s.countFontColor
+                        local ox = s.countOffsetX or 0
+                        local oy = s.countOffsetY or 0
                         for _, key in ipairs(GROUP_BAR_ORDER) do
-                            if (EAB.db.profile.bars[key].countFontSize or 12) ~= sz then return false end
+                            local b = EAB.db.profile.bars[key]
+                            if (b.countFontSize or 12) ~= sz then return false end
+                            if (b.countOffsetX or 0) ~= ox then return false end
+                            if (b.countOffsetY or 0) ~= oy then return false end
+                            if c then
+                                local bc = b.countFontColor
+                                if not bc or bc.r ~= c.r or bc.g ~= c.g or bc.b ~= c.b then return false end
+                            end
                         end
                         return true
                     end,
@@ -2728,18 +2921,29 @@ initFrame:SetScript("OnEvent", function(self)
                 })
             end
 
-            -- Inline cog on Charges Text (left) for Size + X/Y offsets
+            -- Inline color swatch + directions cog for Charges Text (left region)
             do
-                local leftRgn = chargesRow._leftRegion
-                local _, ctSizeCogShowRaw = EllesmereUI.BuildCogPopup({
-                    title = "Charges Text Settings",
+                local rgn = chargesRow._leftRegion
+                local ctrl = rgn._control
+                local ctSwatch, ctUpdateSwatch = EllesmereUI.BuildColorSwatch(
+                    rgn, chargesRow:GetFrameLevel() + 3,
+                    function()
+                        local c = SGet("countFontColor")
+                        if not c then return 1, 1, 1 end
+                        return c.r, c.g, c.b
+                    end,
+                    function(r, g, b)
+                        SSetColor("countFontColor", r, g, b, nil, function(k) EAB:ApplyFontsForBar(k) end)
+                        SUpdatePreview()
+                    end,
+                    false, 20)
+                PP.Point(ctSwatch, "RIGHT", ctrl, "LEFT", -12, 0)
+                rgn._lastInline = ctSwatch
+                EllesmereUI.RegisterWidgetRefresh(function() ctUpdateSwatch() end)
+
+                local _, ctCogShowRaw = EllesmereUI.BuildCogPopup({
+                    title = "Charges Text Offsets",
                     rows = {
-                        { type="slider", label="Size", min=6, max=24, step=1,
-                          get=function() return SVal("countFontSize", 12) end,
-                          set=function(v)
-                              SSet("countFontSize", v, function(k) EAB:ApplyFontsForBar(k) end)
-                              SUpdatePreview()
-                          end },
                         { type="slider", label="X Offset", min=-20, max=20, step=1,
                           get=function() return SVal("countOffsetX", 0) end,
                           set=function(v)
@@ -2754,8 +2958,7 @@ initFrame:SetScript("OnEvent", function(self)
                           end },
                     },
                 })
-                local ctSizeCogShow = ctSizeCogShowRaw
-                MakeCogBtn(leftRgn, ctSizeCogShow, nil, EllesmereUI.RESIZE_ICON)
+                MakeCogBtn(rgn, ctCogShowRaw, ctSwatch, EllesmereUI.DIRECTIONS_ICON)
             end
 
             -- Sync icon: Cooldown Text (right region of row 2)
@@ -2782,8 +2985,18 @@ initFrame:SetScript("OnEvent", function(self)
                     isSynced = function()
                         local s = SB()
                         local sz = s.cooldownFontSize or 12
+                        local c = s.cooldownTextColor
+                        local ox = s.cooldownTextXOffset or 0
+                        local oy = s.cooldownTextYOffset or 0
                         for _, key in ipairs(GROUP_BAR_ORDER) do
-                            if (EAB.db.profile.bars[key].cooldownFontSize or 12) ~= sz then return false end
+                            local b = EAB.db.profile.bars[key]
+                            if (b.cooldownFontSize or 12) ~= sz then return false end
+                            if (b.cooldownTextXOffset or 0) ~= ox then return false end
+                            if (b.cooldownTextYOffset or 0) ~= oy then return false end
+                            if c then
+                                local bc = b.cooldownTextColor
+                                if not bc or bc.r ~= c.r or bc.g ~= c.g or bc.b ~= c.b then return false end
+                            end
                         end
                         return true
                     end,
@@ -2811,18 +3024,29 @@ initFrame:SetScript("OnEvent", function(self)
                 })
             end
 
-            -- Inline cog on Cooldown Text (right region of row 2) for Size + X/Y offsets
+            -- Inline color swatch + directions cog for Cooldown Text (right region)
             do
-                local rightRgn = chargesRow._rightRegion
-                local _, cdSizeCogShowRaw = EllesmereUI.BuildCogPopup({
-                    title = "Cooldown Text Settings",
+                local rgn = chargesRow._rightRegion
+                local ctrl = rgn._control
+                local cdSwatch, cdUpdateSwatch = EllesmereUI.BuildColorSwatch(
+                    rgn, chargesRow:GetFrameLevel() + 3,
+                    function()
+                        local c = SGet("cooldownTextColor")
+                        if not c then return 1, 1, 1 end
+                        return c.r, c.g, c.b
+                    end,
+                    function(r, g, b)
+                        SSetColor("cooldownTextColor", r, g, b, nil, function(k) EAB:ApplyCooldownFontsForBar(k) end)
+                        SUpdatePreview()
+                    end,
+                    false, 20)
+                PP.Point(cdSwatch, "RIGHT", ctrl, "LEFT", -12, 0)
+                rgn._lastInline = cdSwatch
+                EllesmereUI.RegisterWidgetRefresh(function() cdUpdateSwatch() end)
+
+                local _, cdCogShowRaw = EllesmereUI.BuildCogPopup({
+                    title = "Cooldown Text Offsets",
                     rows = {
-                        { type="slider", label="Size", min=6, max=24, step=1,
-                          get=function() return SVal("cooldownFontSize", 12) end,
-                          set=function(v)
-                              SSet("cooldownFontSize", v, function(k) EAB:ApplyCooldownFontsForBar(k) end)
-                              SUpdatePreview()
-                          end },
                         { type="slider", label="X Offset", min=-20, max=20, step=1,
                           get=function() return SVal("cooldownTextXOffset", 0) end,
                           set=function(v)
@@ -2837,8 +3061,7 @@ initFrame:SetScript("OnEvent", function(self)
                           end },
                     },
                 })
-                local cdSizeCogShow = cdSizeCogShowRaw
-                MakeCogBtn(rightRgn, cdSizeCogShow, nil, EllesmereUI.RESIZE_ICON)
+                MakeCogBtn(rgn, cdCogShowRaw, cdSwatch, EllesmereUI.DIRECTIONS_ICON)
             end
 
             _, h = W:Spacer(parent, y, 20);  y = y - h

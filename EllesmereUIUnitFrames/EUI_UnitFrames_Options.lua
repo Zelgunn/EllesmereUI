@@ -1121,10 +1121,9 @@ initFrame:SetScript("OnEvent", function(self)
             local customPBg = settings.customPowerBgColor
             local pfR, pfG, pfB
             if isPowerColored then
-                local pType = UnitPowerType("player")
-                local info = PowerBarColor[pType]
-                if info then pfR, pfG, pfB = info.r, info.g, info.b
-                else pfR, pfG, pfB = 0, 0, 1 end
+                local _, pToken = UnitPowerType("player")
+                local info = EllesmereUI.GetPowerColor(pToken or "MANA")
+                pfR, pfG, pfB = info.r, info.g, info.b
             elseif customPFill then
                 pfR, pfG, pfB = customPFill.r, customPFill.g, customPFill.b
             else
@@ -1178,10 +1177,9 @@ initFrame:SetScript("OnEvent", function(self)
                     local txR, txG, txB
                     local isPwrC = settings.powerPercentPowerColor ~= false
                     if isPwrC then
-                        local pType = UnitPowerType("player")
-                        local info = PowerBarColor[pType]
-                        if info then txR, txG, txB = info.r, info.g, info.b
-                        else txR, txG, txB = 0, 0, 1 end
+                        local _, pToken = UnitPowerType("player")
+                        local info = EllesmereUI.GetPowerColor(pToken or "MANA")
+                        txR, txG, txB = info.r, info.g, info.b
                     else
                         local cpf = settings.customPowerFillColor
                         if cpf then txR, txG, txB = cpf.r, cpf.g, cpf.b
@@ -1558,7 +1556,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- Disabled overlay -- must render above ALL other child frames
         -- Parent to UIParent so strata isn't clamped by pf's strata
         local disabledOverlay = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-        disabledOverlay:SetFrameStrata("TOOLTIP")
+        disabledOverlay:SetFrameStrata("FULLSCREEN_DIALOG")
         disabledOverlay:SetBackdrop(SOLID_BACKDROP)
         disabledOverlay:SetBackdropColor(0, 0, 0, 0.6)
         disabledOverlay:Hide()
@@ -1798,10 +1796,9 @@ initFrame:SetScript("OnEvent", function(self)
                         local pvFR, pvFG, pvFB
                         local isPwrC2 = s.powerPercentPowerColor ~= false
                         if isPwrC2 then
-                            local pType = UnitPowerType("player")
-                            local info = PowerBarColor[pType]
-                            if info then pvFR, pvFG, pvFB = info.r, info.g, info.b
-                            else pvFR, pvFG, pvFB = 0, 0, 1 end
+                            local _, pToken = UnitPowerType("player")
+                            local info = EllesmereUI.GetPowerColor(pToken or "MANA")
+                            pvFR, pvFG, pvFB = info.r, info.g, info.b
                         else
                             local cpf2 = s.customPowerFillColor
                             if cpf2 then pvFR, pvFG, pvFB = cpf2.r, cpf2.g, cpf2.b
@@ -1875,10 +1872,9 @@ initFrame:SetScript("OnEvent", function(self)
                 local pvPfR, pvPfG, pvPfB
                 local pvUsePowerColor = s.powerPercentPowerColor ~= false
                 if pvUsePowerColor then
-                    local pType = UnitPowerType("player")
-                    local info = PowerBarColor[pType]
-                    if info then pvPfR, pvPfG, pvPfB = info.r, info.g, info.b
-                    else pvPfR, pvPfG, pvPfB = 0, 0, 1 end
+                    local _, pToken = UnitPowerType("player")
+                    local info = EllesmereUI.GetPowerColor(pToken or "MANA")
+                    pvPfR, pvPfG, pvPfB = info.r, info.g, info.b
                 else
                     local cpFill = s.customPowerFillColor
                     if cpFill then pvPfR, pvPfG, pvPfB = cpFill.r, cpFill.g, cpFill.b
@@ -2669,7 +2665,6 @@ initFrame:SetScript("OnEvent", function(self)
         castDurationSize     = { player=true, target=true, focus=true },
         castDurationColor    = { player=true, target=true, focus=true },
         castbarFillColor     = { player=true, target=true, focus=true },
-        castbarClassColored  = { player=true },
         showClassPowerBar    = { player=true },
         lockClassPowerToFrame= { player=true },
         classPowerStyle      = { player=true },
@@ -2762,7 +2757,7 @@ initFrame:SetScript("OnEvent", function(self)
                         EllesmereUI.ShowWidgetTooltip(anchor, tip)
                     end)
                     hitFrame:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-                    hitFrame:SetPassThroughButtons("LeftButton", "RightButton")
+                    securecallfunction(hitFrame.SetPassThroughButtons, hitFrame, "LeftButton", "RightButton")
                 end
                 MakeSupportHit(region._label)
                 MakeSupportHit(region._control)
@@ -3665,6 +3660,8 @@ initFrame:SetScript("OnEvent", function(self)
                   end },
               } },
             { type="slider", text="Bar Opacity", min=10, max=100, step=1,
+              disabled=function() return db.profile.darkTheme end,
+              disabledTooltip="Bar Opacity is disabled in Dark Mode.",
               getValue=function() return SVal("healthBarOpacity", 90) end,
               setValue=function(v)
                   SSet("healthBarOpacity", v)
@@ -3763,20 +3760,20 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                   SSet("leftTextContent", v)
                   if v ~= "none" then
-                      local rv = SGet("rightTextContent")
-                      if rv == v then SSet("rightTextContent", "none") end
+                      if SGet("rightTextContent") == v then SSet("rightTextContent", "none") end
+                      if SGet("centerTextContent") == v then SSet("centerTextContent", "none") end
                   end
-                  UpdatePreview()
+                  UpdatePreview(); EllesmereUI:RefreshPage()
               end },
             { type="dropdown", text="Right Text", values=healthTextValues, order=healthTextOrder,
               getValue=function() return SVal("rightTextContent", "both") end,
               setValue=function(v)
                   SSet("rightTextContent", v)
                   if v ~= "none" then
-                      local lv = SGet("leftTextContent")
-                      if lv == v then SSet("leftTextContent", "none") end
+                      if SGet("leftTextContent") == v then SSet("leftTextContent", "none") end
+                      if SGet("centerTextContent") == v then SSet("centerTextContent", "none") end
                   end
-                  UpdatePreview()
+                  UpdatePreview(); EllesmereUI:RefreshPage()
               end });  y = y - h
         -- Sync icons: Left Text (left) and Right Text (right)
         do
@@ -4318,10 +4315,9 @@ initFrame:SetScript("OnEvent", function(self)
                 { tooltip = "Power Colored Fill",
                   hasAlpha = false,
                   getValue = function()
-                      local pType = UnitPowerType("player")
-                      local info = PowerBarColor[pType]
-                      if info then return info.r, info.g, info.b end
-                      return 0, 0, 1
+                      local _, pToken = UnitPowerType("player")
+                      local info = EllesmereUI.GetPowerColor(pToken or "MANA")
+                      return info.r, info.g, info.b
                   end,
                   setValue = function() end,
                   onClick = function()
@@ -4460,10 +4456,9 @@ initFrame:SetScript("OnEvent", function(self)
                 { tooltip = "Power Colored Text",
                   hasAlpha = false,
                   getValue = function()
-                      local pType = UnitPowerType("player")
-                      local info = PowerBarColor[pType]
-                      if info then return info.r, info.g, info.b end
-                      return 0, 0, 1
+                      local _, pToken = UnitPowerType("player")
+                      local info = EllesmereUI.GetPowerColor(pToken or "MANA")
+                      return info.r, info.g, info.b
                   end,
                   setValue = function() end,
                   onClick = function()
@@ -4547,190 +4542,6 @@ initFrame:SetScript("OnEvent", function(self)
             end
         end
 
-        -- Helper: build a checkbox dropdown summary label
-        local function CBSummaryLabel(getFn)
-            local names = {}
-            local unitLabels = { player = "Player", target = "Target", focus = "Focus" }
-            local unitOrder = { "player", "target", "focus" }
-            for _, u in ipairs(unitOrder) do
-                if getFn(u) then names[#names + 1] = unitLabels[u] end
-            end
-            if #names == 3 then return "All"
-            elseif #names == 0 then return "None"
-            else return table.concat(names, ", ") end
-        end
-
-        -- Helper: build an inline checkbox dropdown (button + flyout with checkboxes)
-        -- items = { { key, label }, ... }, getFn(key)->bool, setFn(key,bool), onChanged()
-        local function BuildCBDropdown(parentFrame, ddW, fLevel, items, getFn, setFn, onChanged)
-            local ddBtn = CreateFrame("Button", nil, parentFrame)
-            PP.Size(ddBtn, ddW, 30)
-            ddBtn:SetFrameLevel(fLevel)
-            local ddBg = ddBtn:CreateTexture(nil, "BACKGROUND")
-            ddBg:SetAllPoints()
-            ddBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_A)
-            local ddBrd = EllesmereUI.MakeBorder(ddBtn, 1, 1, 1, EllesmereUI.DD_BRD_A, PP)
-            local ddLbl = ddBtn:CreateFontString(nil, "OVERLAY")
-            local fontPath = EllesmereUI.GetFontPath and EllesmereUI.GetFontPath("options") or "Fonts\\FRIZQT__.TTF"
-            ddLbl:SetFont(fontPath, 13, "")
-            ddLbl:SetTextColor(1, 1, 1, 0.7)
-            ddLbl:SetJustifyH("LEFT")
-            ddLbl:SetWordWrap(false)
-            ddLbl:SetMaxLines(1)
-            ddLbl:SetPoint("LEFT", ddBtn, "LEFT", 12, 0)
-            ddLbl:SetPoint("RIGHT", ddBtn, "RIGHT", -24, 0)
-            local arrow = EllesmereUI.MakeDropdownArrow(ddBtn, 12, PP)
-
-            local menu
-            local function UpdateLabel()
-                ddLbl:SetText(CBSummaryLabel(getFn))
-            end
-            UpdateLabel()
-
-            local function EnsureMenu()
-                if menu then return end
-                local ITEM_H = 28
-                local menuH = 4 + #items * ITEM_H + 4
-                menu = CreateFrame("Frame", nil, UIParent)
-                menu:SetFrameStrata("FULLSCREEN_DIALOG")
-                menu:SetFrameLevel(200)
-                menu:SetClampedToScreen(true)
-                menu:EnableMouse(true)
-                menu:SetSize(ddW, menuH)
-                menu:SetPoint("TOPLEFT", ddBtn, "BOTTOMLEFT", 0, -2)
-                menu:Hide()
-                local mBg = menu:CreateTexture(nil, "BACKGROUND")
-                mBg:SetAllPoints()
-                mBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_HA or 0.92)
-                EllesmereUI.MakeBorder(menu, 1, 1, 1, EllesmereUI.DD_BRD_A, PP)
-                local ppScale = EllesmereUI.GetPopupScale and EllesmereUI.GetPopupScale() or 1
-                menu:SetScale(ppScale)
-
-                local yOff = -4
-                for _, item in ipairs(items) do
-                    local row = CreateFrame("Button", nil, menu)
-                    row:SetHeight(ITEM_H)
-                    row:SetPoint("TOPLEFT", menu, "TOPLEFT", 1, yOff)
-                    row:SetPoint("TOPRIGHT", menu, "TOPRIGHT", -1, yOff)
-                    row:SetFrameLevel(menu:GetFrameLevel() + 2)
-                    local box = CreateFrame("Frame", nil, row)
-                    box:SetSize(16, 16)
-                    box:SetPoint("LEFT", row, "LEFT", 10, 0)
-                    local boxBg = box:CreateTexture(nil, "BACKGROUND")
-                    boxBg:SetAllPoints()
-                    boxBg:SetColorTexture(0.12, 0.12, 0.14, 1)
-                    local boxBrd = EllesmereUI.MakeBorder(box, 0.4, 0.4, 0.4, 0.6, PP)
-                    local chk = box:CreateTexture(nil, "ARTWORK")
-                    PP.SetInside(chk, box, 2, 2)
-                    chk:SetColorTexture(EllesmereUI.ELLESMERE_GREEN.r, EllesmereUI.ELLESMERE_GREEN.g, EllesmereUI.ELLESMERE_GREEN.b, 1)
-                    local lbl = row:CreateFontString(nil, "OVERLAY")
-                    lbl:SetFont(fontPath, 13, "")
-                    lbl:SetTextColor(0.75, 0.75, 0.75, 1)
-                    lbl:SetPoint("LEFT", box, "RIGHT", 8, 0)
-                    lbl:SetText(item.label)
-                    local hl = row:CreateTexture(nil, "ARTWORK")
-                    hl:SetAllPoints()
-                    hl:SetColorTexture(1, 1, 1, 0)
-                    local function UpdateCheck()
-                        if getFn(item.key) then
-                            chk:Show()
-                            boxBrd:SetColor(EllesmereUI.ELLESMERE_GREEN.r, EllesmereUI.ELLESMERE_GREEN.g, EllesmereUI.ELLESMERE_GREEN.b, 0.8)
-                        else
-                            chk:Hide()
-                            boxBrd:SetColor(0.4, 0.4, 0.4, 0.6)
-                        end
-                    end
-                    UpdateCheck()
-                    row._updateCheck = UpdateCheck
-                    row:SetScript("OnEnter", function() lbl:SetTextColor(1, 1, 1, 1); hl:SetColorTexture(1, 1, 1, 0.04) end)
-                    row:SetScript("OnLeave", function() lbl:SetTextColor(0.75, 0.75, 0.75, 1); hl:SetColorTexture(1, 1, 1, 0) end)
-                    row:SetScript("OnClick", function()
-                        setFn(item.key, not getFn(item.key))
-                        UpdateCheck(); UpdateLabel()
-                        if onChanged then onChanged() end
-                    end)
-                    yOff = yOff - ITEM_H
-                end
-                ddBtn._ddMenu = menu
-            end
-
-            ddBtn:SetScript("OnEnter", function()
-                ddLbl:SetTextColor(1, 1, 1, 1)
-                ddBrd:SetColor(1, 1, 1, EllesmereUI.DD_BRD_HA or 0.25)
-                ddBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_HA or 0.92)
-            end)
-            ddBtn:SetScript("OnLeave", function()
-                if not (menu and menu:IsShown()) then
-                    ddLbl:SetTextColor(1, 1, 1, 0.7)
-                    ddBrd:SetColor(1, 1, 1, EllesmereUI.DD_BRD_A)
-                    ddBg:SetColorTexture(EllesmereUI.DD_BG_R, EllesmereUI.DD_BG_G, EllesmereUI.DD_BG_B, EllesmereUI.DD_BG_A)
-                end
-            end)
-            -- Click-off blocker: fullscreen button that closes the menu when
-            -- clicking anywhere outside it.
-            local blocker
-            local function ShowMenu()
-                EnsureMenu()
-                if menu:IsShown() then
-                    menu:Hide()
-                    return
-                end
-                menu:Show()
-                -- Create blocker behind the menu
-                blocker = CreateFrame("Button", nil, UIParent)
-                blocker:SetFrameStrata("FULLSCREEN")
-                blocker:SetFrameLevel(199)
-                blocker:SetAllPoints(UIParent)
-                blocker:SetScript("OnClick", function() menu:Hide() end)
-                blocker:Show()
-                -- Scroll-out-of-view detection
-                local wasDown = false
-                menu:SetScript("OnUpdate", function(self)
-                    -- Close when the button scrolls out of the visible scroll area
-                    local scrollFrame = EllesmereUI._scrollFrame
-                    if scrollFrame then
-                        if ddBtn._inScrollChild == nil then
-                            local scrollChild = scrollFrame.GetScrollChild and scrollFrame:GetScrollChild()
-                            local found = false
-                            if scrollChild then
-                                local p = ddBtn:GetParent()
-                                while p do
-                                    if p == scrollChild then found = true; break end
-                                    p = p:GetParent()
-                                end
-                            end
-                            ddBtn._inScrollChild = found
-                        end
-                        if ddBtn._inScrollChild then
-                            local sfTop = scrollFrame:GetTop()
-                            local sfBot = scrollFrame:GetBottom()
-                            local btnBot = ddBtn:GetBottom()
-                            if sfTop and sfBot and btnBot then
-                                if btnBot < sfBot or btnBot > sfTop then self:Hide() end
-                            end
-                        end
-                    end
-                end)
-                menu:HookScript("OnHide", function()
-                    menu:SetScript("OnUpdate", nil)
-                    if blocker then blocker:Hide(); blocker:SetParent(nil); blocker = nil end
-                end)
-            end
-
-            ddBtn:SetScript("OnClick", function() ShowMenu() end)
-            ddBtn:HookScript("OnHide", function() if menu then menu:Hide() end end)
-
-            local function RefreshAll()
-                UpdateLabel()
-                if menu then
-                    for _, child in pairs({menu:GetChildren()}) do
-                        if child._updateCheck then child._updateCheck() end
-                    end
-                end
-            end
-            return ddBtn, RefreshAll
-        end
-
         -- Height getter/setter: player -> playerCastbarHeight, target/focus -> castbarHeight
         local function GetCastbarHeight()
             local u = selectedUnit
@@ -4746,84 +4557,18 @@ initFrame:SetScript("OnEvent", function(self)
             else UNIT_DB_MAP[selectedUnit]().castbarHeight = v end
         end
 
-        -- Row 1: Show Cast Bars (checkbox dropdown) | Height (slider)
+        -- Row 1: Show Cast Bar (toggle + fill swatch) | Height (slider)
         local sharedCastRow1
         sharedCastRow1, h = W:DualRow(parent, y,
-            { type="dropdown", text="Show Cast Bars",
-              values={ __placeholder = "..." }, order={ "__placeholder" },
-              getValue=function() return "__placeholder" end,
-              setValue=function() end },
+            { type="toggle", text="Show Cast Bar",
+              getValue=function() return GetCastbarEnabled(selectedUnit) end,
+              setValue=function(v) SetCastbarEnabled(selectedUnit, v); ReloadAndUpdate(); UpdatePreview(); EllesmereUI:RefreshPage() end },
             { type="slider", text="Height", min=1, max=40, step=1,
               getValue=GetCastbarHeight,
               setValue=function(v) SetCastbarHeight(v); ReloadAndUpdate(); UpdatePreview() end });  y = y - h
-
-        -- Replace the dummy dropdown with our checkbox dropdown
+        -- Inline fill color swatch on Show Cast Bar
         do
             local leftRgn = sharedCastRow1._leftRegion
-            if leftRgn._control then leftRgn._control:Hide() end
-
-            local castbarItems = {
-                { key = "player", label = "Player" },
-                { key = "target", label = "Target" },
-                { key = "focus",  label = "Focus" },
-            }
-            local cbDD, cbDDRefresh = BuildCBDropdown(leftRgn, 170, leftRgn:GetFrameLevel() + 2,
-                castbarItems, GetCastbarEnabled, function(k, v)
-                    SetCastbarEnabled(k, v)
-                    ReloadAndUpdate(); UpdatePreview()
-                    EllesmereUI:RefreshPage()
-                end)
-            PP.Point(cbDD, "RIGHT", leftRgn, "RIGHT", -20, 0)
-            leftRgn._control = cbDD
-            leftRgn._lastInline = nil
-            EllesmereUI.RegisterWidgetRefresh(cbDDRefresh)
-
-            -- Hide While Not Casting helpers
-            local function GetHideInactive(unitKey)
-                local v = UNIT_DB_MAP[unitKey]().castbarHideWhenInactive
-                if v == nil then return (unitKey ~= "target") end
-                return v
-            end
-            local function SetHideInactive(unitKey, val)
-                UNIT_DB_MAP[unitKey]().castbarHideWhenInactive = val
-            end
-
-            -- Cog popup: Hide Idle toggles + Show Icon + Class Colored Player
-            local _, castCogShowRaw = EllesmereUI.BuildCogPopup({
-                title = "Cast Bar Settings",
-                rows = {
-                    { type="toggle", label="Hide Idle Player Cast Bar",
-                      get=function() return GetHideInactive("player") end,
-                      set=function(v) SetHideInactive("player", v); ReloadAndUpdate(); UpdatePreview() end },
-                    { type="toggle", label="Hide Idle Target Cast Bar",
-                      get=function() return GetHideInactive("target") end,
-                      set=function(v) SetHideInactive("target", v); ReloadAndUpdate(); UpdatePreview() end },
-                    { type="toggle", label="Hide Idle Focus Cast Bar",
-                      get=function() return GetHideInactive("focus") end,
-                      set=function(v) SetHideInactive("focus", v); ReloadAndUpdate(); UpdatePreview() end },
-                    { type="toggle", label="Show Icon",
-                      get=function()
-                          if selectedUnit == "player" then return UNIT_DB_MAP.player().showPlayerCastIcon ~= false
-                          else return UNIT_DB_MAP[selectedUnit]().showCastIcon ~= false end
-                      end,
-                      set=function(v)
-                          if selectedUnit == "player" then UNIT_DB_MAP.player().showPlayerCastIcon = v
-                          else UNIT_DB_MAP[selectedUnit]().showCastIcon = v end
-                          ReloadAndUpdate(); UpdatePreview()
-                      end },
-                    { type="toggle", label="Class Colored Player",
-                      get=function() return UNIT_DB_MAP.player().castbarClassColored or false end,
-                      set=function(v)
-                          UNIT_DB_MAP.player().castbarClassColored = v
-                          ReloadAndUpdate(); UpdatePreview()
-                      end },
-                },
-            })
-            local castCogShow = castCogShowRaw
-
-            MakeCogBtn(leftRgn, castCogShow)
-
-            -- Inline fill color swatch
             local cbSw = EllesmereUI.BuildColorSwatch(leftRgn, leftRgn:GetFrameLevel() + 5,
                 function()
                     local c = SGetSupported("castbarFillColor")
@@ -4838,26 +4583,50 @@ initFrame:SetScript("OnEvent", function(self)
             cbSw:SetScript("OnEnter", function(self) EllesmereUI.ShowWidgetTooltip(self, "Fill Color") end)
             cbSw:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
             leftRgn._lastInline = cbSw
-
-            -- Blocking overlay: disabled when no cast bars are enabled
-            local cbSwBlock = CreateFrame("Frame", nil, cbSw)
-            cbSwBlock:SetAllPoints()
-            cbSwBlock:SetFrameLevel(cbSw:GetFrameLevel() + 10)
-            cbSwBlock:EnableMouse(true)
-            cbSwBlock:SetScript("OnEnter", function()
-                EllesmereUI.ShowWidgetTooltip(cbSw, EllesmereUI.DisabledTooltip("Show Cast Bars"))
-            end)
-            cbSwBlock:SetScript("OnLeave", function() EllesmereUI.HideWidgetTooltip() end)
-            local function UpdateCBSwDisabled()
-                local anyOn = false
-                for _, u in ipairs({"player", "target", "focus"}) do
-                    if GetCastbarEnabled(u) then anyOn = true; break end
-                end
-                if anyOn then cbSw:SetAlpha(1); cbSwBlock:Hide()
-                else cbSw:SetAlpha(0.3); cbSwBlock:Show() end
-            end
-            UpdateCBSwDisabled()
-            EllesmereUI.RegisterWidgetRefresh(UpdateCBSwDisabled)
+        end
+        -- Sync icon: Show Cast Bar + Fill Color (left region)
+        do
+            local rgn = sharedCastRow1._leftRegion
+            EllesmereUI.BuildSyncIcon({
+                region  = rgn,
+                tooltip = "Apply Show Cast Bar and Fill Color to all Frames",
+                onClick = function()
+                    local v = GetCastbarEnabled(selectedUnit)
+                    local c = UNIT_DB_MAP[selectedUnit]().castbarFillColor
+                    for _, key in ipairs(GROUP_UNIT_ORDER) do
+                        SetCastbarEnabled(key, v)
+                        if c then UNIT_DB_MAP[key]().castbarFillColor = { r=c.r, g=c.g, b=c.b } end
+                    end
+                    ReloadAndUpdate(); EllesmereUI:RefreshPage()
+                end,
+                isSynced = function()
+                    local v = GetCastbarEnabled(selectedUnit)
+                    local c = UNIT_DB_MAP[selectedUnit]().castbarFillColor
+                    for _, key in ipairs(GROUP_UNIT_ORDER) do
+                        if GetCastbarEnabled(key) ~= v then return false end
+                        local kc = UNIT_DB_MAP[key]().castbarFillColor
+                        if c and kc then
+                            if kc.r ~= c.r or kc.g ~= c.g or kc.b ~= c.b then return false end
+                        elseif c ~= kc then return false end
+                    end
+                    return true
+                end,
+                flashTargets = function() return { rgn } end,
+                multiApply = {
+                    elementKeys   = GROUP_UNIT_ORDER,
+                    elementLabels = SHORT_LABELS,
+                    getCurrentKey = function() return selectedUnit end,
+                    onApply       = function(checkedKeys)
+                        local v = GetCastbarEnabled(selectedUnit)
+                        local c = UNIT_DB_MAP[selectedUnit]().castbarFillColor
+                        for _, key in ipairs(checkedKeys) do
+                            SetCastbarEnabled(key, v)
+                            if c then UNIT_DB_MAP[key]().castbarFillColor = { r=c.r, g=c.g, b=c.b } end
+                        end
+                        ReloadAndUpdate(); EllesmereUI:RefreshPage()
+                    end,
+                },
+            })
         end
         -- Sync icon: Cast Bar Height (right region)
         do
@@ -4900,7 +4669,126 @@ initFrame:SetScript("OnEvent", function(self)
             })
         end
 
-        -- Row 2: Spell Name Size (with inline color swatch) | Duration Size (with inline color swatch)
+        -- Row 2: Show Icon | Hide When Idle
+        local function GetShowIcon()
+            if selectedUnit == "player" then
+                local v = UNIT_DB_MAP.player().showPlayerCastIcon
+                if v == nil then return true end
+                return v
+            else
+                local v = UNIT_DB_MAP[selectedUnit]().showCastIcon
+                if v == nil then return true end
+                return v
+            end
+        end
+        local function SetShowIcon(val)
+            if selectedUnit == "player" then
+                UNIT_DB_MAP.player().showPlayerCastIcon = val
+            else
+                UNIT_DB_MAP[selectedUnit]().showCastIcon = val
+            end
+        end
+        local function GetHideInactive()
+            local v = UNIT_DB_MAP[selectedUnit]().castbarHideWhenInactive
+            if v == nil then return true end
+            return v
+        end
+        local function SetHideInactive(val)
+            UNIT_DB_MAP[selectedUnit]().castbarHideWhenInactive = val
+        end
+
+        local castRow2
+        castRow2, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Icon",
+              getValue=GetShowIcon,
+              setValue=function(v) SetShowIcon(v); ReloadAndUpdate(); UpdatePreview() end },
+            { type="toggle", text="Hide When Idle",
+              getValue=GetHideInactive,
+              setValue=function(v) SetHideInactive(v); ReloadAndUpdate(); UpdatePreview() end });  y = y - h
+        -- Sync icon: Show Icon (left)
+        do
+            local rgn = castRow2._leftRegion
+            EllesmereUI.BuildSyncIcon({
+                region  = rgn,
+                tooltip = "Apply Show Icon to all Frames",
+                onClick = function()
+                    local v = GetShowIcon()
+                    for _, key in ipairs(GROUP_UNIT_ORDER) do
+                        if key == "player" then UNIT_DB_MAP[key]().showPlayerCastIcon = v
+                        else UNIT_DB_MAP[key]().showCastIcon = v end
+                    end
+                    ReloadAndUpdate(); EllesmereUI:RefreshPage()
+                end,
+                isSynced = function()
+                    local v = GetShowIcon()
+                    for _, key in ipairs(GROUP_UNIT_ORDER) do
+                        local kv
+                        if key == "player" then
+                            kv = UNIT_DB_MAP[key]().showPlayerCastIcon
+                            if kv == nil then kv = true end
+                        else
+                            kv = UNIT_DB_MAP[key]().showCastIcon
+                            if kv == nil then kv = true end
+                        end
+                        if kv ~= v then return false end
+                    end
+                    return true
+                end,
+                flashTargets = function() return { rgn } end,
+                multiApply = {
+                    elementKeys   = GROUP_UNIT_ORDER,
+                    elementLabels = SHORT_LABELS,
+                    getCurrentKey = function() return selectedUnit end,
+                    onApply       = function(checkedKeys)
+                        local v = GetShowIcon()
+                        for _, key in ipairs(checkedKeys) do
+                            if key == "player" then UNIT_DB_MAP[key]().showPlayerCastIcon = v
+                            else UNIT_DB_MAP[key]().showCastIcon = v end
+                        end
+                        ReloadAndUpdate(); EllesmereUI:RefreshPage()
+                    end,
+                },
+            })
+        end
+        -- Sync icon: Hide When Idle (right)
+        do
+            local rgn = castRow2._rightRegion
+            EllesmereUI.BuildSyncIcon({
+                region  = rgn,
+                tooltip = "Apply Hide When Idle to all Frames",
+                onClick = function()
+                    local v = GetHideInactive()
+                    for _, key in ipairs(GROUP_UNIT_ORDER) do
+                        UNIT_DB_MAP[key]().castbarHideWhenInactive = v
+                    end
+                    ReloadAndUpdate(); EllesmereUI:RefreshPage()
+                end,
+                isSynced = function()
+                    local v = GetHideInactive()
+                    for _, key in ipairs(GROUP_UNIT_ORDER) do
+                        local kv = UNIT_DB_MAP[key]().castbarHideWhenInactive
+                        if kv == nil then kv = true end
+                        if kv ~= v then return false end
+                    end
+                    return true
+                end,
+                flashTargets = function() return { rgn } end,
+                multiApply = {
+                    elementKeys   = GROUP_UNIT_ORDER,
+                    elementLabels = SHORT_LABELS,
+                    getCurrentKey = function() return selectedUnit end,
+                    onApply       = function(checkedKeys)
+                        local v = GetHideInactive()
+                        for _, key in ipairs(checkedKeys) do
+                            UNIT_DB_MAP[key]().castbarHideWhenInactive = v
+                        end
+                        ReloadAndUpdate(); EllesmereUI:RefreshPage()
+                    end,
+                },
+            })
+        end
+
+        -- Row 3: Spell Name Size (with inline color swatch) | Duration Size (with inline color swatch)
         local castTextRow
         castTextRow, h = W:DualRow(parent, y,
             { type="slider", text="Spell Name Size", min=6, max=20, step=1,
@@ -4909,8 +4797,6 @@ initFrame:SetScript("OnEvent", function(self)
             { type="slider", text="Duration Size", min=6, max=20, step=1,
               getValue=function() return SValSupported("castDurationSize", 11) end,
               setValue=function(v) SSetSupported("castDurationSize", v); ReloadAndUpdate(); UpdatePreview() end });  y = y - h
-        SApplySupport(castTextRow._leftRegion, "castSpellNameSize")
-        SApplySupport(castTextRow._rightRegion, "castDurationSize")
         -- Inline color swatch on Spell Name Size
         do
             local snRgn = castTextRow._leftRegion
@@ -4943,21 +4829,30 @@ initFrame:SetScript("OnEvent", function(self)
             dtSw:SetPoint("RIGHT", dtRgn._lastInline or dtRgn._control, "LEFT", -12, 0)
             dtRgn._lastInline = dtSw
         end
-        -- Sync icons: Spell Name Size (left) and Duration Size (right)
+        -- Sync icons: Spell Name Size + Color (left) and Duration Size + Color (right)
         do
             local rgn = castTextRow._leftRegion
             EllesmereUI.BuildSyncIcon({
                 region  = rgn,
-                tooltip = "Apply Spell Name Size to all Frames",
+                tooltip = "Apply Spell Name Size and Color to all Frames",
                 onClick = function()
                     local v = UNIT_DB_MAP[selectedUnit]().castSpellNameSize or 11
-                    for _, key in ipairs(GROUP_UNIT_ORDER) do UNIT_DB_MAP[key]().castSpellNameSize = v end
+                    local c = UNIT_DB_MAP[selectedUnit]().castSpellNameColor
+                    for _, key in ipairs(GROUP_UNIT_ORDER) do
+                        UNIT_DB_MAP[key]().castSpellNameSize = v
+                        if c then UNIT_DB_MAP[key]().castSpellNameColor = { r=c.r, g=c.g, b=c.b } end
+                    end
                     ReloadAndUpdate(); EllesmereUI:RefreshPage()
                 end,
                 isSynced = function()
                     local v = UNIT_DB_MAP[selectedUnit]().castSpellNameSize or 11
+                    local c = UNIT_DB_MAP[selectedUnit]().castSpellNameColor
                     for _, key in ipairs(GROUP_UNIT_ORDER) do
                         if (UNIT_DB_MAP[key]().castSpellNameSize or 11) ~= v then return false end
+                        local kc = UNIT_DB_MAP[key]().castSpellNameColor
+                        if c and kc then
+                            if kc.r ~= c.r or kc.g ~= c.g or kc.b ~= c.b then return false end
+                        elseif c ~= kc then return false end
                     end
                     return true
                 end,
@@ -4968,7 +4863,11 @@ initFrame:SetScript("OnEvent", function(self)
                     getCurrentKey = function() return selectedUnit end,
                     onApply       = function(checkedKeys)
                         local v = UNIT_DB_MAP[selectedUnit]().castSpellNameSize or 11
-                        for _, key in ipairs(checkedKeys) do UNIT_DB_MAP[key]().castSpellNameSize = v end
+                        local c = UNIT_DB_MAP[selectedUnit]().castSpellNameColor
+                        for _, key in ipairs(checkedKeys) do
+                            UNIT_DB_MAP[key]().castSpellNameSize = v
+                            if c then UNIT_DB_MAP[key]().castSpellNameColor = { r=c.r, g=c.g, b=c.b } end
+                        end
                         ReloadAndUpdate(); EllesmereUI:RefreshPage()
                     end,
                 },
@@ -4978,16 +4877,25 @@ initFrame:SetScript("OnEvent", function(self)
             local rgn = castTextRow._rightRegion
             EllesmereUI.BuildSyncIcon({
                 region  = rgn,
-                tooltip = "Apply Duration Size to all Frames",
+                tooltip = "Apply Duration Size and Color to all Frames",
                 onClick = function()
                     local v = UNIT_DB_MAP[selectedUnit]().castDurationSize or 11
-                    for _, key in ipairs(GROUP_UNIT_ORDER) do UNIT_DB_MAP[key]().castDurationSize = v end
+                    local c = UNIT_DB_MAP[selectedUnit]().castDurationColor
+                    for _, key in ipairs(GROUP_UNIT_ORDER) do
+                        UNIT_DB_MAP[key]().castDurationSize = v
+                        if c then UNIT_DB_MAP[key]().castDurationColor = { r=c.r, g=c.g, b=c.b } end
+                    end
                     ReloadAndUpdate(); EllesmereUI:RefreshPage()
                 end,
                 isSynced = function()
                     local v = UNIT_DB_MAP[selectedUnit]().castDurationSize or 11
+                    local c = UNIT_DB_MAP[selectedUnit]().castDurationColor
                     for _, key in ipairs(GROUP_UNIT_ORDER) do
                         if (UNIT_DB_MAP[key]().castDurationSize or 11) ~= v then return false end
+                        local kc = UNIT_DB_MAP[key]().castDurationColor
+                        if c and kc then
+                            if kc.r ~= c.r or kc.g ~= c.g or kc.b ~= c.b then return false end
+                        elseif c ~= kc then return false end
                     end
                     return true
                 end,
@@ -4998,7 +4906,11 @@ initFrame:SetScript("OnEvent", function(self)
                     getCurrentKey = function() return selectedUnit end,
                     onApply       = function(checkedKeys)
                         local v = UNIT_DB_MAP[selectedUnit]().castDurationSize or 11
-                        for _, key in ipairs(checkedKeys) do UNIT_DB_MAP[key]().castDurationSize = v end
+                        local c = UNIT_DB_MAP[selectedUnit]().castDurationColor
+                        for _, key in ipairs(checkedKeys) do
+                            UNIT_DB_MAP[key]().castDurationSize = v
+                            if c then UNIT_DB_MAP[key]().castDurationColor = { r=c.r, g=c.g, b=c.b } end
+                        end
                         ReloadAndUpdate(); EllesmereUI:RefreshPage()
                     end,
                 },
@@ -5019,7 +4931,7 @@ initFrame:SetScript("OnEvent", function(self)
         sharedBtbToggleRow, h = W:DualRow(parent, y,
             { type="toggle", text="Enable Text Bar",
               getValue=function() return SVal("bottomTextBar", false) end,
-              setValue=function(v) SSet("bottomTextBar", v); UpdatePreview() end },
+              setValue=function(v) SSet("bottomTextBar", v); UpdatePreview(); EllesmereUI:RefreshPage() end },
             { type="dropdown", text="Position", values=btbPositionValues, order=btbPositionOrder,
               disabled=function() return not SVal("bottomTextBar", false) end,
               disabledTooltip="Enable Text Bar is off",

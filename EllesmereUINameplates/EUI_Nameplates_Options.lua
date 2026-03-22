@@ -360,6 +360,14 @@ initFrame:SetScript("OnEvent", function(self)
             local bot = Mk(); PP.Height(bot, BORDER_CORNER); PP.Point(bot, "BOTTOMLEFT", bl, "BOTTOMRIGHT", 0, 0); PP.Point(bot, "BOTTOMRIGHT", br, "BOTTOMLEFT", 0, 0); bot:SetTexCoord(0.5-H, 0.5+H, 0.5, 1-T); UnsnapAfter(bot)
             local lft = Mk(); PP.Width(lft, BORDER_CORNER); PP.Point(lft, "TOPLEFT", tl, "BOTTOMLEFT", 0, 0); PP.Point(lft, "BOTTOMLEFT", bl, "TOPLEFT", 0, 0); lft:SetTexCoord(T, 0.5, 0.5-H, 0.5+H); UnsnapAfter(lft)
             local rgt = Mk(); PP.Width(rgt, BORDER_CORNER); PP.Point(rgt, "TOPRIGHT", tr, "BOTTOMRIGHT", 0, 0); PP.Point(rgt, "BOTTOMRIGHT", br, "TOPRIGHT", 0, 0); rgt:SetTexCoord(0.5, 1-T, 0.5-H, 0.5+H); UnsnapAfter(rgt)
+            f._corners = { tl, tr, bl, br }
+            f._hEdges  = { top, bot }
+            f._vEdges  = { lft, rgt }
+            function f:ApplySize(sz)
+                for _, c in ipairs(self._corners) do PP.Size(c, sz, sz) end
+                for _, e in ipairs(self._hEdges)  do PP.Height(e, sz) end
+                for _, e in ipairs(self._vEdges)  do PP.Width(e, sz) end
+            end
             return f
         end
 
@@ -743,6 +751,7 @@ initFrame:SetScript("OnEvent", function(self)
             elseif bStyle == "simple" then
                 borderFrame:Hide(); simpleBorderFrame:Show()
                 for _, e in ipairs(_solidEdges) do e:Show() end
+                simpleBorderFrame:ApplySize(DBVal("simpleBorderSize") or defaults.simpleBorderSize)
             else
                 borderFrame:Show(); simpleBorderFrame:Hide()
                 for _, e in ipairs(_solidEdges) do e:Show() end
@@ -3092,9 +3101,12 @@ initFrame:SetScript("OnEvent", function(self)
                 UpdatePreview()
               end });  y = y - h
 
-        -- Inline color swatch next to the Border Style dropdown
+        -- Inline color swatch and size cog next to the Border Style dropdown
         do
             local leftRgn = borderStyleRow._leftRegion
+            local function isNotSimple()
+                return (DBVal("borderStyle") or defaults.borderStyle) ~= "simple"
+            end
             local borderColorGet = function()
                 local c = (DB() and DB().borderColor) or defaults.borderColor
                 return c.r, c.g, c.b
@@ -3121,6 +3133,39 @@ initFrame:SetScript("OnEvent", function(self)
             local off = isBorderNone()
             swatch:SetAlpha(off and 0.15 or 1)
             swatch:EnableMouse(not off)
+
+            -- Cog for simple border size (only active when style is "simple")
+            local _, borderSizeCogShow = EllesmereUI.BuildCogPopup({
+                title = "Simple Border Size",
+                rows = {
+                    { type="slider", label="Size", min=1, max=12, step=1,
+                      get=function() return DBVal("simpleBorderSize") or defaults.simpleBorderSize end,
+                      set=function(v)
+                        DB().simpleBorderSize = v
+                        ns.RefreshSimpleBorderSize()
+                        UpdatePreview()
+                      end },
+                },
+            })
+            local borderSizeCogBtn = CreateFrame("Button", nil, leftRgn)
+            borderSizeCogBtn:SetSize(26, 26)
+            PP.Point(borderSizeCogBtn, "RIGHT", swatch, "LEFT", -6, 0)
+            borderSizeCogBtn:SetFrameLevel(leftRgn:GetFrameLevel() + 5)
+            local borderSizeCogTex = borderSizeCogBtn:CreateTexture(nil, "OVERLAY")
+            borderSizeCogTex:SetAllPoints()
+            borderSizeCogTex:SetTexture(EllesmereUI.RESIZE_ICON)
+            local function UpdateBorderSizeCogAlpha()
+                borderSizeCogBtn:SetAlpha(isNotSimple() and 0.15 or 0.4)
+            end
+            EllesmereUI.RegisterWidgetRefresh(UpdateBorderSizeCogAlpha)
+            UpdateBorderSizeCogAlpha()
+            borderSizeCogBtn:SetScript("OnClick", function(self)
+                if not isNotSimple() then borderSizeCogShow(self) end
+            end)
+            borderSizeCogBtn:SetScript("OnEnter", function(self)
+                if not isNotSimple() then self:SetAlpha(0.75) end
+            end)
+            borderSizeCogBtn:SetScript("OnLeave", function(self) UpdateBorderSizeCogAlpha() end)
         end
 
         _, h = W:Spacer(parent, y, 20);  y = y - h
@@ -4218,20 +4263,17 @@ initFrame:SetScript("OnEvent", function(self)
                     LiveApplyTimerPos(function(p, i) return p.cc[i] end, 2, v)
                     UpdatePreview()
                   end, order=timerPosOrder },
-                { type="colorpicker", text="Aura Stacks",
-                  getValue=function()
-                    local c = (DB() and DB().auraStackTextColor) or defaults.auraStackTextColor
-                    return c.r, c.g, c.b
-                  end,
-                  setValue=function(r, g, b)
-                    DB().auraStackTextColor = { r = r, g = g, b = b }
+                { type="slider", text="Aura Stacks", min=6, max=20, step=1,
+                  getValue=function() return DBVal("auraStackTextSize") or defaults.auraStackTextSize end,
+                  setValue=function(v)
+                    DB().auraStackTextSize = v
                     for _, plate in pairs(plates) do
                         for i = 1, 4 do
                             if plate.debuffs[i] and plate.debuffs[i].count then
-                                plate.debuffs[i].count:SetTextColor(r, g, b, 1)
+                                SetFSFont(plate.debuffs[i].count, v, "OUTLINE")
                             end
                             if plate.buffs[i] and plate.buffs[i].count then
-                                plate.buffs[i].count:SetTextColor(r, g, b, 1)
+                                SetFSFont(plate.buffs[i].count, v, "OUTLINE")
                             end
                         end
                     end
@@ -4309,165 +4351,126 @@ initFrame:SetScript("OnEvent", function(self)
             auraDurCogBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
             auraDurCogBtn:SetScript("OnClick", function(self) auraDurCogShow(self) end)
 
-            -- RIGHT: Aura Stacks cog for size
+            -- RIGHT: Aura Stacks inline color swatch
             local rightRgn = dualRow._rightRegion
-            local _, auraStackCogShow = EllesmereUI.BuildCogPopup({
-                title = "Aura Stacks Settings",
-                rows = {
-                    { type="slider", label="Size", min=6, max=20, step=1,
-                      get=function() return DBVal("auraStackTextSize") or defaults.auraStackTextSize end,
-                      set=function(v)
-                        DB().auraStackTextSize = v
-                        for _, plate in pairs(plates) do
-                            for i = 1, 4 do
-                                if plate.debuffs[i] and plate.debuffs[i].count then
-                                    SetFSFont(plate.debuffs[i].count, v, "OUTLINE")
-                                end
-                                if plate.buffs[i] and plate.buffs[i].count then
-                                    SetFSFont(plate.buffs[i].count, v, "OUTLINE")
-                                end
-                            end
+            local asColorGet = function()
+                local c = (DB() and DB().auraStackTextColor) or defaults.auraStackTextColor
+                return c.r, c.g, c.b
+            end
+            local asColorSet = function(r, g, b)
+                DB().auraStackTextColor = { r = r, g = g, b = b }
+                for _, plate in pairs(plates) do
+                    for i = 1, 4 do
+                        if plate.debuffs[i] and plate.debuffs[i].count then
+                            plate.debuffs[i].count:SetTextColor(r, g, b, 1)
                         end
-                        UpdatePreview()
-                      end },
-                },
-            })
-            local auraStackCogBtn = CreateFrame("Button", nil, rightRgn)
-            auraStackCogBtn:SetSize(26, 26)
-            auraStackCogBtn:SetPoint("RIGHT", rightRgn._control, "LEFT", -8, 0)
-            rightRgn._lastInline = auraStackCogBtn
-            auraStackCogBtn:SetFrameLevel(rightRgn:GetFrameLevel() + 5)
-            auraStackCogBtn:SetAlpha(0.4)
-            local auraStackCogTex = auraStackCogBtn:CreateTexture(nil, "OVERLAY")
-            auraStackCogTex:SetAllPoints()
-            auraStackCogTex:SetTexture(EllesmereUI.RESIZE_ICON)
-            auraStackCogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
-            auraStackCogBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
-            auraStackCogBtn:SetScript("OnClick", function(self) auraStackCogShow(self) end)
+                        if plate.buffs[i] and plate.buffs[i].count then
+                            plate.buffs[i].count:SetTextColor(r, g, b, 1)
+                        end
+                    end
+                end
+                UpdatePreview()
+            end
+            local asSwatch, asUpdateSwatch = EllesmereUI.BuildColorSwatch(rightRgn, rightRgn:GetFrameLevel() + 5, asColorGet, asColorSet, nil, 20)
+            PP.Point(asSwatch, "RIGHT", rightRgn._control, "LEFT", -12, 0)
+            EllesmereUI.RegisterWidgetRefresh(function() asUpdateSwatch() end)
         end
         y = y - h
 
         -- Row 2: Spell Name | Spell Target
         local spellNameRow
         spellNameRow, h = W:DualRow(parent, y,
-            { type="colorpicker", text="Spell Name",
-              getValue=function() return DBColor("castNameColor") end,
-              setValue=function(r, g, b)
+            { type="slider", text="Spell Name", min=6, max=16, step=1,
+              getValue=function() return DBVal("castNameSize") or defaults.castNameSize end,
+              setValue=function(v)
+                DB().castNameSize = v
+                for _, plate in pairs(plates) do
+                    if plate.castName then SetFSFont(plate.castName, v, GetNPOutline()) end
+                end
+                UpdatePreview()
+              end },
+            { type="slider", text="Spell Target", min=6, max=16, step=1,
+              getValue=function() return DBVal("castTargetSize") or defaults.castTargetSize end,
+              setValue=function(v)
+                DB().castTargetSize = v
+                for _, plate in pairs(plates) do
+                    if plate.castTarget then SetFSFont(plate.castTarget, v, GetNPOutline()) end
+                end
+                UpdatePreview()
+              end })
+        do
+            -- LEFT: Spell Name inline color swatch
+            local leftRgn = spellNameRow._leftRegion
+            local snColorGet = function() return DBColor("castNameColor") end
+            local snColorSet = function(r, g, b)
                 DB().castNameColor = { r = r, g = g, b = b }
                 for _, plate in pairs(plates) do
                     if plate.castName then plate.castName:SetTextColor(r, g, b, 1) end
                 end
                 UpdatePreview()
-              end },
-            { type="multiSwatch", text="Spell Target",
-              swatches = {
-                { tooltip = "Custom Color",
-                  getValue=function() return DBColor("castTargetColor") end,
-                  setValue=function(r, g, b)
-                    DB().castTargetColor = { r = r, g = g, b = b }
-                    for _, plate in pairs(plates) do
-                        plate:UpdateHealth()
-                    end
-                    UpdatePreview()
-                  end,
-                  onClick = function(self)
-                    local db = DB()
-                    if db.castTargetClassColor ~= nil and db.castTargetClassColor or defaults.castTargetClassColor then
-                        DB().castTargetClassColor = false
-                        for _, plate in pairs(plates) do plate:UpdateHealth() end
-                        UpdatePreview()
-                        EllesmereUI:RefreshPage()
-                        return
-                    end
-                    if self._eabOrigClick then self._eabOrigClick(self) end
-                  end,
-                  refreshAlpha = function()
-                    local db = DB()
-                    local cc = db and db.castTargetClassColor
-                    if cc == nil then cc = defaults.castTargetClassColor end
-                    return cc and 0.3 or 1
-                  end },
-                { tooltip = "Class Colored",
-                  getValue = function()
-                    local _, ct = UnitClass("player")
-                    if ct and RAID_CLASS_COLORS[ct] then
-                        local cc = RAID_CLASS_COLORS[ct]
-                        return cc.r, cc.g, cc.b, 1
-                    end
-                    return 1, 1, 1, 1
-                  end,
-                  setValue = function() end,
-                  onClick = function()
-                    DB().castTargetClassColor = true
+            end
+            local snSwatch, snUpdateSwatch = EllesmereUI.BuildColorSwatch(leftRgn, leftRgn:GetFrameLevel() + 5, snColorGet, snColorSet, nil, 20)
+            PP.Point(snSwatch, "RIGHT", leftRgn._control, "LEFT", -12, 0)
+            EllesmereUI.RegisterWidgetRefresh(function() snUpdateSwatch() end)
+
+            -- RIGHT: Spell Target inline double swatch (custom + class colored)
+            local rightRgn = spellNameRow._rightRegion
+            local ctrl = rightRgn._control
+
+            -- Class colored swatch (rightmost)
+            local ccGet = function()
+                local _, ct = UnitClass("player")
+                if ct and RAID_CLASS_COLORS[ct] then
+                    local cc = RAID_CLASS_COLORS[ct]
+                    return cc.r, cc.g, cc.b
+                end
+                return 1, 1, 1
+            end
+            local ccSwatch, ccUpdate = EllesmereUI.BuildColorSwatch(rightRgn, rightRgn:GetFrameLevel() + 5, ccGet, function() end, nil, 20)
+            PP.Point(ccSwatch, "RIGHT", ctrl, "LEFT", -12, 0)
+            ccSwatch:SetScript("OnClick", function()
+                DB().castTargetClassColor = true
+                for _, plate in pairs(plates) do plate:UpdateHealth() end
+                UpdatePreview()
+                EllesmereUI:RefreshPage()
+            end)
+
+            -- Custom color swatch (to the left of class swatch)
+            local stColorGet = function() return DBColor("castTargetColor") end
+            local stColorSet = function(r, g, b)
+                DB().castTargetColor = { r = r, g = g, b = b }
+                for _, plate in pairs(plates) do plate:UpdateHealth() end
+                UpdatePreview()
+            end
+            local stSwatch, stUpdate = EllesmereUI.BuildColorSwatch(rightRgn, rightRgn:GetFrameLevel() + 5, stColorGet, stColorSet, nil, 20)
+            PP.Point(stSwatch, "RIGHT", ccSwatch, "LEFT", -4, 0)
+            stSwatch:SetScript("OnClick", function(self)
+                local db = DB()
+                local cc = db and db.castTargetClassColor
+                if cc == nil then cc = defaults.castTargetClassColor end
+                if cc then
+                    DB().castTargetClassColor = false
                     for _, plate in pairs(plates) do plate:UpdateHealth() end
                     UpdatePreview()
                     EllesmereUI:RefreshPage()
-                  end,
-                  refreshAlpha = function()
-                    local db = DB()
-                    local cc = db and db.castTargetClassColor
-                    if cc == nil then cc = defaults.castTargetClassColor end
-                    return cc and 1 or 0.3
-                  end },
-              } })
-        do
-            -- LEFT: Spell Name cog for size
-            local leftRgn = spellNameRow._leftRegion
-            local _, spellNameCogShow = EllesmereUI.BuildCogPopup({
-                title = "Spell Name Settings",
-                rows = {
-                    { type="slider", label="Size", min=6, max=16, step=1,
-                      get=function() return DBVal("castNameSize") or defaults.castNameSize end,
-                      set=function(v)
-                        DB().castNameSize = v
-                        for _, plate in pairs(plates) do
-                            if plate.castName then SetFSFont(plate.castName, v, GetNPOutline()) end
-                        end
-                        UpdatePreview()
-                      end },
-                },
-            })
-            local spellNameCogBtn = CreateFrame("Button", nil, leftRgn)
-            spellNameCogBtn:SetSize(26, 26)
-            spellNameCogBtn:SetPoint("RIGHT", leftRgn._control, "LEFT", -8, 0)
-            leftRgn._lastInline = spellNameCogBtn
-            spellNameCogBtn:SetFrameLevel(leftRgn:GetFrameLevel() + 5)
-            spellNameCogBtn:SetAlpha(0.4)
-            local spellNameCogTex = spellNameCogBtn:CreateTexture(nil, "OVERLAY")
-            spellNameCogTex:SetAllPoints()
-            spellNameCogTex:SetTexture(EllesmereUI.RESIZE_ICON)
-            spellNameCogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
-            spellNameCogBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
-            spellNameCogBtn:SetScript("OnClick", function(self) spellNameCogShow(self) end)
+                    return
+                end
+                if self._eabOrigClick then self._eabOrigClick(self) end
+            end)
 
-            -- RIGHT: Spell Target cog for size
-            local rightRgn = spellNameRow._rightRegion
-            local _, spellTargetCogShow = EllesmereUI.BuildCogPopup({
-                title = "Spell Target Settings",
-                rows = {
-                    { type="slider", label="Size", min=6, max=16, step=1,
-                      get=function() return DBVal("castTargetSize") or defaults.castTargetSize end,
-                      set=function(v)
-                        DB().castTargetSize = v
-                        for _, plate in pairs(plates) do
-                            if plate.castTarget then SetFSFont(plate.castTarget, v, GetNPOutline()) end
-                        end
-                        UpdatePreview()
-                      end },
-                },
-            })
-            local spellTargetCogBtn = CreateFrame("Button", nil, rightRgn)
-            spellTargetCogBtn:SetSize(26, 26)
-            spellTargetCogBtn:SetPoint("RIGHT", rightRgn._control, "LEFT", -8, 0)
-            rightRgn._lastInline = spellTargetCogBtn
-            spellTargetCogBtn:SetFrameLevel(rightRgn:GetFrameLevel() + 5)
-            spellTargetCogBtn:SetAlpha(0.4)
-            local spellTargetCogTex = spellTargetCogBtn:CreateTexture(nil, "OVERLAY")
-            spellTargetCogTex:SetAllPoints()
-            spellTargetCogTex:SetTexture(EllesmereUI.RESIZE_ICON)
-            spellTargetCogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
-            spellTargetCogBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
-            spellTargetCogBtn:SetScript("OnClick", function(self) spellTargetCogShow(self) end)
+            EllesmereUI.RegisterWidgetRefresh(function()
+                local db = DB()
+                local isCC = db and db.castTargetClassColor
+                if isCC == nil then isCC = defaults.castTargetClassColor end
+                stSwatch:SetAlpha(isCC and 0.3 or 1)
+                ccSwatch:SetAlpha(isCC and 1 or 0.3)
+                stUpdate()
+                ccUpdate()
+            end)
+            local isCC = (DB() and DB().castTargetClassColor)
+            if isCC == nil then isCC = defaults.castTargetClassColor end
+            stSwatch:SetAlpha(isCC and 0.3 or 1)
+            ccSwatch:SetAlpha(isCC and 1 or 0.3)
         end
         y = y - h
 
@@ -5760,6 +5763,8 @@ initFrame:SetScript("OnEvent", function(self)
             swatch:SetAlpha(off and 0.15 or 1)
             swatch:EnableMouse(not off)
         end
+
+        _, h = W:Spacer(parent, y, 20);  y = y - h
 
         -----------------------------------------------------------------------
         --  OTHER COLORS

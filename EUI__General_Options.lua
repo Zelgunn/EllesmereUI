@@ -113,6 +113,7 @@ initFrame:SetScript("OnEvent", function(self)
     local errorPopup
 
     local function ShowErrorPopup(id, err)
+        EllesmereUI:EnsureLoaded()
         if not errorPopup then
             local POPUP_W, POPUP_H = 520, 340
             local FONT = EllesmereUI.EXPRESSWAY
@@ -1858,7 +1859,26 @@ initFrame:SetScript("OnEvent", function(self)
                     confirmText = "Reset All & Reload",
                     cancelText  = "Cancel",
                     onConfirm   = function()
-                        EllesmereUI:ResetAllModules()
+                        -- Nuclear wipe: same logic as the beta-exit popup
+                        local svNames = {
+                            "EllesmereUIActionBarsDB",
+                            "EllesmereUIAuraBuffRemindersDB",
+                            "EllesmereUIBasicsDB",
+                            "EllesmereUICooldownManagerDB",
+                            "EllesmereUINameplatesDB",
+                            "EllesmereUIResourceBarsDB",
+                            "EllesmereUIUnitFramesDB",
+                        }
+                        for _, name in ipairs(svNames) do
+                            _G[name] = {}
+                        end
+                        local oldScale = EllesmereUIDB and EllesmereUIDB.ppUIScale
+                        local oldScaleAuto = EllesmereUIDB and EllesmereUIDB.ppUIScaleAuto
+                        local resetVer = EllesmereUIDB and EllesmereUIDB._resetVersion
+                        _G["EllesmereUIDB"] = { _resetVersion = resetVer }
+                        EllesmereUIDB = _G["EllesmereUIDB"]
+                        if oldScale then EllesmereUIDB.ppUIScale = oldScale end
+                        if oldScaleAuto ~= nil then EllesmereUIDB.ppUIScaleAuto = oldScaleAuto end
                         ReloadUI()
                     end,
                 })
@@ -2240,7 +2260,11 @@ initFrame:SetScript("OnEvent", function(self)
             { type="dropdown", text="Outline Mode",
               tooltip="Controls the text rendering style used across all UI elements",
               values=outlineModeValues, order=outlineModeOrder,
-              getValue=function() return EllesmereUI.GetFontsDB().outlineMode or "none" end,
+              getValue=function()
+                  local v = EllesmereUI.GetFontsDB().outlineMode or "none"
+                  if v == "shadow" then v = "none" end
+                  return v
+              end,
               setValue=function(v)
                   EllesmereUI.GetFontsDB().outlineMode = v
                   local rl = EllesmereUI._widgetRefreshList
@@ -2492,7 +2516,7 @@ initFrame:SetScript("OnEvent", function(self)
                     if not EllesmereUIDB then EllesmereUIDB = {} end
                     if not point then return end
                     EllesmereUIDB.fpsPos = { point = point, relPoint = relPoint, x = x, y = y }
-                    if fpsFrame then
+                    if fpsFrame and not EllesmereUI._unlockActive then
                         fpsFrame:ClearAllPoints()
                         fpsFrame:SetPoint(point, UIParent, relPoint or point, x or 0, y or 0)
                     end
@@ -2539,10 +2563,12 @@ initFrame:SetScript("OnEvent", function(self)
                     if not EllesmereUIDB then EllesmereUIDB = {} end
                     if not point then return end
                     EllesmereUIDB.secondaryStatsPos = { point = point, relPoint = relPoint, x = x, y = y }
-                    local f = EllesmereUI._getSecondaryStatsFrame and EllesmereUI._getSecondaryStatsFrame()
-                    if f then
-                        f:ClearAllPoints()
-                        f:SetPoint(point, UIParent, relPoint or point, x or 0, y or 0)
+                    if not EllesmereUI._unlockActive then
+                        local f = EllesmereUI._getSecondaryStatsFrame and EllesmereUI._getSecondaryStatsFrame()
+                        if f then
+                            f:ClearAllPoints()
+                            f:SetPoint(point, UIParent, relPoint or point, x or 0, y or 0)
+                        end
                     end
                 end,
                 loadPos = function()
@@ -3445,29 +3471,6 @@ initFrame:SetScript("OnEvent", function(self)
             -- Popular Presets dropdown (label always stays "Popular Presets")
             do
                 local presetEntries = {}
-                presetEntries[#presetEntries + 1] = {
-                    label = "Spin the Wheel",
-                    onApply = function()
-                        -- Snapshot before randomizing so the original profile
-                        -- isn't corrupted for other characters sharing it.
-                        local origName = EllesmereUI.GetActiveProfileName()
-                        local origSnap = EllesmereUI.SnapshotAllAddons()
-                        EllesmereUI.SpinTheWheel()
-                        local newName = UniquePresetName("Spin the Wheel")
-                        EllesmereUI.SaveCurrentAsProfile(newName)
-                        -- Restore original profile data so the shared AceDB
-                        -- tables are clean when SavedVariables flush on reload.
-                        local pdb = EllesmereUI.GetProfilesDB and EllesmereUI.GetProfilesDB()
-                        if pdb then pdb.profiles[origName] = origSnap end
-                        EllesmereUI:ShowConfirmPopup({
-                            title       = "Reload Required",
-                            message     = "Preset applied. Reload to apply.",
-                            confirmText = "Reload Now",
-                            cancelText  = "Cancel",
-                            onConfirm   = function() ReloadUI() end,
-                        })
-                    end,
-                }
                 if EllesmereUI.WEEKLY_SPOTLIGHT then
                     local spot = EllesmereUI.WEEKLY_SPOTLIGHT
                     presetEntries[#presetEntries + 1] = {
